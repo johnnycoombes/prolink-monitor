@@ -120,25 +120,23 @@ class Monitor:
             if track_id in self._waveforms:
                 return
 
-        if a.color_detail:
-            heights, rgb = anlz.decode_color_detail(a.color_detail)
-        elif a.band3_detail:
-            heights, rgb = anlz.decode_3band(a.band3_detail)
-        elif a.detail:
-            h, _ = anlz.decode_blue(a.detail)
-            heights = bytearray(h)
-            rgb = bytearray(len(h) * 3)
-            for i in range(len(h)):
-                rgb[i * 3:i * 3 + 3] = b"\x38\x8c\xd8"
-        else:
-            heights, rgb = bytearray(), bytearray()
+        heights, rgb, lows, mids, highs = anlz.waveform_levels(a)
 
-        ov_h, ov_rgb = anlz.downsample(heights, rgb, OVERVIEW_COLUMNS) if heights \
-            else (bytearray(), bytearray())
+        if heights:
+            ov_h, ov_rgb = anlz.downsample(heights, rgb, OVERVIEW_COLUMNS)
+            ov_l, ov_m, ov_hi = anlz.downsample_bands(lows, mids, highs, OVERVIEW_COLUMNS)
+        else:
+            ov_h, ov_rgb = bytearray(), bytearray()
+            ov_l, ov_m, ov_hi = bytearray(), bytearray(), bytearray()
 
         length = a.duration_ms or ((t.duration * 1000) if t else 0)
-        payload = (_pack_wave(heights, rgb, anlz.DETAIL_COLUMNS_PER_SECOND, length)
-                   + _pack_wave(ov_h, ov_rgb, 0.0, length))
+        cps = anlz.DETAIL_COLUMNS_PER_SECOND
+        # PLWF blocks stay compatible with the original panel. PLWB blocks carry
+        # the low/mid/high lanes so the UI can repaint RGB, 3-Band or Blue.
+        payload = (_pack_wave(heights, rgb, cps, length)
+                   + _pack_wave(ov_h, ov_rgb, 0.0, length)
+                   + _pack_bands(lows, mids, highs, cps, length)
+                   + _pack_bands(ov_l, ov_m, ov_hi, 0.0, length))
 
         meta = {
             "id": track_id,
@@ -270,6 +268,13 @@ def _pack_wave(heights, rgb, columns_per_second: float, duration_ms: int) -> byt
     n = len(heights)
     header = struct.pack("<4sIIfII", b"PLWF", 1, n, columns_per_second, duration_ms, 0)
     return header + bytes(heights) + bytes(rgb)
+
+
+def _pack_bands(lows, mids, highs, columns_per_second: float, duration_ms: int) -> bytes:
+    """Pack low/mid/high lanes. Same 24-byte header as PLWF, magic PLWB."""
+    n = len(lows)
+    header = struct.pack("<4sIIfII", b"PLWB", 1, n, columns_per_second, duration_ms, 0)
+    return header + bytes(lows) + bytes(mids) + bytes(highs)
 
 
 # ---------------------------------------------------------------------- server

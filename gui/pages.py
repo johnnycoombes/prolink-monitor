@@ -50,6 +50,7 @@ class MonitorPage(Page):
         self._cards: dict[int, DeckCard] = {}
         self._zoom = 8
         self._max_decks = 4
+        self._wave_style = "rgb"
         self._show_empty = True
         self._last_state: dict[str, Any] | None = None
         self._received_at = 0.0
@@ -80,6 +81,19 @@ class MonitorPage(Page):
             b.clicked.connect(lambda _=False, v=n: self.set_max_decks(v))
             tools.addWidget(b)
             self._deck_btns[n] = b
+
+        tools.addSpacing(16)
+        wave_lbl = QLabel(i18n.t("wave"))
+        wave_lbl.setObjectName("SectionTitle")
+        tools.addWidget(wave_lbl)
+        self._style_btns: dict[str, QPushButton] = {}
+        for key, label in (("rgb", "RGB"), ("3band", "3BAND"), ("blue", "BLUE")):
+            b = QPushButton(label)
+            b.setObjectName("Chip")
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _=False, v=key: self.set_wave_style(v))
+            tools.addWidget(b)
+            self._style_btns[key] = b
         tools.addStretch(1)
         self.layout_root.addLayout(tools)
 
@@ -103,10 +117,12 @@ class MonitorPage(Page):
 
         self.set_zoom(8)
         self.set_max_decks(4)
+        self.set_wave_style("rgb")
 
     def apply_prefs(self, settings: dict) -> None:
         self.set_zoom(int(settings.get("zoom_seconds", 8)))
         self.set_max_decks(int(settings.get("max_decks", 4)))
+        self.set_wave_style(str(settings.get("waveform_style") or "rgb"))
         self._show_empty = bool(settings.get("show_empty_decks", True))
 
     def set_zoom(self, seconds: int) -> None:
@@ -127,8 +143,21 @@ class MonitorPage(Page):
         if self._last_state:
             self.update_state(self._last_state)
 
+    def set_wave_style(self, style: str) -> None:
+        self._wave_style = style if style in ("rgb", "3band", "blue") else "rgb"
+        for key, b in self._style_btns.items():
+            b.setProperty("active", "true" if key == self._wave_style else "false")
+            b.style().unpolish(b)
+            b.style().polish(b)
+        for card in self._cards.values():
+            card.set_wave_style(self._wave_style)
+
     def prefs_snapshot(self) -> dict:
-        return {"zoom_seconds": self._zoom, "max_decks": self._max_decks}
+        return {
+            "zoom_seconds": self._zoom,
+            "max_decks": self._max_decks,
+            "waveform_style": self._wave_style,
+        }
 
     def update_state(self, state: dict) -> None:
         self._last_state = state
@@ -168,6 +197,7 @@ class MonitorPage(Page):
             if n not in self._cards:
                 card = DeckCard(n, self._i18n)
                 card.set_zoom(self._zoom)
+                card.set_wave_style(self._wave_style)
                 self._cards[n] = card
                 # insert before stretch
                 self.decks_layout.insertWidget(self.decks_layout.count() - 1, card)
@@ -342,6 +372,10 @@ class SettingsPage(Page):
         self.zoom = QComboBox()
         for s in (4, 8, 16, 32):
             self.zoom.addItem(f"{s}s", s)
+        self.wave_style = QComboBox()
+        self.wave_style.addItem(i18n.t("wave_rgb"), "rgb")
+        self.wave_style.addItem(i18n.t("wave_3band"), "3band")
+        self.wave_style.addItem(i18n.t("wave_blue"), "blue")
         self.language = QComboBox()
         self.language.addItem("English", "en")
         self.language.addItem("Español", "es")
@@ -350,6 +384,7 @@ class SettingsPage(Page):
         self.poll_hz.setRange(5, 30)
         disp.addRow(i18n.t("max_decks"), self.max_decks)
         disp.addRow(i18n.t("zoom"), self.zoom)
+        disp.addRow(i18n.t("wave"), self.wave_style)
         disp.addRow(i18n.t("language"), self.language)
         disp.addRow(i18n.t("poll_hz"), self.poll_hz)
         disp.addRow("", self.show_empty)
@@ -396,6 +431,8 @@ class SettingsPage(Page):
         self.max_decks.setCurrentIndex(max(0, idx))
         idx = self.zoom.findData(int(data.get("zoom_seconds", 8)))
         self.zoom.setCurrentIndex(max(0, idx))
+        idx = self.wave_style.findData(data.get("waveform_style", "rgb"))
+        self.wave_style.setCurrentIndex(max(0, idx))
         idx = self.language.findData(data.get("language", "en"))
         self.language.setCurrentIndex(max(0, idx))
         self.show_empty.setChecked(bool(data.get("show_empty_decks", True)))
@@ -415,6 +452,7 @@ class SettingsPage(Page):
             "cache": self.cache.text().strip(),
             "max_decks": self.max_decks.currentData(),
             "zoom_seconds": self.zoom.currentData(),
+            "waveform_style": self.wave_style.currentData(),
             "language": self.language.currentData(),
             "show_empty_decks": self.show_empty.isChecked(),
             "poll_hz": self.poll_hz.value(),
