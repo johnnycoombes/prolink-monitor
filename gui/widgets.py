@@ -20,13 +20,13 @@ def mmss(ms: float) -> str:
     return f"{total // 60:02d}:{total % 60:02d}"
 
 
-# How a CDJ / rekordbox paints the three waveform colours.
+# Beat Link WaveformFinder.WaveformStyle / ThreeBandLayer.
 WAVE_STYLES = ("rgb", "3band", "blue")
-# 3-Band: lows blue at the centre, mids orange, highs white at the tips.
-BAND_LOW = (43, 108, 255)
-BAND_MID = (255, 154, 31)
-BAND_HIGH = (244, 246, 250)
-PLAYER_BLUE = (56, 164, 255)
+BAND_LOW = (32, 83, 217)          # low frequencies
+BAND_MID = (242, 170, 60)         # mids, when they stick out past the lows
+BAND_OVERLAP = (169, 107, 39)     # where low and mid overlap
+BAND_HIGH = (255, 255, 255)       # highs, drawn last
+BLUE_SHADE = (0, 168, 232)        # COLOR_MAP[2], used when PWV3 is absent
 
 
 def parse_waveform(data: bytes) -> tuple[dict | None, dict | None]:
@@ -73,10 +73,29 @@ def parse_waveform(data: bytes) -> tuple[dict | None, dict | None]:
     detail, next_off = one(0)
     overview, next_off = one(next_off) if detail else (None, 0)
     detail_bands, next_off = bands(next_off)
-    overview_bands, _ = bands(next_off)
+    overview_bands, next_off = bands(next_off)
+    detail_blue, next_off = _read_blue(data, next_off)
+    overview_blue, _ = _read_blue(data, next_off)
     _attach_bands(detail, detail_bands)
     _attach_bands(overview, overview_bands)
+    _attach_blue(detail, detail_blue)
+    _attach_blue(overview, overview_blue)
     return detail, overview
+
+
+def _read_blue(data: bytes, offset: int):
+    """Read a PLBC block: blue heights then COLOR_MAP RGB."""
+    if offset + 24 > len(data):
+        return None, offset
+    magic, _ver, n, _cps, _dur, _flags = struct.unpack_from("<4sIIfII", data, offset)
+    if magic != b"PLBC" or n < 0:
+        return None, offset
+    start = offset + 24
+    end_h = start + n
+    end = end_h + n * 3
+    if end > len(data):
+        return None, offset
+    return {"n": n, "h": data[start:end_h], "rgb": data[end_h:end]}, end
 
 
 def _attach_bands(wave: dict | None, bands: dict | None) -> None:
@@ -85,44 +104,68 @@ def _attach_bands(wave: dict | None, bands: dict | None) -> None:
     wave["low"] = bands["low"]
     wave["mid"] = bands["mid"]
     wave["high"] = bands["high"]
+    peak = 1
+    for lane in (bands["low"], bands["mid"], bands["high"]):
+        if lane:
+            peak = max(peak, max(lane))
+    wave["band_peak"] = peak
+
+
+def _attach_blue(wave: dict | None, blue_block: dict | None) -> None:
+    if not wave or not blue_block or blue_block["n"] != wave["n"]:
+        return
+    wave["blue_h"] = blue_block["h"]
+    wave["blue_rgb"] = blue_block["rgb"]
+
+
+def _fill_mirrored(p: QPainter, x: int, mid: float, px: float, color: QColor) -> None:
+    if px < 0.4:
+        return
+    p.fillRect(x, int(mid - px), 1, max(1, int(px * 2)), color)
 
 
 def _paint_column(p: QPainter, x: int, mid: float, amp: float, style: str,
-                  src: int, wave: dict) -> None:
-    """One waveform column, mirrored around the centre line."""
-    if amp < 0.5:
-        return
+                  src: int, wave: dict, span: float) -> None:
+    """One waveform column, mirrored around the centre line.
+
+    3-Band follows ``WaveformDetailComponent``: the taller of low and mid is
+    drawn in that band's colour, the overlap in brown, then highs in white.
+    Heights are Beat Link's scaled pixel values, normalised to this view.
+    """
     lows = wave.get("low")
     if style == "3band" and lows and src < len(lows):
         low = lows[src]
         md = wave["mid"][src]
         hi = wave["high"][src]
-        total = low + md + hi
-        if total > 0:
-            bh = amp * low / total
-            mh = amp * md / total
-            hh = amp * hi / total
-            p.fillRect(x, int(mid - bh), 1, max(1, int(bh * 2)), QColor(*BAND_LOW))
-            if mh >= 0.4:
-                p.fillRect(x, int(mid - bh - mh), 1, max(1, int(mh)), QColor(*BAND_MID))
-                p.fillRect(x, int(mid + bh), 1, max(1, int(mh)), QColor(*BAND_MID))
-            if hh >= 0.4:
-                outer = bh + mh
-                p.fillRect(x, int(mid - outer - hh), 1, max(1, int(hh)), QColor(*BAND_HIGH))
-                p.fillRect(x, int(mid + outer), 1, max(1, int(hh)), QColor(*BAND_HIGH))
+        if low or md or hi:
+            peak = wave.get("band_peak") or 1
+            low_px = low / peak * span
+            mid_px = md / peak * span
+            high_px = hi / peak * span
+            if low_px > mid_px:
+                _fill_mirrored(p, x, mid, low_px, QColor(*BAND_LOW))
+                _fill_mirrored(p, x, mid, mid_px, QColor(*BAND_OVERLAP))
+            else:
+                if abs(low_px - mid_px) >= 0.4:
+                    _fill_mirrored(p, x, mid, mid_px, QColor(*BAND_MID))
+                _fill_mirrored(p, x, mid, low_px, QColor(*BAND_OVERLAP))
+            _fill_mirrored(p, x, mid, high_px, QColor(*BAND_HIGH))
             return
-    heights = wave["h"]
+    if amp < 0.5:
+        return
     if style in ("blue", "3band"):
-        lift = int((heights[src] / 31.0) * 48) if heights else 0
-        color = QColor(
-            min(255, PLAYER_BLUE[0] + lift // 3),
-            min(255, PLAYER_BLUE[1]),
-            255,
-        )
+        blue_h = wave.get("blue_h")
+        if blue_h and len(blue_h) == wave["n"]:
+            amp = (blue_h[src] / 31.0) * span
+        blue_rgb = wave.get("blue_rgb")
+        if blue_rgb and len(blue_rgb) == wave["n"] * 3:
+            color = QColor(blue_rgb[src * 3], blue_rgb[src * 3 + 1], blue_rgb[src * 3 + 2])
+        else:
+            color = QColor(*BLUE_SHADE)
     else:
         rgb = wave["rgb"]
         color = QColor(rgb[src * 3], rgb[src * 3 + 1], rgb[src * 3 + 2])
-    p.fillRect(x, int(mid - amp), 1, max(1, int(amp * 2)), color)
+    _fill_mirrored(p, x, mid, amp, color)
 
 
 class Sidebar(QFrame):
@@ -247,10 +290,11 @@ class WaveformView(QWidget):
         n = ov["n"]
         heights = ov["h"]
         mid = y0 + h / 2
+        span = (h / 2) * 0.94
         for x in range(w):
             i = min(n - 1, (x * n) // w)
-            tall = (heights[i] / 31.0) * (h / 2) * 0.94
-            _paint_column(p, x0 + x, mid, tall, self._style, i, ov)
+            tall = (heights[i] / 31.0) * span
+            _paint_column(p, x0 + x, mid, tall, self._style, i, ov, span)
 
         dur = (self._meta or {}).get("duration_ms") or ov.get("dur") or 1
         px = max(0, min(w, int((self._pos_ms / max(1, dur)) * w)))
@@ -295,6 +339,7 @@ class WaveformView(QWidget):
                 p.setPen(pen)
                 p.drawLine(x0 + x, y0, x0 + x, y0 + h)
 
+        span = (h / 2) * 0.92
         for px in range(w):
             lo = int(start + px / px_per_col)
             hi = int(start + (px + 1) / px_per_col + 0.999)
@@ -310,8 +355,8 @@ class WaveformView(QWidget):
                 if heights[i] > tall:
                     tall = heights[i]
                     src = i
-            amp = (tall / 31.0) * (h / 2) * 0.92
-            _paint_column(p, x0 + px, mid, amp, self._style, src, d)
+            amp = (tall / 31.0) * span
+            _paint_column(p, x0 + px, mid, amp, self._style, src, d, span)
 
         for cue in (self._meta or {}).get("cues") or []:
             x = int(((cue.get("t", 0) / 1000.0) * cps - start) * px_per_col)

@@ -212,20 +212,15 @@ Cached in `~/.prolink-cache/<ip>/`.
 
 ### Waveforms
 
-`PWV5` (colour detail, 150 columns per second) is preferred. Each column is two
-bytes: the height in bits 2-6 plus three 3-bit frequency bands. The band layout was
-worked out by correlating those fields against `PWV7`, which does label them:
+Detail waveforms follow [Beat Link `WaveformDetail`](https://deepsymmetry.org/beatlink/apidocs/org/deepsymmetry/beatlink/data/WaveformDetail.html):
 
-| Bits | Band | Channel |
+| Style | Tag | How a column is read |
 |---|---|---|
-| 13-15 | lows | blue |
-| 10-12 | mids | green |
-| 7-9 | highs | red |
+| RGB | `PWV5` | 16-bit word. Height is bits 2-6. Colour is bits 13-15 red, 7-9 green, 10-12 blue, each scaled by 255/7. |
+| 3-Band | `PWV7` | 3 bytes, ordered mid, high, low. Heights are `round(low*0.4)`, `round(mid*0.3)`, `round(high*0.06)`, drawn as separate bands. |
+| Blue | `PWV3` | Height is bits 0-4. Bits 5-7 pick a shade from `WaveformDetail.COLOR_MAP`. |
 
-A track without `PWV5` falls back to `PWV7` (three bands) with the same colour
-scheme, and finally to `PWV3` (the classic blue waveform). The overview is generated
-by reducing the detail waveform, taking the peak of each window, rather than using
-`PWV4`, whose colour layout is not clear.
+The scrolling overview is the detail waveform reduced by peak, not `PWV4`.
 
 Drawing takes the peak of **every** column falling inside a pixel. At 150 columns
 per second there are usually more columns than pixels, and sampling just one of them
