@@ -396,40 +396,81 @@ function readBands(buf, off) {
 function attachBands(wave, bands) {
   if (wave && bands && bands.n === wave.n) {
     wave.low = bands.low; wave.mid = bands.mid; wave.high = bands.high;
+    let peak = 1;
+    for (const lane of [bands.low, bands.mid, bands.high]) {
+      for (let i = 0; i < lane.length; i++) if (lane[i] > peak) peak = lane[i];
+    }
+    wave.bandPeak = peak;
   }
 }
 
-/* CDJ colours: 3-Band stacks blue / orange / white; Blue is the classic lane. */
-function fillWave(ctx, x, mid, amp, src, wave) {
-  if (amp < 0.5) return;
+function readBlue(buf, off) {
+  if (off + 24 > buf.byteLength) return null;
+  const magic = String.fromCharCode(buf[off], buf[off + 1], buf[off + 2], buf[off + 3]);
+  if (magic !== 'PLBC') return null;
+  const n = new DataView(buf).getUint32(off + 8, true);
+  const start = off + 24;
+  const end = start + n * 4;
+  if (n < 0 || end > buf.byteLength) return null;
+  return {
+    n,
+    h: new Uint8Array(buf, start, n),
+    rgb: new Uint8Array(buf, start + n, n * 3),
+    end
+  };
+}
+
+function attachBlue(wave, block) {
+  if (wave && block && block.n === wave.n) {
+    wave.blueH = block.h;
+    wave.blueRgb = block.rgb;
+  }
+}
+
+/* Beat Link WaveformDetailComponent: 3-band overlap, blue from COLOR_MAP. */
+function fillMirrored(ctx, x, mid, px) {
+  if (px < 0.4) return;
+  ctx.fillRect(x, mid - px, 1, Math.max(1, px * 2));
+}
+
+function fillWave(ctx, x, mid, amp, src, wave, span) {
+  span = span || amp;
   if (waveStyle === '3band' && wave.low && src < wave.low.length) {
     const low = wave.low[src], md = wave.mid[src], hi = wave.high[src];
-    const sum = low + md + hi;
-    if (sum > 0) {
-      const bh = amp * low / sum, mh = amp * md / sum, hh = amp * hi / sum;
-      ctx.fillStyle = 'rgb(43,108,255)';
-      ctx.fillRect(x, mid - bh, 1, Math.max(1, bh * 2));
-      if (mh >= 0.4) {
-        ctx.fillStyle = 'rgb(255,154,31)';
-        ctx.fillRect(x, mid - bh - mh, 1, mh);
-        ctx.fillRect(x, mid + bh, 1, mh);
+    if (low || md || hi) {
+      const peak = wave.bandPeak || 1;
+      const lowPx = low / peak * span, midPx = md / peak * span, highPx = hi / peak * span;
+      if (lowPx > midPx) {
+        ctx.fillStyle = 'rgb(32,83,217)';
+        fillMirrored(ctx, x, mid, lowPx);
+        ctx.fillStyle = 'rgb(169,107,39)';
+        fillMirrored(ctx, x, mid, midPx);
+      } else {
+        if (Math.abs(lowPx - midPx) >= 0.4) {
+          ctx.fillStyle = 'rgb(242,170,60)';
+          fillMirrored(ctx, x, mid, midPx);
+        }
+        ctx.fillStyle = 'rgb(169,107,39)';
+        fillMirrored(ctx, x, mid, lowPx);
       }
-      if (hh >= 0.4) {
-        ctx.fillStyle = 'rgb(244,246,250)';
-        ctx.fillRect(x, mid - bh - mh - hh, 1, hh);
-        ctx.fillRect(x, mid + bh + mh, 1, hh);
-      }
+      ctx.fillStyle = 'rgb(255,255,255)';
+      fillMirrored(ctx, x, mid, highPx);
       return;
     }
   }
+  let drawAmp = amp;
   if (waveStyle === 'blue' || waveStyle === '3band') {
-    const lift = (wave.h[src] / 31) * 48;
-    ctx.fillStyle = `rgb(${56 + (lift / 3 | 0)},164,255)`;
+    if (wave.blueH && wave.blueH.length === wave.n) drawAmp = (wave.blueH[src] / 31) * span;
+    if (wave.blueRgb && wave.blueRgb.length === wave.n * 3) {
+      const b = wave.blueRgb;
+      ctx.fillStyle = `rgb(${b[src * 3]},${b[src * 3 + 1]},${b[src * 3 + 2]})`;
+    } else ctx.fillStyle = 'rgb(0,168,232)';
   } else {
     const rgb = wave.rgb;
     ctx.fillStyle = `rgb(${rgb[src * 3]},${rgb[src * 3 + 1]},${rgb[src * 3 + 2]})`;
   }
-  ctx.fillRect(x, mid - amp, 1, amp * 2);
+  if (drawAmp < 0.5) return;
+  ctx.fillRect(x, mid - drawAmp, 1, drawAmp * 2);
 }
 
 async function loadTrack(id) {
@@ -447,7 +488,11 @@ async function loadTrack(id) {
       overview = readWaveform(buf, detail.end);
       const b1 = readBands(buf, overview.end);
       attachBands(detail, b1);
-      if (b1) attachBands(overview, readBands(buf, b1.end));
+      const b2 = b1 ? readBands(buf, b1.end) : null;
+      attachBands(overview, b2);
+      const blue1 = readBlue(buf, b2 ? b2.end : (b1 ? b1.end : overview.end));
+      attachBlue(detail, blue1);
+      if (blue1) attachBlue(overview, readBlue(buf, blue1.end));
     }
     tracks.set(id, {meta, detail, overview});
   } finally { pending.delete(id); }
@@ -582,7 +627,7 @@ function drawOverview(d, track, pos) {
     const {n, h} = track.overview, mid = H / 2;
     for (let x = 0; x < W; x++) {
       const i = Math.min(n - 1, Math.floor(x * n / W));
-      fillWave(o, x, mid, (h[i] / 31) * mid * 0.94, i, track.overview);
+      fillWave(o, x, mid, (h[i] / 31) * mid * 0.94, i, track.overview, mid * 0.94);
     }
     d.overviewOff = off;
   }
@@ -646,7 +691,7 @@ function drawDetail(d, track, pos, playing) {
     if (hi > n) hi = n;
     let tall = 0, src = lo;
     for (let i = lo; i < hi; i++) if (h[i] > tall) { tall = h[i]; src = i; }
-    fillWave(ctx, px, mid, (tall / 31) * mid * 0.92, src, track.detail);
+    fillWave(ctx, px, mid, (tall / 31) * mid * 0.92, src, track.detail, mid * 0.92);
   }
 
   // cues in view
