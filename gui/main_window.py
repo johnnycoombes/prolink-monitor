@@ -129,6 +129,9 @@ class MainWindow(QMainWindow):
 
     # -- navigation / i18n --------------------------------------------------
     def _navigate(self, key: str) -> None:
+        if key == "settings":
+            self.page_settings.load_settings(
+                {**self.settings, **self.page_monitor.prefs_snapshot()})
         page = self._pages.get(key)
         if page is not None:
             self.stack.setCurrentWidget(page)

@@ -196,6 +196,10 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   <div class="pill" id="p-mode" data-i18n="starting">starting…</div>
   <div class="pill" id="p-lib"></div>
   <div class="right">
+    <span class="switch-label" data-i18n="wave">wave</span>
+    <div class="switch" id="wave-switch">
+      <button data-w="rgb">RGB</button><button data-w="3band">3BAND</button><button data-w="blue">BLUE</button>
+    </div>
     <span class="switch-label" data-i18n="zoom">zoom</span>
     <div class="switch" id="zoom-switch">
       <button data-s="4">4s</button><button data-s="8">8s</button><button data-s="16">16s</button><button data-s="32">32s</button>
@@ -226,7 +230,7 @@ const STRINGS = {
   en: {
     brand: 'Engine Room <span>// pro dj link</span>',
     starting: 'starting…',
-    decks: 'decks', zoom: 'zoom',
+    decks: 'decks', zoom: 'zoom', wave: 'wave',
     mode: 'mode', library: 'library', devices: 'devices', tracks: 'tracks',
     noDevices: 'no devices',
     elapsed: 'elapsed', remaining: 'remaining',
@@ -247,7 +251,7 @@ const STRINGS = {
   es: {
     brand: 'Sala de máquinas <span>// pro dj link</span>',
     starting: 'iniciando…',
-    decks: 'decks', zoom: 'zoom',
+    decks: 'decks', zoom: 'zoom', wave: 'forma',
     mode: 'modo', library: 'biblioteca', devices: 'dispositivos', tracks: 'pistas',
     noDevices: 'sin dispositivos',
     elapsed: 'transcurrido', remaining: 'restante',
@@ -298,8 +302,11 @@ function applyLang() {
 /* ------------------------------------------------------------------- state */
 const DECK_COLORS = {1:'--d1',2:'--d2',3:'--d3',4:'--d4',5:'--d1',6:'--d2'};
 const ZOOM_LEVELS = [4, 8, 16, 32];      // seconds of track shown in the detail view
+const WAVE_STYLES = ['rgb', '3band', 'blue'];
 let visibleSeconds = ZOOM_LEVELS.includes(+localStorage.getItem('zoom'))
   ? +localStorage.getItem('zoom') : 8;
+let waveStyle = WAVE_STYLES.includes(localStorage.getItem('waveStyle'))
+  ? localStorage.getItem('waveStyle') : 'rgb';
 
 const decks = new Map();          // number -> deck view
 const tracks = new Map();         // id -> {meta, detail, overview}
@@ -319,6 +326,15 @@ function visible(list) {
 function prune(list) {
   const alive = new Set(list.map(d => d.number));
   for (const [n, d] of decks) if (!alive.has(n)) { d.el.remove(); decks.delete(n); }
+}
+
+function setWaveStyle(style) {
+  if (!WAVE_STYLES.includes(style)) style = 'rgb';
+  waveStyle = style;
+  localStorage.setItem('waveStyle', style);
+  document.querySelectorAll('#wave-switch button').forEach(
+    b => b.classList.toggle('on', b.dataset.w === style));
+  for (const d of decks.values()) d.overviewId = null;
 }
 
 function setZoom(seconds) {
@@ -360,6 +376,62 @@ function readWaveform(buf, off) {
   return {n, cps, dur, h, rgb, end: off + 24 + n * 4};
 }
 
+function readBands(buf, off) {
+  if (off + 24 > buf.byteLength) return null;
+  const magic = String.fromCharCode(buf[off], buf[off + 1], buf[off + 2], buf[off + 3]);
+  if (magic !== 'PLWB') return null;
+  const n = new DataView(buf).getUint32(off + 8, true);
+  const start = off + 24;
+  const end = start + n * 3;
+  if (n < 0 || end > buf.byteLength) return null;
+  return {
+    n,
+    low: new Uint8Array(buf, start, n),
+    mid: new Uint8Array(buf, start + n, n),
+    high: new Uint8Array(buf, start + n * 2, n),
+    end
+  };
+}
+
+function attachBands(wave, bands) {
+  if (wave && bands && bands.n === wave.n) {
+    wave.low = bands.low; wave.mid = bands.mid; wave.high = bands.high;
+  }
+}
+
+/* CDJ colours: 3-Band stacks blue / orange / white; Blue is the classic lane. */
+function fillWave(ctx, x, mid, amp, src, wave) {
+  if (amp < 0.5) return;
+  if (waveStyle === '3band' && wave.low && src < wave.low.length) {
+    const low = wave.low[src], md = wave.mid[src], hi = wave.high[src];
+    const sum = low + md + hi;
+    if (sum > 0) {
+      const bh = amp * low / sum, mh = amp * md / sum, hh = amp * hi / sum;
+      ctx.fillStyle = 'rgb(43,108,255)';
+      ctx.fillRect(x, mid - bh, 1, Math.max(1, bh * 2));
+      if (mh >= 0.4) {
+        ctx.fillStyle = 'rgb(255,154,31)';
+        ctx.fillRect(x, mid - bh - mh, 1, mh);
+        ctx.fillRect(x, mid + bh, 1, mh);
+      }
+      if (hh >= 0.4) {
+        ctx.fillStyle = 'rgb(244,246,250)';
+        ctx.fillRect(x, mid - bh - mh - hh, 1, hh);
+        ctx.fillRect(x, mid + bh + mh, 1, hh);
+      }
+      return;
+    }
+  }
+  if (waveStyle === 'blue' || waveStyle === '3band') {
+    const lift = (wave.h[src] / 31) * 48;
+    ctx.fillStyle = `rgb(${56 + (lift / 3 | 0)},164,255)`;
+  } else {
+    const rgb = wave.rgb;
+    ctx.fillStyle = `rgb(${rgb[src * 3]},${rgb[src * 3 + 1]},${rgb[src * 3 + 2]})`;
+  }
+  ctx.fillRect(x, mid - amp, 1, amp * 2);
+}
+
 async function loadTrack(id) {
   if (tracks.has(id) || pending.has(id)) return;
   pending.add(id);
@@ -370,7 +442,13 @@ async function loadTrack(id) {
     ]);
     if (!meta) return;
     let detail = null, overview = null;
-    if (buf) { detail = readWaveform(buf, 0); overview = readWaveform(buf, detail.end); }
+    if (buf) {
+      detail = readWaveform(buf, 0);
+      overview = readWaveform(buf, detail.end);
+      const b1 = readBands(buf, overview.end);
+      attachBands(detail, b1);
+      if (b1) attachBands(overview, readBands(buf, b1.end));
+    }
     tracks.set(id, {meta, detail, overview});
   } finally { pending.delete(id); }
 }
@@ -501,12 +579,10 @@ function drawOverview(d, track, pos) {
     const off = document.createElement('canvas');
     off.width = W; off.height = H;
     const o = off.getContext('2d');
-    const {n, h, rgb} = track.overview, mid = H / 2;
+    const {n, h} = track.overview, mid = H / 2;
     for (let x = 0; x < W; x++) {
       const i = Math.min(n - 1, Math.floor(x * n / W));
-      const tall = (h[i] / 31) * mid * 0.94;
-      o.fillStyle = `rgb(${rgb[i*3]},${rgb[i*3+1]},${rgb[i*3+2]})`;
-      o.fillRect(x, mid - tall, 1, tall * 2);
+      fillWave(o, x, mid, (h[i] / 31) * mid * 0.94, i, track.overview);
     }
     d.overviewOff = off;
   }
@@ -537,7 +613,7 @@ function drawDetail(d, track, pos, playing) {
   ctx.clearRect(0, 0, W, H);
   if (!track || !track.detail || !track.detail.n) return;
 
-  const {n, cps, h, rgb} = track.detail;
+  const {n, cps, h} = track.detail;
   const mid = H / 2;
   const visibleCols = visibleSeconds * cps;
   const pxPerCol = W / visibleCols;
@@ -570,9 +646,7 @@ function drawDetail(d, track, pos, playing) {
     if (hi > n) hi = n;
     let tall = 0, src = lo;
     for (let i = lo; i < hi; i++) if (h[i] > tall) { tall = h[i]; src = i; }
-    const a = (tall / 31) * mid * 0.92;
-    ctx.fillStyle = `rgb(${rgb[src*3]},${rgb[src*3+1]},${rgb[src*3+2]})`;
-    ctx.fillRect(px, mid - a, 1, a * 2);
+    fillWave(ctx, px, mid, (tall / 31) * mid * 0.92, src, track.detail);
   }
 
   // cues in view
@@ -682,6 +756,8 @@ document.querySelectorAll('#deck-switch button').forEach(
   b => b.addEventListener('click', () => setDeckCount(+b.dataset.n)));
 document.querySelectorAll('#zoom-switch button').forEach(
   b => b.addEventListener('click', () => setZoom(+b.dataset.s)));
+document.querySelectorAll('#wave-switch button').forEach(
+  b => b.addEventListener('click', () => setWaveStyle(b.dataset.w)));
 // + and - zoom too, so it can be driven without leaving the keyboard
 document.addEventListener('keydown', ev => {
   if (ev.key === '+' || ev.key === '=') stepZoom(-1);
@@ -692,6 +768,7 @@ document.querySelectorAll('#lang-switch button').forEach(
 
 setDeckCount(maxDecks);
 setZoom(visibleSeconds);
+setWaveStyle(waveStyle);
 applyLang();
 connect();
 render();

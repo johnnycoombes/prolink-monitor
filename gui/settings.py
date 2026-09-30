@@ -19,6 +19,7 @@ DEFAULTS: dict[str, Any] = {
     "cache": "",
     "max_decks": 4,
     "zoom_seconds": 8,
+    "waveform_style": "rgb",       # rgb | 3band | blue
     "language": "en",
     "auto_connect": True,
     "start_web_server": True,
@@ -89,6 +90,8 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
         out["zoom_seconds"] = zoom if zoom in (4, 8, 16, 32) else 8
     except (TypeError, ValueError):
         out["zoom_seconds"] = 8
+    style = str(data.get("waveform_style") or "rgb").lower()
+    out["waveform_style"] = style if style in ("rgb", "3band", "blue") else "rgb"
     lang = str(data.get("language") or "en").lower()
     out["language"] = lang if lang in ("en", "es") else "en"
     out["auto_connect"] = bool(data.get("auto_connect", True))
