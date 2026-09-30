@@ -120,7 +120,7 @@ class Monitor:
             if track_id in self._waveforms:
                 return
 
-        heights, rgb, lows, mids, highs = anlz.waveform_levels(a)
+        heights, rgb, lows, mids, highs, blue_h, blue_rgb = anlz.waveform_levels(a)
 
         if heights:
             ov_h, ov_rgb = anlz.downsample(heights, rgb, OVERVIEW_COLUMNS)
@@ -128,15 +128,21 @@ class Monitor:
         else:
             ov_h, ov_rgb = bytearray(), bytearray()
             ov_l, ov_m, ov_hi = bytearray(), bytearray(), bytearray()
+        if blue_h:
+            ov_blue_h, ov_blue_rgb = anlz.downsample(blue_h, blue_rgb, OVERVIEW_COLUMNS)
+        else:
+            ov_blue_h, ov_blue_rgb = bytearray(), bytearray()
 
         length = a.duration_ms or ((t.duration * 1000) if t else 0)
         cps = anlz.DETAIL_COLUMNS_PER_SECOND
-        # PLWF blocks stay compatible with the original panel. PLWB blocks carry
-        # the low/mid/high lanes so the UI can repaint RGB, 3-Band or Blue.
+        # PLWF is the RGB waveform. PLWB is the 3-band heights (Beat Link's
+        # per-band scale). PLBC is the blue waveform and its COLOR_MAP shades.
         payload = (_pack_wave(heights, rgb, cps, length)
                    + _pack_wave(ov_h, ov_rgb, 0.0, length)
                    + _pack_bands(lows, mids, highs, cps, length)
-                   + _pack_bands(ov_l, ov_m, ov_hi, 0.0, length))
+                   + _pack_bands(ov_l, ov_m, ov_hi, 0.0, length)
+                   + _pack_blue(blue_h, blue_rgb, cps, length)
+                   + _pack_blue(ov_blue_h, ov_blue_rgb, 0.0, length))
 
         meta = {
             "id": track_id,
@@ -275,6 +281,13 @@ def _pack_bands(lows, mids, highs, columns_per_second: float, duration_ms: int) 
     n = len(lows)
     header = struct.pack("<4sIIfII", b"PLWB", 1, n, columns_per_second, duration_ms, 0)
     return header + bytes(lows) + bytes(mids) + bytes(highs)
+
+
+def _pack_blue(heights, rgb, columns_per_second: float, duration_ms: int) -> bytes:
+    """Pack the blue waveform: heights, then COLOR_MAP RGB. Magic PLBC."""
+    n = len(heights)
+    header = struct.pack("<4sIIfII", b"PLBC", 1, n, columns_per_second, duration_ms, 0)
+    return header + bytes(heights) + bytes(rgb)
 
 
 # ---------------------------------------------------------------------- server
