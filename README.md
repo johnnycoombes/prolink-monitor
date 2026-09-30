@@ -59,7 +59,9 @@ Everything else — code, console output, logs — is English only.
 
 ## Requirements
 
-- **Python 3.10 or newer**, no packages needed.
+- **Python 3.10 or newer**. The monitor core (`app.py`, `monitor.py`, `probe.py`)
+  needs no packages.
+- **Desktop GUI**: install `PySide6` (`pip install -r requirements.txt`).
 - The computer and the player on the **same network**.
 - **Wireshark / Npcap** ([wireshark.org](https://www.wireshark.org)) — only to run
   this while rekordbox is open.
@@ -72,6 +74,24 @@ Everything else — code, console output, logs — is English only.
 ---
 
 ## Usage
+
+### Desktop app (PySide6)
+
+```bash
+pip install -r requirements.txt
+python desktop.py
+```
+
+Or `python -m gui`. The window has a sidebar for **Monitor**, **Devices**,
+**Library**, **Settings** and **About**. Connection mode, player address, device
+number, zoom, visible decks, language and more live under Settings and are saved
+to `~/.prolink-monitor/settings.json`.
+
+The monitor core itself still needs no packages; PySide6 is only for the desktop
+shell. The optional local web panel can be started from Settings and opened with
+**Open web panel**.
+
+### Web panel
 
 ```bash
 python app.py
@@ -241,10 +261,13 @@ that one bit and nothing else.
 ## Layout
 
 ```
+desktop.py          PySide6 desktop app launcher
+gui/                desktop shell (sidebar, pages, settings, waveforms)
 app.py              web server and API
 monitor.py          console monitor
 probe.py            protocol probe: reports bytes that change
 web/index.html      the panel
+requirements.txt    desktop dependency (PySide6)
 prolink/
   proto.py          Pro DJ Link packets (keep-alive, beat, status)
   link.py           engine: virtual device, passive capture, deck state

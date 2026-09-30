@@ -1,0 +1,446 @@
+"""Stacked pages for the desktop shell."""
+
+from __future__ import annotations
+
+import time
+from typing import Any
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QCheckBox, QComboBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout,
+    QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy, QSpinBox,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+)
+
+from gui.theme import COLORS
+from gui.widgets import DeckCard, parse_waveform
+
+
+class Page(QFrame):
+    def __init__(self, i18n, title_key: str, sub_key: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("Page")
+        self._i18n = i18n
+        self._title_key = title_key
+        self._sub_key = sub_key
+
+        self.layout_root = QVBoxLayout(self)
+        self.layout_root.setContentsMargins(24, 20, 24, 20)
+        self.layout_root.setSpacing(16)
+
+        head = QVBoxLayout()
+        head.setSpacing(4)
+        self.title = QLabel(i18n.t(title_key))
+        self.title.setObjectName("PageTitle")
+        self.subtitle = QLabel(i18n.t(sub_key))
+        self.subtitle.setObjectName("PageSubtitle")
+        head.addWidget(self.title)
+        head.addWidget(self.subtitle)
+        self.layout_root.addLayout(head)
+
+    def retranslate(self) -> None:
+        self.title.setText(self._i18n.t(self._title_key))
+        self.subtitle.setText(self._i18n.t(self._sub_key))
+
+
+class MonitorPage(Page):
+    def __init__(self, i18n, backend, parent=None):
+        super().__init__(i18n, "monitor_title", "monitor_sub", parent)
+        self.backend = backend
+        self._cards: dict[int, DeckCard] = {}
+        self._zoom = 8
+        self._max_decks = 4
+        self._show_empty = True
+        self._last_state: dict[str, Any] | None = None
+        self._received_at = 0.0
+
+        tools = QHBoxLayout()
+        tools.setSpacing(8)
+        zoom_lbl = QLabel(i18n.t("zoom"))
+        zoom_lbl.setObjectName("SectionTitle")
+        tools.addWidget(zoom_lbl)
+        self._zoom_btns: dict[int, QPushButton] = {}
+        for s in (4, 8, 16, 32):
+            b = QPushButton(f"{s}s")
+            b.setObjectName("Chip")
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _=False, v=s: self.set_zoom(v))
+            tools.addWidget(b)
+            self._zoom_btns[s] = b
+
+        tools.addSpacing(16)
+        decks_lbl = QLabel(i18n.t("max_decks"))
+        decks_lbl.setObjectName("SectionTitle")
+        tools.addWidget(decks_lbl)
+        self._deck_btns: dict[int, QPushButton] = {}
+        for n in (2, 3, 4):
+            b = QPushButton(str(n))
+            b.setObjectName("Chip")
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _=False, v=n: self.set_max_decks(v))
+            tools.addWidget(b)
+            self._deck_btns[n] = b
+        tools.addStretch(1)
+        self.layout_root.addLayout(tools)
+
+        self.waiting = QLabel(i18n.t("waiting"))
+        self.waiting.setAlignment(Qt.AlignCenter)
+        self.waiting.setStyleSheet(
+            f"color:{COLORS['dim']}; font-family:monospace; font-size:13px; padding:40px;"
+        )
+        self.layout_root.addWidget(self.waiting)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        self.decks_host = QWidget()
+        self.decks_layout = QVBoxLayout(self.decks_host)
+        self.decks_layout.setContentsMargins(0, 0, 0, 0)
+        self.decks_layout.setSpacing(10)
+        self.decks_layout.addStretch(1)
+        scroll.setWidget(self.decks_host)
+        self.layout_root.addWidget(scroll, 1)
+
+        self.set_zoom(8)
+        self.set_max_decks(4)
+
+    def apply_prefs(self, settings: dict) -> None:
+        self.set_zoom(int(settings.get("zoom_seconds", 8)))
+        self.set_max_decks(int(settings.get("max_decks", 4)))
+        self._show_empty = bool(settings.get("show_empty_decks", True))
+
+    def set_zoom(self, seconds: int) -> None:
+        self._zoom = seconds
+        for s, b in self._zoom_btns.items():
+            b.setProperty("active", "true" if s == seconds else "false")
+            b.style().unpolish(b)
+            b.style().polish(b)
+        for card in self._cards.values():
+            card.set_zoom(seconds)
+
+    def set_max_decks(self, n: int) -> None:
+        self._max_decks = n
+        for k, b in self._deck_btns.items():
+            b.setProperty("active", "true" if k == n else "false")
+            b.style().unpolish(b)
+            b.style().polish(b)
+        if self._last_state:
+            self.update_state(self._last_state)
+
+    def prefs_snapshot(self) -> dict:
+        return {"zoom_seconds": self._zoom, "max_decks": self._max_decks}
+
+    def update_state(self, state: dict) -> None:
+        self._last_state = state
+        self._received_at = time.time()
+        decks = list(state.get("decks") or [])
+        visible = self._visible(decks)
+        alive = {d["number"] for d in visible}
+
+        for number in list(self._cards):
+            if number not in alive:
+                card = self._cards.pop(number)
+                self.decks_layout.removeWidget(card)
+                card.deleteLater()
+
+        if not visible:
+            self.waiting.show()
+            devices = state.get("devices") or []
+            if state.get("backend_status") == "idle":
+                self.waiting.setText(self._i18n.t("idle"))
+            elif state.get("backend_status") == "connecting":
+                self.waiting.setText(self._i18n.t("connecting"))
+            elif state.get("backend_status") == "error":
+                self.waiting.setText(
+                    f"{self._i18n.t('error')}: {state.get('backend_detail') or ''}"
+                )
+            elif devices:
+                self.waiting.setText(self._i18n.t("seen_no_status"))
+            else:
+                self.waiting.setText(self._i18n.t("searching"))
+            return
+
+        self.waiting.hide()
+        dt = time.time() - self._received_at
+        # rebuild order
+        for d in visible:
+            n = d["number"]
+            if n not in self._cards:
+                card = DeckCard(n, self._i18n)
+                card.set_zoom(self._zoom)
+                self._cards[n] = card
+                # insert before stretch
+                self.decks_layout.insertWidget(self.decks_layout.count() - 1, card)
+
+            card = self._cards[n]
+            pos = float(d.get("position_ms") or 0)
+            if d.get("playing"):
+                pos += dt * 1000.0 * float(d.get("speed") or 1.0)
+            if d.get("duration_ms"):
+                pos = min(pos, float(d["duration_ms"]))
+
+            tid = d.get("track_id") or 0
+            if tid:
+                meta = self.backend.meta(tid)
+                wave = self.backend.waveform(tid) if meta else None
+                detail = overview = None
+                if wave:
+                    detail, overview = parse_waveform(wave)
+                art = self.backend.artwork(tid) if meta and meta.get("has_artwork") else None
+                if meta:
+                    card.set_track_data(meta, detail, overview, art)
+            card.update_deck(d, pos)
+
+    def _visible(self, decks: list[dict]) -> list[dict]:
+        ranked = sorted(
+            decks,
+            key=lambda d: (0 if d.get("track_id") else 1, d.get("number", 0)),
+        )
+        if not self._show_empty:
+            ranked = [d for d in ranked if d.get("track_id")]
+        picked = ranked[: self._max_decks]
+        return sorted(picked, key=lambda d: d.get("number", 0))
+
+
+class DevicesPage(Page):
+    def __init__(self, i18n, parent=None):
+        super().__init__(i18n, "devices_title", "devices_sub", parent)
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels([
+            i18n.t("col_number"), i18n.t("col_name"),
+            i18n.t("col_kind"), i18n.t("col_ip"),
+        ])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setAlternatingRowColors(False)
+        self.layout_root.addWidget(self.table, 1)
+        self.empty = QLabel(i18n.t("no_devices"))
+        self.empty.setObjectName("Dim")
+        self.layout_root.addWidget(self.empty)
+
+    def retranslate(self) -> None:
+        super().retranslate()
+        self.table.setHorizontalHeaderLabels([
+            self._i18n.t("col_number"), self._i18n.t("col_name"),
+            self._i18n.t("col_kind"), self._i18n.t("col_ip"),
+        ])
+        self.empty.setText(self._i18n.t("no_devices"))
+
+    def update_state(self, state: dict) -> None:
+        devices = state.get("devices") or []
+        self.empty.setVisible(not devices)
+        self.table.setRowCount(len(devices))
+        for row, d in enumerate(devices):
+            vals = [str(d.get("number", "")), d.get("name", ""),
+                    d.get("kind", ""), d.get("ip", "")]
+            for col, val in enumerate(vals):
+                item = QTableWidgetItem(val)
+                self.table.setItem(row, col, item)
+
+
+class LibraryPage(Page):
+    def __init__(self, i18n, parent=None):
+        super().__init__(i18n, "library_title", "library_sub", parent)
+        self.grid = QGridLayout()
+        self.grid.setSpacing(12)
+        self.cards: dict[str, QLabel] = {}
+        wrap = QFrame()
+        wrap.setObjectName("Card")
+        wrap_l = QVBoxLayout(wrap)
+        wrap_l.setContentsMargins(18, 18, 18, 18)
+        wrap_l.addLayout(self.grid)
+        self.host_label = QLabel("")
+        self.host_label.setObjectName("Dim")
+        wrap_l.addWidget(self.host_label)
+        self.error_label = QLabel("")
+        self.error_label.setStyleSheet(f"color:{COLORS['danger']};")
+        wrap_l.addWidget(self.error_label)
+        self.layout_root.addWidget(wrap)
+        self.layout_root.addStretch(1)
+        for i, key in enumerate(("tracks", "artists", "albums")):
+            title = QLabel(i18n.t(key).upper())
+            title.setObjectName("SectionTitle")
+            value = QLabel("—")
+            value.setStyleSheet("font-family:monospace; font-size:28px; font-weight:700;")
+            self.grid.addWidget(title, 0, i)
+            self.grid.addWidget(value, 1, i)
+            self.cards[key] = value
+
+    def retranslate(self) -> None:
+        super().retranslate()
+        # section labels are recreated via keys on next update; title/sub handled
+
+    def update_state(self, state: dict) -> None:
+        lib = state.get("library") or {}
+        for key, label in self.cards.items():
+            label.setText(str(lib.get(key, "—")) if lib else "—")
+        host = state.get("host") or ""
+        self.host_label.setText(host)
+        err = state.get("library_error") or ""
+        self.error_label.setText(err if not lib else "")
+
+
+class SettingsPage(Page):
+    saved = Signal(dict, bool)  # settings, reconnect
+
+    def __init__(self, i18n, parent=None):
+        super().__init__(i18n, "settings_title", "settings_sub", parent)
+        self._i18n = i18n
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        body = QWidget()
+        form_wrap = QVBoxLayout(body)
+        form_wrap.setSpacing(18)
+
+        def section(title_key: str) -> QFormLayout:
+            box = QFrame()
+            box.setObjectName("Card")
+            lay = QVBoxLayout(box)
+            lay.setContentsMargins(18, 16, 18, 16)
+            lbl = QLabel(i18n.t(title_key))
+            lbl.setObjectName("SectionTitle")
+            lay.addWidget(lbl)
+            form = QFormLayout()
+            form.setSpacing(10)
+            form.setLabelAlignment(Qt.AlignLeft)
+            lay.addLayout(form)
+            form_wrap.addWidget(box)
+            return form
+
+        conn = section("section_connection")
+        self.mode = QComboBox()
+        self.mode.addItem(i18n.t("mode_auto"), "auto")
+        self.mode.addItem(i18n.t("mode_vcdj"), "vcdj")
+        self.mode.addItem(i18n.t("mode_sniffer"), "sniffer")
+        self.host = QLineEdit()
+        self.host.setPlaceholderText(i18n.t("host_hint"))
+        self.number = QSpinBox()
+        self.number.setRange(1, 6)
+        self.name = QLineEdit()
+        self.port = QSpinBox()
+        self.port.setRange(1, 65535)
+        self.iface = QLineEdit()
+        self.tshark = QLineEdit()
+        self.cache = QLineEdit()
+        conn.addRow(i18n.t("mode"), self.mode)
+        conn.addRow(i18n.t("host"), self.host)
+        conn.addRow(i18n.t("device_number"), self.number)
+        conn.addRow(i18n.t("device_name"), self.name)
+        conn.addRow(i18n.t("port"), self.port)
+        conn.addRow(i18n.t("iface"), self.iface)
+        conn.addRow(i18n.t("tshark"), self.tshark)
+        conn.addRow(i18n.t("cache"), self.cache)
+
+        disp = section("section_display")
+        self.max_decks = QComboBox()
+        for n in (2, 3, 4):
+            self.max_decks.addItem(str(n), n)
+        self.zoom = QComboBox()
+        for s in (4, 8, 16, 32):
+            self.zoom.addItem(f"{s}s", s)
+        self.language = QComboBox()
+        self.language.addItem("English", "en")
+        self.language.addItem("Español", "es")
+        self.show_empty = QCheckBox(i18n.t("show_empty"))
+        self.poll_hz = QSpinBox()
+        self.poll_hz.setRange(5, 30)
+        disp.addRow(i18n.t("max_decks"), self.max_decks)
+        disp.addRow(i18n.t("zoom"), self.zoom)
+        disp.addRow(i18n.t("language"), self.language)
+        disp.addRow(i18n.t("poll_hz"), self.poll_hz)
+        disp.addRow("", self.show_empty)
+
+        beh = section("section_behaviour")
+        self.auto_connect = QCheckBox(i18n.t("auto_connect"))
+        self.start_web = QCheckBox(i18n.t("start_web"))
+        beh.addRow(self.auto_connect)
+        beh.addRow(self.start_web)
+
+        form_wrap.addStretch(1)
+        scroll.setWidget(body)
+        self.layout_root.addWidget(scroll, 1)
+
+        actions = QHBoxLayout()
+        self.save_btn = QPushButton(i18n.t("save"))
+        self.save_btn.setObjectName("Primary")
+        self.save_btn.setCursor(Qt.PointingHandCursor)
+        self.apply_btn = QPushButton(i18n.t("apply_reconnect"))
+        self.apply_btn.setCursor(Qt.PointingHandCursor)
+        self.save_btn.clicked.connect(lambda: self._emit(False))
+        self.apply_btn.clicked.connect(lambda: self._emit(True))
+        actions.addWidget(self.save_btn)
+        actions.addWidget(self.apply_btn)
+        actions.addStretch(1)
+        self.layout_root.addLayout(actions)
+
+        self._labels = {
+            "mode": conn.labelForField(self.mode),
+            "host": conn.labelForField(self.host),
+        }
+
+    def load_settings(self, data: dict) -> None:
+        idx = self.mode.findData(data.get("mode", "auto"))
+        self.mode.setCurrentIndex(max(0, idx))
+        self.host.setText(data.get("host") or "")
+        self.number.setValue(int(data.get("number", 5)))
+        self.name.setText(data.get("name") or "monitor")
+        self.port.setValue(int(data.get("port", 8777)))
+        self.iface.setText(data.get("iface") or "")
+        self.tshark.setText(data.get("tshark") or "")
+        self.cache.setText(data.get("cache") or "")
+        idx = self.max_decks.findData(int(data.get("max_decks", 4)))
+        self.max_decks.setCurrentIndex(max(0, idx))
+        idx = self.zoom.findData(int(data.get("zoom_seconds", 8)))
+        self.zoom.setCurrentIndex(max(0, idx))
+        idx = self.language.findData(data.get("language", "en"))
+        self.language.setCurrentIndex(max(0, idx))
+        self.show_empty.setChecked(bool(data.get("show_empty_decks", True)))
+        self.poll_hz.setValue(int(data.get("poll_hz", 20)))
+        self.auto_connect.setChecked(bool(data.get("auto_connect", True)))
+        self.start_web.setChecked(bool(data.get("start_web_server", True)))
+
+    def collect(self) -> dict:
+        return {
+            "mode": self.mode.currentData(),
+            "host": self.host.text().strip(),
+            "number": self.number.value(),
+            "name": self.name.text().strip() or "monitor",
+            "port": self.port.value(),
+            "iface": self.iface.text().strip(),
+            "tshark": self.tshark.text().strip(),
+            "cache": self.cache.text().strip(),
+            "max_decks": self.max_decks.currentData(),
+            "zoom_seconds": self.zoom.currentData(),
+            "language": self.language.currentData(),
+            "show_empty_decks": self.show_empty.isChecked(),
+            "poll_hz": self.poll_hz.value(),
+            "auto_connect": self.auto_connect.isChecked(),
+            "start_web_server": self.start_web.isChecked(),
+        }
+
+    def _emit(self, reconnect: bool) -> None:
+        self.saved.emit(self.collect(), reconnect)
+
+
+class AboutPage(Page):
+    def __init__(self, i18n, parent=None):
+        super().__init__(i18n, "about_title", "about_sub", parent)
+        card = QFrame()
+        card.setObjectName("Card")
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(20, 18, 20, 18)
+        self.body = QLabel(i18n.t("about_body"))
+        self.body.setWordWrap(True)
+        self.body.setObjectName("Dim")
+        self.body.setStyleSheet(f"color:{COLORS['dim']}; line-height:1.5; font-size:13px;")
+        lay.addWidget(self.body)
+        self.layout_root.addWidget(card)
+        self.layout_root.addStretch(1)
+
+    def retranslate(self) -> None:
+        super().retranslate()
+        self.body.setText(self._i18n.t("about_body"))
