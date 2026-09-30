@@ -275,6 +275,74 @@ def decode_3band(data: bytes) -> tuple[bytearray, bytearray]:
     return heights, rgb
 
 
+def waveform_levels(a: Analysis):
+    """Heights, RGB and the three frequency bands for one analysis.
+
+    Returns (heights 0-31, rgb, lows, mids, highs). Band bytes are 0-255 and
+    share a scale, so a column can be painted as RGB (mixed), 3-Band (stacked
+    blue / orange / white, the way a CDJ draws it) or Blue.
+
+    PWV3 has no bands: lows, mids and highs are left at zero and the caller
+    falls back to the classic blue waveform.
+    """
+    if a.color_detail:
+        heights, rgb = decode_color_detail(a.color_detail)
+        n = len(heights)
+        lows, mids, highs = bytearray(n), bytearray(n), bytearray(n)
+        data = a.color_detail
+        for i in range(n):
+            x = (data[i * 2] << 8) | data[i * 2 + 1]
+            highs[i] = ((x >> 7) & 0x07) * 36
+            mids[i] = ((x >> 10) & 0x07) * 36
+            lows[i] = ((x >> 13) & 0x07) * 36
+        return heights, rgb, lows, mids, highs
+    if a.band3_detail:
+        heights, rgb = decode_3band(a.band3_detail)
+        n = len(heights)
+        lows, mids, highs = bytearray(n), bytearray(n), bytearray(n)
+        data = a.band3_detail
+        for i in range(n):
+            low, mid, high = data[i * 3], data[i * 3 + 1], data[i * 3 + 2]
+            lows[i] = min(255, low * 2)
+            mids[i] = min(255, mid * 2)
+            highs[i] = min(255, high * 2)
+        return heights, rgb, lows, mids, highs
+    if a.detail:
+        raw_h, _white = decode_blue(a.detail)
+        heights = bytearray(raw_h)
+        n = len(heights)
+        rgb = bytearray(n * 3)
+        for i in range(n):
+            rgb[i * 3:i * 3 + 3] = b"\x38\xa4\xff"
+        return heights, rgb, bytearray(n), bytearray(n), bytearray(n)
+    empty = bytearray()
+    return empty, empty, empty, empty, empty
+
+
+def downsample_bands(lows, mids, highs, width: int):
+    """Peak-preserve three band lanes down to `width` columns."""
+    n = len(lows)
+    out_l, out_m, out_h = bytearray(width), bytearray(width), bytearray(width)
+    if n == 0:
+        return out_l, out_m, out_h
+    step = n / width
+    for i in range(width):
+        lo = int(i * step)
+        hi = max(lo + 1, min(n, int((i + 1) * step)))
+        pl = pm = ph = 0
+        for j in range(lo, hi):
+            if lows[j] > pl:
+                pl = lows[j]
+            if mids[j] > pm:
+                pm = mids[j]
+            if highs[j] > ph:
+                ph = highs[j]
+        out_l[i] = pl
+        out_m[i] = pm
+        out_h[i] = ph
+    return out_l, out_m, out_h
+
+
 def downsample(heights, rgb, width: int) -> tuple[bytearray, bytearray]:
     """Reduce a detail waveform to the requested number of columns.
 

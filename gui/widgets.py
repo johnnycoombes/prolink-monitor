@@ -20,8 +20,17 @@ def mmss(ms: float) -> str:
     return f"{total // 60:02d}:{total % 60:02d}"
 
 
+# How a CDJ / rekordbox paints the three waveform colours.
+WAVE_STYLES = ("rgb", "3band", "blue")
+# 3-Band: lows blue at the centre, mids orange, highs white at the tips.
+BAND_LOW = (43, 108, 255)
+BAND_MID = (255, 154, 31)
+BAND_HIGH = (244, 246, 250)
+PLAYER_BLUE = (56, 164, 255)
+
+
 def parse_waveform(data: bytes) -> tuple[dict | None, dict | None]:
-    """Unpack the PLWF detail + overview blocks produced by app._pack_wave."""
+    """Unpack PLWF detail + overview, plus optional PLWB frequency lanes."""
     if not data or len(data) < 24:
         return None, None
 
@@ -44,9 +53,76 @@ def parse_waveform(data: bytes) -> tuple[dict | None, dict | None]:
             "rgb": data[end_h:end_rgb],
         }, end_rgb
 
+    def bands(offset: int):
+        if offset + 24 > len(data):
+            return None, offset
+        magic, _ver, n, _cps, _dur, _flags = struct.unpack_from("<4sIIfII", data, offset)
+        if magic != b"PLWB" or n < 0:
+            return None, offset
+        start = offset + 24
+        end = start + n * 3
+        if end > len(data):
+            return None, offset
+        return {
+            "n": n,
+            "low": data[start:start + n],
+            "mid": data[start + n:start + 2 * n],
+            "high": data[start + 2 * n:end],
+        }, end
+
     detail, next_off = one(0)
-    overview, _ = one(next_off) if detail else (None, 0)
+    overview, next_off = one(next_off) if detail else (None, 0)
+    detail_bands, next_off = bands(next_off)
+    overview_bands, _ = bands(next_off)
+    _attach_bands(detail, detail_bands)
+    _attach_bands(overview, overview_bands)
     return detail, overview
+
+
+def _attach_bands(wave: dict | None, bands: dict | None) -> None:
+    if not wave or not bands or bands["n"] != wave["n"]:
+        return
+    wave["low"] = bands["low"]
+    wave["mid"] = bands["mid"]
+    wave["high"] = bands["high"]
+
+
+def _paint_column(p: QPainter, x: int, mid: float, amp: float, style: str,
+                  src: int, wave: dict) -> None:
+    """One waveform column, mirrored around the centre line."""
+    if amp < 0.5:
+        return
+    lows = wave.get("low")
+    if style == "3band" and lows and src < len(lows):
+        low = lows[src]
+        md = wave["mid"][src]
+        hi = wave["high"][src]
+        total = low + md + hi
+        if total > 0:
+            bh = amp * low / total
+            mh = amp * md / total
+            hh = amp * hi / total
+            p.fillRect(x, int(mid - bh), 1, max(1, int(bh * 2)), QColor(*BAND_LOW))
+            if mh >= 0.4:
+                p.fillRect(x, int(mid - bh - mh), 1, max(1, int(mh)), QColor(*BAND_MID))
+                p.fillRect(x, int(mid + bh), 1, max(1, int(mh)), QColor(*BAND_MID))
+            if hh >= 0.4:
+                outer = bh + mh
+                p.fillRect(x, int(mid - outer - hh), 1, max(1, int(hh)), QColor(*BAND_HIGH))
+                p.fillRect(x, int(mid + outer), 1, max(1, int(hh)), QColor(*BAND_HIGH))
+            return
+    heights = wave["h"]
+    if style in ("blue", "3band"):
+        lift = int((heights[src] / 31.0) * 48) if heights else 0
+        color = QColor(
+            min(255, PLAYER_BLUE[0] + lift // 3),
+            min(255, PLAYER_BLUE[1]),
+            255,
+        )
+    else:
+        rgb = wave["rgb"]
+        color = QColor(rgb[src * 3], rgb[src * 3 + 1], rgb[src * 3 + 2])
+    p.fillRect(x, int(mid - amp), 1, max(1, int(amp * 2)), color)
 
 
 class Sidebar(QFrame):
@@ -115,6 +191,7 @@ class WaveformView(QWidget):
         self._playing = False
         self._zoom = 8
         self._offair = False
+        self._style = "rgb"
 
     def set_deck_color(self, color: str) -> None:
         self._color = QColor(color)
@@ -122,6 +199,10 @@ class WaveformView(QWidget):
 
     def set_zoom(self, seconds: int) -> None:
         self._zoom = seconds
+        self.update()
+
+    def set_style(self, style: str) -> None:
+        self._style = style if style in WAVE_STYLES else "rgb"
         self.update()
 
     def set_offair(self, off: bool) -> None:
@@ -165,24 +246,17 @@ class WaveformView(QWidget):
             return
         n = ov["n"]
         heights = ov["h"]
-        rgb = ov["rgb"]
         mid = y0 + h / 2
-        # cache-ish: draw columns directly
         for x in range(w):
             i = min(n - 1, (x * n) // w)
             tall = (heights[i] / 31.0) * (h / 2) * 0.94
-            color = QColor(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2])
-            color.setAlpha(140)
-            p.fillRect(x0 + x, int(mid - tall), 1, max(1, int(tall * 2)), color)
+            _paint_column(p, x0 + x, mid, tall, self._style, i, ov)
 
         dur = (self._meta or {}).get("duration_ms") or ov.get("dur") or 1
         px = max(0, min(w, int((self._pos_ms / max(1, dur)) * w)))
-        # played portion full brightness
-        for x in range(px):
-            i = min(n - 1, (x * n) // w)
-            tall = (heights[i] / 31.0) * (h / 2) * 0.94
-            color = QColor(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2])
-            p.fillRect(x0 + x, int(mid - tall), 1, max(1, int(tall * 2)), color)
+        if px < w:
+            shade = QColor(8, 10, 12, 150)
+            p.fillRect(x0 + px, y0, w - px, h, shade)
 
         for cue in (self._meta or {}).get("cues") or []:
             cx = int((cue.get("t", 0) / max(1, dur)) * w)
@@ -199,7 +273,6 @@ class WaveformView(QWidget):
         n = d["n"]
         cps = d["cps"] or 150.0
         heights = d["h"]
-        rgb = d["rgb"]
         mid = y0 + h / 2
         visible = max(1.0, self._zoom * cps)
         px_per_col = w / visible
@@ -237,9 +310,8 @@ class WaveformView(QWidget):
                 if heights[i] > tall:
                     tall = heights[i]
                     src = i
-            a = (tall / 31.0) * (h / 2) * 0.92
-            color = QColor(rgb[src * 3], rgb[src * 3 + 1], rgb[src * 3 + 2])
-            p.fillRect(x0 + px, int(mid - a), 1, max(1, int(a * 2)), color)
+            amp = (tall / 31.0) * (h / 2) * 0.92
+            _paint_column(p, x0 + px, mid, amp, self._style, src, d)
 
         for cue in (self._meta or {}).get("cues") or []:
             x = int(((cue.get("t", 0) / 1000.0) * cps - start) * px_per_col)
@@ -381,6 +453,9 @@ class DeckCard(QFrame):
 
     def set_zoom(self, seconds: int) -> None:
         self.wave.set_zoom(seconds)
+
+    def set_wave_style(self, style: str) -> None:
+        self.wave.set_style(style)
 
     def set_track_data(self, meta: dict | None, detail, overview, art: bytes | None) -> None:
         self._meta = meta

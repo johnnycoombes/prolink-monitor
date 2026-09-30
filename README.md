@@ -91,6 +91,10 @@ The monitor core itself still needs no packages; PySide6 is only for the desktop
 shell. The optional local web panel can be started from Settings and opened with
 **Open web panel**.
 
+Waveform colour follows the player: **RGB** (mixed lows/mids/highs), **3BAND**
+(blue, orange and white stacked the way a CDJ draws it) or **BLUE**. The choice
+is on the Monitor page and under Settings, and the web panel has the same switch.
+
 ### Web panel
 
 ```bash
