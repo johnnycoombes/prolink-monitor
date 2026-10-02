@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QEvent
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy, QSpinBox,
@@ -57,6 +57,9 @@ class MonitorPage(Page):
         self._last_state: dict[str, Any] | None = None
         self._received_at = 0.0
 
+        self.layout_root.setContentsMargins(20, 14, 20, 12)
+        self.layout_root.setSpacing(10)
+
         tools = QHBoxLayout()
         tools.setSpacing(8)
         zoom_lbl = QLabel(i18n.t("zoom"))
@@ -106,16 +109,18 @@ class MonitorPage(Page):
         )
         self.layout_root.addWidget(self.waiting)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.decks_host = QWidget()
+        self.decks_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.decks_layout = QVBoxLayout(self.decks_host)
         self.decks_layout.setContentsMargins(0, 0, 0, 0)
-        self.decks_layout.setSpacing(10)
-        self.decks_layout.addStretch(1)
-        scroll.setWidget(self.decks_host)
-        self.layout_root.addWidget(scroll, 1)
+        self.decks_layout.setSpacing(8)
+        self.scroll.setWidget(self.decks_host)
+        self.layout_root.addWidget(self.scroll, 1)
+        self.scroll.viewport().installEventFilter(self)
 
         self.set_zoom(8)
         self.set_max_decks(4)
@@ -132,6 +137,7 @@ class MonitorPage(Page):
         self._elements = deck_elements_from(settings)
         for card in self._cards.values():
             card.apply_elements(self._elements)
+        self._relayout_deck_heights()
 
     def set_zoom(self, seconds: int) -> None:
         self._zoom = seconds
@@ -150,6 +156,8 @@ class MonitorPage(Page):
             b.style().polish(b)
         if self._last_state:
             self.update_state(self._last_state)
+        else:
+            self._relayout_deck_heights()
 
     def set_wave_style(self, style: str) -> None:
         self._wave_style = style if style in ("rgb", "3band", "blue") else "rgb"
@@ -168,6 +176,32 @@ class MonitorPage(Page):
             **self._elements,
         }
 
+    def eventFilter(self, obj, event):  # noqa: N802
+        if obj is self.scroll.viewport() and event.type() == QEvent.Type.Resize:
+            self._relayout_deck_heights()
+        return super().eventFilter(obj, event)
+
+    def _relayout_deck_heights(self) -> None:
+        """Split the Monitor viewport evenly so waveforms fill the panel."""
+        cards = [self._cards[n] for n in sorted(self._cards)]
+        n = len(cards)
+        vh = max(0, self.scroll.viewport().height())
+        if n == 0:
+            self.decks_host.setMinimumHeight(0)
+            return
+        spacing = self.decks_layout.spacing() * (n - 1)
+        # Always divide the visible panel so cards fill it (no dead space below).
+        # Soft floor keeps a usable waveform when the window is very short.
+        floor = 140 if self._elements.get("deck_show_waveform", True) else 80
+        natural = ((vh - spacing) // n) if vh else floor
+        per = max(floor, natural)
+        for card in cards:
+            card.set_fill_height(per)
+        total = per * n + spacing
+        # Match the viewport when we fit; grow (scroll) only if the floor forces it.
+        self.decks_host.setMinimumHeight(max(vh, total))
+        self.decks_host.setMaximumHeight(16777215)
+
     def update_state(self, state: dict) -> None:
         self._last_state = state
         self._received_at = time.time()
@@ -183,6 +217,7 @@ class MonitorPage(Page):
 
         if not visible:
             self.waiting.show()
+            self._relayout_deck_heights()
             devices = state.get("devices") or []
             if state.get("backend_status") == "idle":
                 self.waiting.setText(self._i18n.t("idle"))
@@ -209,8 +244,7 @@ class MonitorPage(Page):
                 card.set_wave_style(self._wave_style)
                 card.apply_elements(self._elements)
                 self._cards[n] = card
-                # insert before stretch
-                self.decks_layout.insertWidget(self.decks_layout.count() - 1, card)
+                self.decks_layout.addWidget(card, 1)
 
             card = self._cards[n]
             pos = float(d.get("position_ms") or 0)
@@ -235,6 +269,12 @@ class MonitorPage(Page):
                 if meta:
                     card.set_track_data(meta, detail, overview, art)
             card.update_deck(d, pos)
+
+        # Keep layout order matching deck numbers.
+        for i, d in enumerate(visible):
+            card = self._cards[d["number"]]
+            self.decks_layout.insertWidget(i, card, 1)
+        self._relayout_deck_heights()
 
     def _visible(self, decks: list[dict]) -> list[dict]:
         ranked = sorted(
