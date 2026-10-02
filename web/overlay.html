@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Engine Room — OBS Overlay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Archivo:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --text:#f4f6fb;
+  --dim:rgba(244,246,251,.72);
+  --dimmest:rgba(244,246,251,.42);
+  --line:rgba(255,255,255,.14);
+  --panel:rgba(8,10,14,.78);
+  --accent:#22d3ee;
+  --d1:#ffb020;
+  --d2:#22d3ee;
+  --d3:#f472b6;
+  --d4:#4ade80;
+  --mono:'Chakra Petch',Consolas,monospace;
+  --sans:'Archivo','Segoe UI',sans-serif;
+  --shadow:0 18px 50px rgba(0,0,0,.45);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{
+  width:100%;height:100%;
+  background:transparent !important;
+  overflow:hidden;
+  font-family:var(--sans);
+  color:var(--text);
+  -webkit-font-smoothing:antialiased;
+}
+body.preview{
+  background:radial-gradient(circle at 20% 10%,#1a2230,#07080a 55%) !important;
+}
+#root{
+  width:100%;height:100%;
+  display:flex;align-items:flex-end;justify-content:flex-start;
+  padding:4vh 3.5vw;
+}
+#root.corner-tr{align-items:flex-start;justify-content:flex-end}
+#root.corner-tl{align-items:flex-start;justify-content:flex-start}
+#root.corner-br{align-items:flex-end;justify-content:flex-end}
+#root.corner-bl{align-items:flex-end;justify-content:flex-start}
+#root.center{align-items:center;justify-content:center}
+
+.card{
+  display:none;
+  min-width:min(520px,92vw);
+  max-width:min(760px,96vw);
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:16px;
+  box-shadow:var(--shadow);
+  backdrop-filter:blur(14px);
+  -webkit-backdrop-filter:blur(14px);
+  overflow:hidden;
+  opacity:0;
+  transform:translateY(12px);
+  transition:opacity .35s ease, transform .35s ease;
+}
+.card.show{display:block;opacity:1;transform:none}
+.card.hide{opacity:0;transform:translateY(12px)}
+
+.now{
+  display:grid;
+  grid-template-columns:108px 1fr;
+  gap:16px;
+  padding:16px 18px;
+  align-items:center;
+}
+.now .art{
+  width:108px;height:108px;border-radius:12px;
+  background:rgba(255,255,255,.06);
+  border:1px solid var(--line);
+  object-fit:cover;
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:34px;color:var(--dimmest);
+}
+.now .art img{width:100%;height:100%;object-fit:cover;border-radius:12px;display:block}
+.meta{min-width:0}
+.tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.tag{
+  font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.12em;
+  text-transform:uppercase;padding:2px 7px;border-radius:999px;
+  border:1px solid currentColor;color:var(--accent);
+}
+.tag.deck{color:var(--deck,#22d3ee)}
+.tag.master{color:#ffd45e}
+.tag.sync{color:var(--dim)}
+.tag.onair{color:#ff6b61;background:rgba(255,107,97,.12)}
+.title{
+  font-size:clamp(20px,2.4vw,28px);font-weight:700;line-height:1.15;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.artist{
+  margin-top:4px;font-size:clamp(14px,1.5vw,17px);color:var(--dim);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.readouts{
+  margin-top:12px;display:flex;gap:14px;align-items:baseline;flex-wrap:wrap;
+  font-family:var(--mono);font-variant-numeric:tabular-nums;
+}
+.bpm{font-size:22px;font-weight:700}
+.bpm small{font-size:11px;letter-spacing:.12em;color:var(--dimmest);margin-left:4px}
+.key{font-size:15px;font-weight:700;color:var(--deck,#22d3ee)}
+.time{font-size:13px;color:var(--dim)}
+.progress{
+  margin-top:12px;height:4px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden;
+}
+.progress > i{
+  display:block;height:100%;width:0%;
+  background:linear-gradient(90deg,var(--deck,#22d3ee),#fff);
+  transition:width .08s linear;
+}
+
+.dual{
+  display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px;
+  min-width:min(860px,96vw);max-width:1200px;
+}
+.dual .slot{
+  display:grid;grid-template-columns:72px 1fr;gap:12px;align-items:center;
+  padding:12px;border:1px solid var(--line);border-radius:14px;background:rgba(0,0,0,.22);
+}
+.dual .art{width:72px;height:72px;font-size:24px;border-radius:10px}
+.dual .art img{border-radius:10px}
+.dual .title{font-size:16px}
+.dual .artist{font-size:13px}
+.dual .bpm{font-size:18px}
+.dual .progress{margin-top:8px}
+
+.minimal{
+  display:flex;align-items:center;gap:12px;
+  padding:10px 14px 10px 10px;
+  min-width:0;
+}
+.minimal .art{width:54px;height:54px;border-radius:10px;font-size:20px}
+.minimal .art img{border-radius:10px}
+.minimal .title{font-size:16px}
+.minimal .artist{font-size:12px;margin-top:2px}
+.minimal .bpm{margin-left:auto;font-family:var(--mono);font-size:18px;font-weight:700;white-space:nowrap}
+
+#idle{
+  display:none;
+  font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--dimmest);padding:10px 14px;border:1px dashed var(--line);border-radius:10px;
+  background:rgba(0,0,0,.25);
+}
+#idle.show{display:inline-block}
+
+@media (max-width:720px){
+  .dual{grid-template-columns:1fr}
+  .now{grid-template-columns:84px 1fr}
+  .now .art{width:84px;height:84px}
+}
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="idle">waiting for player</div>
+  <div id="card" class="card"></div>
+</div>
+
+<script>
+const DECK_COLORS = {1:'#ffb020',2:'#22d3ee',3:'#f472b6',4:'#4ade80',5:'#ffb020',6:'#22d3ee'};
+const params = new URLSearchParams(location.search);
+const layout = ['nowplaying','dual','minimal'].includes(params.get('layout'))
+  ? params.get('layout') : 'nowplaying';
+const corner = ['bl','br','tl','tr','center'].includes(params.get('corner'))
+  ? params.get('corner') : 'bl';
+const onlyPlaying = params.get('playing') !== '0';
+const preview = params.get('preview') === '1';
+const maxDecks = Math.min(4, Math.max(1, +(params.get('decks') || (layout === 'dual' ? 2 : 1))));
+
+if (preview) document.body.classList.add('preview');
+document.getElementById('root').classList.add('corner-' + corner);
+
+const tracks = new Map();
+const pending = new Set();
+let last = null;
+let receivedAt = 0;
+let artIds = new Set();
+
+function mmss(ms){
+  ms = Math.max(0, ms|0);
+  const t = Math.floor(ms/1000);
+  return `${String(Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`;
+}
+
+function visibleDecks(list){
+  let rows = [...(list||[])];
+  if (onlyPlaying) rows = rows.filter(d => d.playing || d.track_id);
+  rows.sort((a,b) => (a.track_id?0:1)-(b.track_id?0:1) || a.number-b.number);
+  return rows.slice(0, maxDecks).sort((a,b)=>a.number-b.number);
+}
+
+async function loadTrack(id){
+  if (!id || tracks.has(id) || pending.has(id)) return;
+  pending.add(id);
+  try{
+    const meta = await fetch(`/api/track/${id}`).then(r => r.ok ? r.json() : null);
+    if (meta) tracks.set(id, meta);
+  } finally { pending.delete(id); }
+}
+
+function artHtml(trackId, meta){
+  if (trackId && meta && meta.has_artwork)
+    return `<div class="art"><img alt="" src="/api/artwork/${trackId}"></div>`;
+  return `<div class="art">♪</div>`;
+}
+
+function tagsHtml(deck){
+  const bits = [`<span class="tag deck">DECK ${deck.number}</span>`];
+  if (deck.master) bits.push('<span class="tag master">MASTER</span>');
+  if (deck.sync) bits.push('<span class="tag sync">SYNC</span>');
+  if (deck.on_air) bits.push('<span class="tag onair">ON AIR</span>');
+  return `<div class="tags">${bits.join('')}</div>`;
+}
+
+function progressPct(pos, dur){
+  if (!dur) return 0;
+  return Math.max(0, Math.min(100, (pos/dur)*100));
+}
+
+function renderNow(deck, pos){
+  const meta = tracks.get(deck.track_id);
+  const title = meta ? (meta.title || '—') : (deck.track_id ? 'loading…' : 'no track');
+  const artist = meta ? (meta.artist || '') : '';
+  const key = meta ? (meta.key || '') : '';
+  const color = DECK_COLORS[deck.number] || '#22d3ee';
+  return `
+    <div class="now" style="--deck:${color}">
+      ${artHtml(deck.track_id, meta)}
+      <div class="meta">
+        ${tagsHtml(deck)}
+        <div class="title">${escapeHtml(title)}</div>
+        <div class="artist">${escapeHtml(artist)}</div>
+        <div class="readouts">
+          <div class="bpm">${deck.bpm ? deck.bpm.toFixed(2) : '—'}<small>BPM</small></div>
+          ${key ? `<div class="key">${escapeHtml(key)}</div>` : ''}
+          <div class="time">${mmss(pos)}${deck.duration_ms ? ' / '+mmss(deck.duration_ms) : ''}</div>
+        </div>
+        <div class="progress"><i style="width:${progressPct(pos, deck.duration_ms)}%"></i></div>
+      </div>
+    </div>`;
+}
+
+function renderMinimal(deck, pos){
+  const meta = tracks.get(deck.track_id);
+  const title = meta ? (meta.title || '—') : (deck.track_id ? 'loading…' : 'no track');
+  const artist = meta ? (meta.artist || '') : '';
+  const color = DECK_COLORS[deck.number] || '#22d3ee';
+  return `
+    <div class="minimal" style="--deck:${color}">
+      ${artHtml(deck.track_id, meta)}
+      <div class="meta" style="min-width:0">
+        <div class="title">${escapeHtml(title)}</div>
+        <div class="artist">${escapeHtml(artist)}</div>
+      </div>
+      <div class="bpm" style="color:${color}">${deck.bpm ? deck.bpm.toFixed(1) : '—'}</div>
+    </div>`;
+}
+
+function renderDual(decks, positions){
+  return `<div class="dual">${decks.map((d,i)=>`
+    <div class="slot" style="--deck:${DECK_COLORS[d.number]||'#22d3ee'}">
+      ${artHtml(d.track_id, tracks.get(d.track_id))}
+      <div class="meta">
+        ${tagsHtml(d)}
+        <div class="title">${escapeHtml((tracks.get(d.track_id)||{}).title || (d.track_id?'loading…':'no track'))}</div>
+        <div class="artist">${escapeHtml((tracks.get(d.track_id)||{}).artist || '')}</div>
+        <div class="readouts">
+          <div class="bpm">${d.bpm?d.bpm.toFixed(2):'—'}<small>BPM</small></div>
+          <div class="time">${mmss(positions[i])}</div>
+        </div>
+        <div class="progress"><i style="width:${progressPct(positions[i], d.duration_ms)}%"></i></div>
+      </div>
+    </div>`).join('')}</div>`;
+}
+
+function escapeHtml(s){
+  return String(s||'').replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+function paint(){
+  const card = document.getElementById('card');
+  const idle = document.getElementById('idle');
+  if (!last){
+    card.classList.remove('show');
+    idle.classList.add('show');
+    return;
+  }
+  const dt = (performance.now() - receivedAt) / 1000;
+  const decks = visibleDecks(last.decks);
+  if (!decks.length || !decks.some(d => d.track_id)){
+    card.classList.remove('show');
+    idle.classList.add('show');
+    return;
+  }
+  idle.classList.remove('show');
+  const positions = decks.map(d => {
+    let pos = +(d.position_ms||0) + (d.playing ? dt*1000*(d.speed||1) : 0);
+    if (d.duration_ms) pos = Math.min(pos, d.duration_ms);
+    return pos;
+  });
+  for (const d of decks) if (d.track_id) loadTrack(d.track_id);
+
+  let html = '';
+  if (layout === 'dual') html = renderDual(decks, positions);
+  else if (layout === 'minimal') html = renderMinimal(decks[0], positions[0]);
+  else html = renderNow(decks[0], positions[0]);
+
+  // Avoid wiping artwork flashes: only replace when structure changes.
+  const sig = decks.map(d => `${d.number}:${d.track_id||0}:${!!tracks.get(d.track_id)}`).join('|') + '|' + layout;
+  if (card.dataset.sig !== sig){
+    card.innerHTML = html;
+    card.dataset.sig = sig;
+  } else {
+    // update live bits in place
+    card.querySelectorAll('.progress > i').forEach((el,i)=>{
+      el.style.width = progressPct(positions[i] ?? positions[0], decks[i]?.duration_ms || decks[0].duration_ms) + '%';
+    });
+    card.querySelectorAll('.time').forEach((el,i)=>{
+      const d = decks[i] || decks[0];
+      const pos = positions[i] ?? positions[0];
+      if (layout === 'nowplaying')
+        el.textContent = `${mmss(pos)}${d.duration_ms ? ' / '+mmss(d.duration_ms) : ''}`;
+      else
+        el.textContent = mmss(pos);
+    });
+    card.querySelectorAll('.bpm').forEach((el,i)=>{
+      const d = decks[Math.min(i, decks.length-1)];
+      if (!d) return;
+      if (layout === 'minimal')
+        el.textContent = d.bpm ? d.bpm.toFixed(1) : '—';
+      else
+        el.innerHTML = `${d.bpm ? d.bpm.toFixed(2) : '—'}<small>BPM</small>`;
+    });
+  }
+  card.classList.add('show');
+}
+
+function applyState(state){
+  last = state;
+  receivedAt = performance.now();
+}
+
+function connect(){
+  const es = new EventSource('/api/events');
+  es.onmessage = ev => applyState(JSON.parse(ev.data));
+  es.onerror = () => {
+    es.close();
+    setTimeout(connect, 1500);
+  };
+}
+
+function loop(){
+  requestAnimationFrame(loop);
+  paint();
+}
+
+connect();
+loop();
+</script>
+</body>
+</html>

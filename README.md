@@ -19,10 +19,11 @@ Compared with the [original project](https://github.com/fidow/prolink-monitor):
 
 | | Original | This fork |
 |---|---|---|
-| UI | Browser panel (`python app.py`) | Same web panel **plus** a native **Engine Room** desktop app (`python desktop.py`) |
-| Navigation | Single live panel | Sidebar: Monitor, Devices, Library, Settings, About |
+| UI | Browser panel (`python app.py`) | Same web panel **plus** a native **Engine Room** desktop app (`python desktop.py`) and an **OBS Browser Source** overlay |
+| Navigation | Single live panel | Sidebar: Monitor, Devices, Library, Overlay, Settings, About |
 | Settings | Zoom / decks remembered in the browser | Connection and display settings saved under `~/.prolink-monitor/` |
 | Waveforms | Colour detail (RGB) with blue fallback | Switchable **RGB**, **3-Band** and **Blue**, parsed like [Beat Link `WaveformDetail`](https://deepsymmetry.org/beatlink/apidocs/org/deepsymmetry/beatlink/data/WaveformDetail.html) |
+| Streaming | — | Transparent `/overlay` page for OBS (now playing / dual / minimal) |
 | Language | English / Spanish | English only |
 
 Everything else — Pro DJ Link engine, NFS library, console monitor, protocol probe —
@@ -97,17 +98,46 @@ python desktop.py
 ```
 
 Or `python -m gui`. The window has a sidebar for **Monitor**, **Devices**,
-**Library**, **Settings** and **About**. Connection mode, player address, device
+**Library**, **Overlay**, **Settings** and **About**. Connection mode, player address, device
 number, zoom, visible decks, waveform style and more live under Settings and are
 saved to `~/.prolink-monitor/settings.json`.
 
 The monitor core itself still needs no packages; PySide6 is only for the desktop
-shell. The optional local web panel can be started from Settings and opened with
-**Open web panel**.
+shell. The optional local web server can be started from Settings and opened with
+**Open web panel**. The **Overlay** page builds a transparent OBS Browser Source
+URL from the same server.
 
 Waveform colour follows the player: **RGB**, **3BAND** (stacked blue / amber /
 white the way a CDJ draws it) or **BLUE**. The same switch is on the Monitor page,
 in Settings, and on the web panel.
+
+### OBS overlay
+
+With the web server running (via `python app.py` or the desktop app), add a
+**Browser** source in OBS pointed at:
+
+```
+http://127.0.0.1:8777/overlay
+```
+
+The page background is transparent. Query parameters:
+
+| Param | Values | Default | Meaning |
+|---|---|---|---|
+| `layout` | `nowplaying` / `dual` / `minimal` | `nowplaying` | Card style |
+| `corner` | `bl` / `br` / `tl` / `tr` / `center` | `bl` | Screen corner |
+| `decks` | `1`–`4` | `1` (`2` for dual) | How many decks to show |
+| `playing` | `1` / `0` | `1` | Only decks that have a track |
+| `preview` | `1` / `0` | `0` | Dark preview background (local testing) |
+
+Example:
+
+```
+http://127.0.0.1:8777/overlay?layout=dual&corner=br&decks=2
+```
+
+In the desktop app, open **Overlay**, pick layout/corner, then **Copy URL** into
+OBS. Set the Browser source size to your canvas (e.g. 1920×1080).
 
 ### Web panel
 
@@ -280,6 +310,7 @@ app.py              web server and API
 monitor.py          console monitor
 probe.py            protocol probe: reports bytes that change
 web/index.html      the panel
+web/overlay.html    transparent OBS Browser Source overlay
 requirements.txt    desktop dependency (PySide6)
 prolink/
   proto.py          Pro DJ Link packets (keep-alive, beat, status)
@@ -294,6 +325,8 @@ prolink/
 
 | Route | Returns |
 |---|---|
+| `/` | live monitor panel |
+| `/overlay` | transparent OBS overlay |
 | `/api/state` | full state as JSON |
 | `/api/events` | the same state over SSE, 20 times a second |
 | `/api/track/<id>` | metadata, beat grid, cues and phrases |

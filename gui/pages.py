@@ -312,6 +312,164 @@ class LibraryPage(Page):
         self.error_label.setText(err if not lib else "")
 
 
+class OverlayPage(Page):
+    """Build and copy an OBS Browser Source URL for web/overlay.html."""
+
+    prefs_changed = Signal(dict)
+
+    def __init__(self, i18n, backend, parent=None):
+        super().__init__(i18n, "overlay_title", "overlay_sub", parent)
+        self.backend = backend
+        self._port = 8777
+
+        howto = QLabel(i18n.t("overlay_howto"))
+        howto.setObjectName("Dim")
+        howto.setWordWrap(True)
+        howto.setStyleSheet(f"color:{COLORS['dim']}; line-height:1.45; font-size:13px;")
+        self.layout_root.addWidget(howto)
+
+        card = QFrame()
+        card.setObjectName("Card")
+        form = QFormLayout(card)
+        form.setContentsMargins(18, 16, 18, 16)
+        form.setSpacing(12)
+        form.setLabelAlignment(Qt.AlignLeft)
+
+        self.layout_box = QComboBox()
+        self.layout_box.addItem(i18n.t("overlay_layout_now"), "nowplaying")
+        self.layout_box.addItem(i18n.t("overlay_layout_dual"), "dual")
+        self.layout_box.addItem(i18n.t("overlay_layout_min"), "minimal")
+        self.corner_box = QComboBox()
+        for key, label in (
+            ("bl", "overlay_corner_bl"),
+            ("br", "overlay_corner_br"),
+            ("tl", "overlay_corner_tl"),
+            ("tr", "overlay_corner_tr"),
+            ("center", "overlay_corner_center"),
+        ):
+            self.corner_box.addItem(i18n.t(label), key)
+        self.decks_box = QComboBox()
+        for n in (1, 2, 3, 4):
+            self.decks_box.addItem(str(n), n)
+        self.playing_only = QCheckBox(i18n.t("overlay_playing"))
+        self.preview = QCheckBox(i18n.t("overlay_preview"))
+
+        form.addRow(i18n.t("overlay_layout"), self.layout_box)
+        form.addRow(i18n.t("overlay_corner"), self.corner_box)
+        form.addRow(i18n.t("overlay_decks"), self.decks_box)
+        form.addRow("", self.playing_only)
+        form.addRow("", self.preview)
+        self.layout_root.addWidget(card)
+
+        url_box = QFrame()
+        url_box.setObjectName("Card")
+        url_l = QVBoxLayout(url_box)
+        url_l.setContentsMargins(18, 16, 18, 16)
+        url_l.setSpacing(10)
+        url_lbl = QLabel(i18n.t("overlay_url"))
+        url_lbl.setObjectName("SectionTitle")
+        url_l.addWidget(url_lbl)
+        self.url_edit = QLineEdit()
+        self.url_edit.setReadOnly(True)
+        self.url_edit.setObjectName("Mono")
+        url_l.addWidget(self.url_edit)
+        self.hint = QLabel("")
+        self.hint.setObjectName("Dim")
+        self.hint.setWordWrap(True)
+        url_l.addWidget(self.hint)
+
+        actions = QHBoxLayout()
+        self.copy_btn = QPushButton(i18n.t("copy_url"))
+        self.copy_btn.setObjectName("Primary")
+        self.copy_btn.setCursor(Qt.PointingHandCursor)
+        self.open_btn = QPushButton(i18n.t("open_overlay"))
+        self.open_btn.setCursor(Qt.PointingHandCursor)
+        self.copy_btn.clicked.connect(self._copy_url)
+        self.open_btn.clicked.connect(self._open_overlay)
+        actions.addWidget(self.copy_btn)
+        actions.addWidget(self.open_btn)
+        actions.addStretch(1)
+        url_l.addLayout(actions)
+        self.layout_root.addWidget(url_box)
+        self.layout_root.addStretch(1)
+
+        for w in (self.layout_box, self.corner_box, self.decks_box):
+            w.currentIndexChanged.connect(self._on_change)
+        self.playing_only.toggled.connect(self._on_change)
+        self.preview.toggled.connect(self._on_change)
+        self.layout_box.currentIndexChanged.connect(self._maybe_bump_decks)
+
+    def load_prefs(self, data: dict, port: int | None = None) -> None:
+        if port is not None:
+            self._port = int(port)
+        idx = self.layout_box.findData(data.get("overlay_layout", "nowplaying"))
+        self.layout_box.setCurrentIndex(max(0, idx))
+        idx = self.corner_box.findData(data.get("overlay_corner", "bl"))
+        self.corner_box.setCurrentIndex(max(0, idx))
+        decks = int(data.get("overlay_decks", 1))
+        if self.layout_box.currentData() == "dual" and decks < 2:
+            decks = 2
+        idx = self.decks_box.findData(decks)
+        self.decks_box.setCurrentIndex(max(0, idx))
+        self.playing_only.setChecked(bool(data.get("overlay_playing_only", True)))
+        self.preview.setChecked(False)
+        self._refresh_url()
+
+    def collect(self) -> dict:
+        return {
+            "overlay_layout": self.layout_box.currentData(),
+            "overlay_corner": self.corner_box.currentData(),
+            "overlay_decks": self.decks_box.currentData(),
+            "overlay_playing_only": self.playing_only.isChecked(),
+        }
+
+    def set_port(self, port: int) -> None:
+        self._port = int(port)
+        self._refresh_url()
+
+    def set_web_ready(self, ready: bool) -> None:
+        self.copy_btn.setEnabled(True)
+        self.open_btn.setEnabled(ready)
+        if ready:
+            self.hint.setText("")
+        else:
+            self.hint.setText(self._i18n.t("overlay_need_web"))
+
+    def build_url(self, preview: bool | None = None) -> str:
+        qs = [
+            f"layout={self.layout_box.currentData()}",
+            f"corner={self.corner_box.currentData()}",
+            f"decks={self.decks_box.currentData()}",
+        ]
+        if not self.playing_only.isChecked():
+            qs.append("playing=0")
+        use_preview = self.preview.isChecked() if preview is None else preview
+        if use_preview:
+            qs.append("preview=1")
+        return f"http://127.0.0.1:{self._port}/overlay?{'&'.join(qs)}"
+
+    def _maybe_bump_decks(self) -> None:
+        if self.layout_box.currentData() == "dual" and int(self.decks_box.currentData() or 1) < 2:
+            idx = self.decks_box.findData(2)
+            if idx >= 0:
+                self.decks_box.setCurrentIndex(idx)
+
+    def _on_change(self, *_args) -> None:
+        self._refresh_url()
+        self.prefs_changed.emit(self.collect())
+
+    def _refresh_url(self) -> None:
+        self.url_edit.setText(self.build_url())
+
+    def _copy_url(self) -> None:
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setText(self.build_url(preview=False))
+        self.hint.setText(self._i18n.t("copied"))
+
+    def _open_overlay(self) -> None:
+        self.backend.open_overlay(self.build_url())
+
+
 class SettingsPage(Page):
     saved = Signal(dict, bool)  # settings, reconnect
 
@@ -385,6 +543,29 @@ class SettingsPage(Page):
         disp.addRow(i18n.t("poll_hz"), self.poll_hz)
         disp.addRow("", self.show_empty)
 
+        ov = section("section_overlay")
+        self.overlay_layout = QComboBox()
+        self.overlay_layout.addItem(i18n.t("overlay_layout_now"), "nowplaying")
+        self.overlay_layout.addItem(i18n.t("overlay_layout_dual"), "dual")
+        self.overlay_layout.addItem(i18n.t("overlay_layout_min"), "minimal")
+        self.overlay_corner = QComboBox()
+        for key, label in (
+            ("bl", "overlay_corner_bl"),
+            ("br", "overlay_corner_br"),
+            ("tl", "overlay_corner_tl"),
+            ("tr", "overlay_corner_tr"),
+            ("center", "overlay_corner_center"),
+        ):
+            self.overlay_corner.addItem(i18n.t(label), key)
+        self.overlay_decks = QComboBox()
+        for n in (1, 2, 3, 4):
+            self.overlay_decks.addItem(str(n), n)
+        self.overlay_playing = QCheckBox(i18n.t("overlay_playing"))
+        ov.addRow(i18n.t("overlay_layout"), self.overlay_layout)
+        ov.addRow(i18n.t("overlay_corner"), self.overlay_corner)
+        ov.addRow(i18n.t("overlay_decks"), self.overlay_decks)
+        ov.addRow("", self.overlay_playing)
+
         beh = section("section_behaviour")
         self.auto_connect = QCheckBox(i18n.t("auto_connect"))
         self.start_web = QCheckBox(i18n.t("start_web"))
@@ -431,6 +612,13 @@ class SettingsPage(Page):
         self.wave_style.setCurrentIndex(max(0, idx))
         self.show_empty.setChecked(bool(data.get("show_empty_decks", True)))
         self.poll_hz.setValue(int(data.get("poll_hz", 20)))
+        idx = self.overlay_layout.findData(data.get("overlay_layout", "nowplaying"))
+        self.overlay_layout.setCurrentIndex(max(0, idx))
+        idx = self.overlay_corner.findData(data.get("overlay_corner", "bl"))
+        self.overlay_corner.setCurrentIndex(max(0, idx))
+        idx = self.overlay_decks.findData(int(data.get("overlay_decks", 1)))
+        self.overlay_decks.setCurrentIndex(max(0, idx))
+        self.overlay_playing.setChecked(bool(data.get("overlay_playing_only", True)))
         self.auto_connect.setChecked(bool(data.get("auto_connect", True)))
         self.start_web.setChecked(bool(data.get("start_web_server", True)))
 
@@ -449,6 +637,10 @@ class SettingsPage(Page):
             "waveform_style": self.wave_style.currentData(),
             "show_empty_decks": self.show_empty.isChecked(),
             "poll_hz": self.poll_hz.value(),
+            "overlay_layout": self.overlay_layout.currentData(),
+            "overlay_corner": self.overlay_corner.currentData(),
+            "overlay_decks": self.overlay_decks.currentData(),
+            "overlay_playing_only": self.overlay_playing.isChecked(),
             "auto_connect": self.auto_connect.isChecked(),
             "start_web_server": self.start_web.isChecked(),
         }
