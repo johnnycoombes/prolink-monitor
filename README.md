@@ -21,7 +21,7 @@ Compared with the [original project](https://github.com/fidow/prolink-monitor):
 |---|---|---|
 | UI | Browser panel (`python app.py`) | Same web panel **plus** a native **Engine Room** desktop app (`python desktop.py`) and an **OBS Browser Source** overlay |
 | Navigation | Single live panel | Sidebar: Monitor, Devices, Library, Overlay, Settings, About |
-| Settings | Zoom / decks remembered in the browser | Connection and display settings saved under `~/.prolink-monitor/` |
+| Settings | Zoom / decks remembered in the browser | Connection, display and **per-deck element** settings saved under `~/.prolink-monitor/` |
 | Waveforms | Colour detail (RGB) with blue fallback | Switchable **RGB**, **3-Band** and **Blue**, parsed like [Beat Link `WaveformDetail`](https://deepsymmetry.org/beatlink/apidocs/org/deepsymmetry/beatlink/data/WaveformDetail.html) |
 | Streaming | — | Transparent `/overlay` page for OBS (now playing / dual / minimal) |
 | Language | English / Spanish | English only |
@@ -101,6 +101,10 @@ Or `python -m gui`. The window has a sidebar for **Monitor**, **Devices**,
 **Library**, **Overlay**, **Settings** and **About**. Connection mode, player address, device
 number, zoom, visible decks, waveform style and more live under Settings and are
 saved to `~/.prolink-monitor/settings.json`.
+
+Under **Deck elements** in Settings you can turn individual Monitor card pieces on
+or off — artwork, title, artist, waveform, BPM, tempo (±%), time, key, and the
+rest. Hidden columns free space for the waveform.
 
 The monitor core itself still needs no packages; PySide6 is only for the desktop
 shell. The optional local web server can be started from Settings and opened with
