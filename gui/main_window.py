@@ -141,7 +141,7 @@ class MainWindow(QMainWindow):
                  **self.page_overlay.collect()})
         elif key == "overlay":
             self.page_overlay.load_prefs(
-                self.settings, port=int(self.settings.get("port", 8777)))
+                self.settings, port=self.backend.port)
             ready = (self.backend.status == "connected"
                      and bool(self.settings.get("start_web_server", True)))
             self.page_overlay.set_web_ready(ready)
@@ -178,7 +178,7 @@ class MainWindow(QMainWindow):
         web_ready = status == "connected" and bool(
             self.settings.get("start_web_server", True))
         self.btn_web.setEnabled(web_ready)
-        self.page_overlay.set_port(int(self.settings.get("port", 8777)))
+        self.page_overlay.set_port(self.backend.port)
         self.page_overlay.set_web_ready(web_ready)
 
     def _on_state(self, state: dict) -> None:
