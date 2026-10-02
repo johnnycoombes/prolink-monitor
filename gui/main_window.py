@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
-    QStackedWidget, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton,
+    QStackedWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
 from gui.backend import Backend
@@ -25,6 +25,7 @@ class MainWindow(QMainWindow):
         self.settings = load_settings()
         self.i18n = I18n()
         self.backend = Backend(self)
+        self._sidebar_visible = bool(self.settings.get("sidebar_visible", True))
 
         self.setWindowTitle(self.i18n.t("app_title"))
         self.resize(
@@ -41,6 +42,7 @@ class MainWindow(QMainWindow):
 
         self.sidebar = Sidebar(self.i18n)
         self.sidebar.navigated.connect(self._navigate)
+        self.sidebar.hide_requested.connect(lambda: self.set_sidebar_visible(False))
         outer.addWidget(self.sidebar)
 
         right = QVBoxLayout()
@@ -53,7 +55,31 @@ class MainWindow(QMainWindow):
         top.setObjectName("TopBar")
         top.setFixedHeight(56)
         top_l = QHBoxLayout(top)
-        top_l.setContentsMargins(20, 0, 16, 0)
+        top_l.setContentsMargins(12, 0, 16, 0)
+
+        self.btn_sidebar = QPushButton("☰")
+        self.btn_sidebar.setObjectName("Chip")
+        self.btn_sidebar.setFixedWidth(36)
+        self.btn_sidebar.setCursor(Qt.PointingHandCursor)
+        self.btn_sidebar.setToolTip(f"{self.i18n.t('toggle_sidebar')}  (Ctrl+B)")
+        self.btn_sidebar.clicked.connect(self.toggle_sidebar)
+        top_l.addWidget(self.btn_sidebar)
+
+        self.nav_button = QToolButton()
+        self.nav_button.setObjectName("Chip")
+        self.nav_button.setText(self.i18n.t("nav_menu"))
+        self.nav_button.setCursor(Qt.PointingHandCursor)
+        self.nav_button.setPopupMode(QToolButton.InstantPopup)
+        self._nav_menu = QMenu(self.nav_button)
+        self.nav_button.setMenu(self._nav_menu)
+        self._nav_actions: dict[str, QAction] = {}
+        for key in self.sidebar.nav_keys():
+            act = QAction(self.i18n.t(f"nav_{key}"), self)
+            act.triggered.connect(lambda _=False, k=key: self._navigate(k))
+            self._nav_menu.addAction(act)
+            self._nav_actions[key] = act
+        top_l.addWidget(self.nav_button)
+
         self.status_led = QLabel("●")
         self.status_led.setStyleSheet(f"color:{COLORS['dimmest']}; font-size:12px;")
         self.status_text = QLabel(self.i18n.t("idle"))
@@ -126,19 +152,49 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("+"), self, activated=lambda: self._nudge_zoom(-1))
         QShortcut(QKeySequence("="), self, activated=lambda: self._nudge_zoom(-1))
         QShortcut(QKeySequence("-"), self, activated=lambda: self._nudge_zoom(1))
+        QShortcut(QKeySequence("Ctrl+B"), self, activated=self.toggle_sidebar)
 
+        self.set_sidebar_visible(self._sidebar_visible, persist=False)
         self._navigate("monitor")
         self._on_status("idle", "")
 
         if self.settings.get("auto_connect", True):
             self.connect_backend()
 
+    # -- sidebar ------------------------------------------------------------
+    def toggle_sidebar(self) -> None:
+        self.set_sidebar_visible(not self._sidebar_visible)
+
+    def set_sidebar_visible(self, visible: bool, persist: bool = True) -> None:
+        self._sidebar_visible = bool(visible)
+        self.sidebar.setVisible(self._sidebar_visible)
+        # Nav menu stands in while the side panel is hidden.
+        self.nav_button.setVisible(not self._sidebar_visible)
+        self.btn_sidebar.setToolTip(
+            f"{self.i18n.t('show_sidebar' if not self._sidebar_visible else 'hide_sidebar')}"
+            f"  (Ctrl+B)"
+        )
+        self.btn_sidebar.setProperty("active", "false" if self._sidebar_visible else "true")
+        self.btn_sidebar.style().unpolish(self.btn_sidebar)
+        self.btn_sidebar.style().polish(self.btn_sidebar)
+        if persist:
+            self.settings["sidebar_visible"] = self._sidebar_visible
+            try:
+                save_settings(self.settings)
+            except OSError:
+                pass
+            # Keep Settings checkbox in sync if that page is loaded.
+            if hasattr(self.page_settings, "show_sidebar"):
+                self.page_settings.show_sidebar.setChecked(self._sidebar_visible)
+
     # -- navigation ---------------------------------------------------------
     def _navigate(self, key: str) -> None:
+        self.sidebar.set_active(key)
         if key == "settings":
             self.page_settings.load_settings(
                 {**self.settings, **self.page_monitor.prefs_snapshot(),
-                 **self.page_overlay.collect()})
+                 **self.page_overlay.collect(),
+                 "sidebar_visible": self._sidebar_visible})
         elif key == "overlay":
             self.page_overlay.load_prefs(
                 self.settings, port=self.backend.port)
@@ -203,6 +259,7 @@ class MainWindow(QMainWindow):
         self.page_monitor.apply_prefs(self.settings)
         self.page_settings.load_settings(self.settings)
         self.page_overlay.load_prefs(self.settings, port=int(self.settings.get("port", 8777)))
+        self.set_sidebar_visible(bool(self.settings.get("sidebar_visible", True)), persist=False)
         if reconnect:
             self.connect_backend()
         else:
@@ -241,6 +298,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):  # noqa: N802
         self.settings["window_width"] = self.width()
         self.settings["window_height"] = self.height()
+        self.settings["sidebar_visible"] = self._sidebar_visible
         self.settings.update(self.page_monitor.prefs_snapshot())
         self.settings.update(self.page_overlay.collect())
         try:

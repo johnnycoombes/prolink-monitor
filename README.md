@@ -102,6 +102,10 @@ Or `python -m gui`. The window has a sidebar for **Monitor**, **Devices**,
 number, zoom, visible decks, waveform style and more live under Settings and are
 saved to `~/.prolink-monitor/settings.json`.
 
+The sidebar can be hidden with the **☰** button (or **Ctrl+B**) to give the Monitor
+more width; a **Navigate** menu appears in the top bar while it is hidden. Preference
+is remembered.
+
 Under **Deck elements** in Settings you can turn individual Monitor card pieces on
 or off — artwork, title, artist, waveform, BPM, tempo (±%), time, key, and the
 rest. Hidden columns free space for the waveform.

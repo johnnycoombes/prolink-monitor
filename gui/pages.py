@@ -608,8 +608,10 @@ class SettingsPage(Page):
         beh = section("section_behaviour")
         self.auto_connect = QCheckBox(i18n.t("auto_connect"))
         self.start_web = QCheckBox(i18n.t("start_web"))
+        self.show_sidebar = QCheckBox(i18n.t("show_sidebar"))
         beh.addRow(self.auto_connect)
         beh.addRow(self.start_web)
+        beh.addRow(self.show_sidebar)
 
         form_wrap.addStretch(1)
         scroll.setWidget(body)
@@ -662,6 +664,7 @@ class SettingsPage(Page):
         self.overlay_playing.setChecked(bool(data.get("overlay_playing_only", True)))
         self.auto_connect.setChecked(bool(data.get("auto_connect", True)))
         self.start_web.setChecked(bool(data.get("start_web_server", True)))
+        self.show_sidebar.setChecked(bool(data.get("sidebar_visible", True)))
 
     def collect(self) -> dict:
         data = {
@@ -684,6 +687,7 @@ class SettingsPage(Page):
             "overlay_playing_only": self.overlay_playing.isChecked(),
             "auto_connect": self.auto_connect.isChecked(),
             "start_web_server": self.start_web.isChecked(),
+            "sidebar_visible": self.show_sidebar.isChecked(),
         }
         for key, cb in self.deck_checks.items():
             data[key] = cb.isChecked()

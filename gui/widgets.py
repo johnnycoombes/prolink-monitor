@@ -171,6 +171,7 @@ def _paint_column(p: QPainter, x: int, mid: float, amp: float, style: str,
 
 class Sidebar(QFrame):
     navigated = Signal(str)
+    hide_requested = Signal()
 
     def __init__(self, i18n, parent=None):
         super().__init__(parent)
@@ -179,6 +180,7 @@ class Sidebar(QFrame):
         self._i18n = i18n
         self._buttons: dict[str, QPushButton] = {}
         self._active = "monitor"
+        self._nav_keys = ("monitor", "devices", "library", "overlay", "settings", "about")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 18, 14, 18)
@@ -192,7 +194,7 @@ class Sidebar(QFrame):
         layout.addWidget(sub)
         layout.addSpacing(18)
 
-        for key in ("monitor", "devices", "library", "overlay", "settings", "about"):
+        for key in self._nav_keys:
             btn = QPushButton(i18n.t(f"nav_{key}"))
             btn.setObjectName("NavButton")
             btn.setCursor(Qt.PointingHandCursor)
@@ -202,11 +204,24 @@ class Sidebar(QFrame):
             self._buttons[key] = btn
 
         layout.addStretch(1)
+        self.hide_btn = QPushButton(i18n.t("hide_sidebar"))
+        self.hide_btn.setObjectName("Chip")
+        self.hide_btn.setCursor(Qt.PointingHandCursor)
+        self.hide_btn.setToolTip("Ctrl+B")
+        self.hide_btn.clicked.connect(self.hide_requested.emit)
+        layout.addWidget(self.hide_btn)
         self._set_active("monitor")
 
     def retranslate(self) -> None:
         for key, btn in self._buttons.items():
             btn.setText(self._i18n.t(f"nav_{key}"))
+        self.hide_btn.setText(self._i18n.t("hide_sidebar"))
+
+    def nav_keys(self) -> tuple[str, ...]:
+        return self._nav_keys
+
+    def set_active(self, key: str) -> None:
+        self._set_active(key)
 
     def _click(self, key: str) -> None:
         self._set_active(key)
