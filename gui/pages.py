@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 
 from gui.theme import COLORS
 from gui.widgets import DeckCard, parse_waveform
+from gui.settings import deck_elements_from
 
 
 class Page(QFrame):
@@ -52,6 +53,7 @@ class MonitorPage(Page):
         self._max_decks = 4
         self._wave_style = "rgb"
         self._show_empty = True
+        self._elements = deck_elements_from()
         self._last_state: dict[str, Any] | None = None
         self._received_at = 0.0
 
@@ -124,6 +126,12 @@ class MonitorPage(Page):
         self.set_max_decks(int(settings.get("max_decks", 4)))
         self.set_wave_style(str(settings.get("waveform_style") or "rgb"))
         self._show_empty = bool(settings.get("show_empty_decks", True))
+        self.set_elements(settings)
+
+    def set_elements(self, settings: dict | None) -> None:
+        self._elements = deck_elements_from(settings)
+        for card in self._cards.values():
+            card.apply_elements(self._elements)
 
     def set_zoom(self, seconds: int) -> None:
         self._zoom = seconds
@@ -157,6 +165,7 @@ class MonitorPage(Page):
             "zoom_seconds": self._zoom,
             "max_decks": self._max_decks,
             "waveform_style": self._wave_style,
+            **self._elements,
         }
 
     def update_state(self, state: dict) -> None:
@@ -198,6 +207,7 @@ class MonitorPage(Page):
                 card = DeckCard(n, self._i18n)
                 card.set_zoom(self._zoom)
                 card.set_wave_style(self._wave_style)
+                card.apply_elements(self._elements)
                 self._cards[n] = card
                 # insert before stretch
                 self.decks_layout.insertWidget(self.decks_layout.count() - 1, card)
@@ -212,11 +222,16 @@ class MonitorPage(Page):
             tid = d.get("track_id") or 0
             if tid:
                 meta = self.backend.meta(tid)
-                wave = self.backend.waveform(tid) if meta else None
+                wave = None
+                if self._elements.get("deck_show_waveform", True):
+                    wave = self.backend.waveform(tid) if meta else None
                 detail = overview = None
                 if wave:
                     detail, overview = parse_waveform(wave)
-                art = self.backend.artwork(tid) if meta and meta.get("has_artwork") else None
+                art = None
+                if (self._elements.get("deck_show_artwork", True)
+                        and meta and meta.get("has_artwork")):
+                    art = self.backend.artwork(tid)
                 if meta:
                     card.set_track_data(meta, detail, overview, art)
             card.update_deck(d, pos)
@@ -543,6 +558,30 @@ class SettingsPage(Page):
         disp.addRow(i18n.t("poll_hz"), self.poll_hz)
         disp.addRow("", self.show_empty)
 
+        deck_el = section("section_deck_elements")
+        hint = QLabel(i18n.t("deck_el_hint"))
+        hint.setWordWrap(True)
+        hint.setObjectName("Dim")
+        hint.setStyleSheet(f"color:{COLORS['dim']}; font-size:12px;")
+        deck_el.addRow(hint)
+        self.deck_checks: dict[str, QCheckBox] = {}
+        for key, label_key in (
+            ("deck_show_artwork", "deck_el_artwork"),
+            ("deck_show_title", "deck_el_title"),
+            ("deck_show_artist", "deck_el_artist"),
+            ("deck_show_meta", "deck_el_meta"),
+            ("deck_show_tags", "deck_el_tags"),
+            ("deck_show_waveform", "deck_el_waveform"),
+            ("deck_show_bpm", "deck_el_bpm"),
+            ("deck_show_tempo", "deck_el_tempo"),
+            ("deck_show_time", "deck_el_time"),
+            ("deck_show_key", "deck_el_key"),
+            ("deck_show_state", "deck_el_state"),
+        ):
+            cb = QCheckBox(i18n.t(label_key))
+            self.deck_checks[key] = cb
+            deck_el.addRow(cb)
+
         ov = section("section_overlay")
         self.overlay_layout = QComboBox()
         self.overlay_layout.addItem(i18n.t("overlay_layout_now"), "nowplaying")
@@ -612,6 +651,8 @@ class SettingsPage(Page):
         self.wave_style.setCurrentIndex(max(0, idx))
         self.show_empty.setChecked(bool(data.get("show_empty_decks", True)))
         self.poll_hz.setValue(int(data.get("poll_hz", 20)))
+        for key, cb in self.deck_checks.items():
+            cb.setChecked(bool(data.get(key, True)))
         idx = self.overlay_layout.findData(data.get("overlay_layout", "nowplaying"))
         self.overlay_layout.setCurrentIndex(max(0, idx))
         idx = self.overlay_corner.findData(data.get("overlay_corner", "bl"))
@@ -623,7 +664,7 @@ class SettingsPage(Page):
         self.start_web.setChecked(bool(data.get("start_web_server", True)))
 
     def collect(self) -> dict:
-        return {
+        data = {
             "mode": self.mode.currentData(),
             "host": self.host.text().strip(),
             "number": self.number.value(),
@@ -644,6 +685,9 @@ class SettingsPage(Page):
             "auto_connect": self.auto_connect.isChecked(),
             "start_web_server": self.start_web.isChecked(),
         }
+        for key, cb in self.deck_checks.items():
+            data[key] = cb.isChecked()
+        return data
 
     def _emit(self, reconnect: bool) -> None:
         self.saved.emit(self.collect(), reconnect)

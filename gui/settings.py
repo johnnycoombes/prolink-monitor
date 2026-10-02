@@ -27,11 +27,45 @@ DEFAULTS: dict[str, Any] = {
     "sidebar_compact": False,
     "poll_hz": 20,
     "show_empty_decks": True,
+    # Deck card elements (Monitor page)
+    "deck_show_artwork": True,
+    "deck_show_title": True,
+    "deck_show_artist": True,
+    "deck_show_meta": True,
+    "deck_show_tags": True,
+    "deck_show_waveform": True,
+    "deck_show_bpm": True,
+    "deck_show_tempo": True,
+    "deck_show_time": True,
+    "deck_show_key": True,
+    "deck_show_state": True,
     "overlay_layout": "nowplaying",   # nowplaying | dual | minimal
     "overlay_corner": "bl",           # bl | br | tl | tr | center
     "overlay_playing_only": True,
     "overlay_decks": 1,
 }
+
+# Keys that toggle individual pieces of each Monitor deck card.
+DECK_ELEMENT_KEYS = (
+    "deck_show_artwork",
+    "deck_show_title",
+    "deck_show_artist",
+    "deck_show_meta",
+    "deck_show_tags",
+    "deck_show_waveform",
+    "deck_show_bpm",
+    "deck_show_tempo",
+    "deck_show_time",
+    "deck_show_key",
+    "deck_show_state",
+)
+
+
+def deck_elements_from(data: dict[str, Any] | None = None) -> dict[str, bool]:
+    """Return the deck-element visibility map, defaulting missing keys to on."""
+    src = data or {}
+    return {key: bool(src.get(key, True)) for key in DECK_ELEMENT_KEYS}
+
 
 
 def settings_path() -> str:
@@ -111,6 +145,8 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     except (TypeError, ValueError):
         out["poll_hz"] = 20
     out["show_empty_decks"] = bool(data.get("show_empty_decks", True))
+    for key in DECK_ELEMENT_KEYS:
+        out[key] = bool(data.get(key, True))
     layout = str(data.get("overlay_layout") or "nowplaying").lower()
     out["overlay_layout"] = layout if layout in ("nowplaying", "dual", "minimal") else "nowplaying"
     corner = str(data.get("overlay_corner") or "bl").lower()

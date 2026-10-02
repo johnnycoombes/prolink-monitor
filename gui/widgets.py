@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.theme import COLORS, DECK_COLORS
+from gui.settings import deck_elements_from
 
 
 def mmss(ms: float) -> str:
@@ -386,6 +387,7 @@ class DeckCard(QFrame):
         self._detail = None
         self._overview = None
         self._art_id = 0
+        self._elements = deck_elements_from()
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -400,6 +402,7 @@ class DeckCard(QFrame):
         body.setContentsMargins(14, 12, 14, 12)
         body.setSpacing(14)
         root.addLayout(body, 1)
+        self._body = body
 
         # identity
         ident = QVBoxLayout()
@@ -442,10 +445,10 @@ class DeckCard(QFrame):
         who.addStretch(1)
         top.addLayout(who, 1)
         ident.addLayout(top)
-        wrap_ident = QWidget()
-        wrap_ident.setFixedWidth(260)
-        wrap_ident.setLayout(ident)
-        body.addWidget(wrap_ident)
+        self.wrap_ident = QWidget()
+        self.wrap_ident.setFixedWidth(260)
+        self.wrap_ident.setLayout(ident)
+        body.addWidget(self.wrap_ident)
 
         # waveform
         self.wave = WaveformView()
@@ -461,7 +464,10 @@ class DeckCard(QFrame):
         )
         self.pitch = QLabel("")
         self.pitch.setStyleSheet(f"font-family:monospace; font-size:12px; color:{COLORS['dim']};")
-        times = QHBoxLayout()
+        self.times_wrap = QWidget()
+        times = QHBoxLayout(self.times_wrap)
+        times.setContentsMargins(0, 0, 0, 0)
+        times.setSpacing(0)
         self.elapsed = QLabel("00:00")
         self.elapsed.setStyleSheet("font-family:monospace; font-size:15px; font-weight:700;")
         self.remaining = QLabel("-00:00")
@@ -480,21 +486,64 @@ class DeckCard(QFrame):
         self.key.setStyleSheet(
             f"font-family:monospace; font-size:12px; font-weight:700; color:{self._color};"
         )
-        state_row = QHBoxLayout()
+        self.state_wrap = QWidget()
+        state_row = QHBoxLayout(self.state_wrap)
+        state_row.setContentsMargins(0, 0, 0, 0)
         state_row.addWidget(self.state, 1)
         state_row.addWidget(self.key)
         read.addWidget(self.bpm)
         read.addWidget(self.pitch)
         read.addSpacing(4)
-        read.addLayout(times)
-        read.addLayout(state_row)
+        read.addWidget(self.times_wrap)
+        read.addWidget(self.state_wrap)
         read.addStretch(1)
-        wrap_read = QWidget()
-        wrap_read.setFixedWidth(170)
-        wrap_read.setLayout(read)
-        body.addWidget(wrap_read)
+        self.wrap_read = QWidget()
+        self.wrap_read.setFixedWidth(170)
+        self.wrap_read.setLayout(read)
+        body.addWidget(self.wrap_read)
 
         self.setMinimumHeight(150)
+        self.apply_elements(self._elements)
+
+    def apply_elements(self, elements: dict[str, bool] | None) -> None:
+        """Show or hide deck pieces; collapse empty columns so the waveform grows."""
+        self._elements = deck_elements_from(elements)
+        e = self._elements
+
+        self.art.setVisible(e["deck_show_artwork"])
+        self.title.setVisible(e["deck_show_title"])
+        self.artist.setVisible(e["deck_show_artist"])
+        self.meta_line.setVisible(e["deck_show_meta"])
+        self.tags.setVisible(e["deck_show_tags"])
+        self.wave.setVisible(e["deck_show_waveform"])
+        self.bpm.setVisible(e["deck_show_bpm"])
+        self.pitch.setVisible(e["deck_show_tempo"])
+        self.times_wrap.setVisible(e["deck_show_time"])
+        self.key.setVisible(e["deck_show_key"])
+        self.state.setVisible(e["deck_show_state"])
+        self.state_wrap.setVisible(e["deck_show_key"] or e["deck_show_state"])
+
+        # Left column stays if any identity piece (or always the deck number) shows.
+        left_bits = (
+            e["deck_show_artwork"] or e["deck_show_title"] or e["deck_show_artist"]
+            or e["deck_show_meta"] or e["deck_show_tags"]
+        )
+        self.wrap_ident.setVisible(True)  # deck number always present
+        self.wrap_ident.setFixedWidth(260 if left_bits else 48)
+
+        right_bits = (
+            e["deck_show_bpm"] or e["deck_show_tempo"] or e["deck_show_time"]
+            or e["deck_show_key"] or e["deck_show_state"]
+        )
+        self.wrap_read.setVisible(right_bits)
+
+        # When the waveform is the only big piece, let the card stretch taller.
+        if e["deck_show_waveform"] and not left_bits and not right_bits:
+            self.setMinimumHeight(180)
+        elif e["deck_show_waveform"]:
+            self.setMinimumHeight(150)
+        else:
+            self.setMinimumHeight(96)
 
     def set_zoom(self, seconds: int) -> None:
         self.wave.set_zoom(seconds)
