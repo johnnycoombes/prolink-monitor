@@ -121,6 +121,7 @@ class MainWindow(QMainWindow):
         self.backend.state_changed.connect(self._on_state)
         self.backend.status_changed.connect(self._on_status)
         self.backend.track_ready.connect(lambda _tid: None)
+        self.backend.port_changed.connect(self._on_port_changed)
 
         QShortcut(QKeySequence("+"), self, activated=lambda: self._nudge_zoom(-1))
         QShortcut(QKeySequence("="), self, activated=lambda: self._nudge_zoom(-1))
@@ -215,6 +216,17 @@ class MainWindow(QMainWindow):
         except OSError:
             pass
         self.page_settings.load_settings(self.settings)
+
+    def _on_port_changed(self, port: int) -> None:
+        """HTTP bind fell back to another port — keep UI / saved settings in sync."""
+        self.settings["port"] = int(port)
+        try:
+            save_settings(self.settings)
+        except OSError:
+            pass
+        self.page_settings.load_settings(self.settings)
+        self.page_overlay.set_port(int(port))
+        self.page_overlay.set_web_ready(True)
 
     def _nudge_zoom(self, direction: int) -> None:
         levels = [4, 8, 16, 32]

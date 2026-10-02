@@ -15,7 +15,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from app import Handler, Monitor, QuietServer, build_source  # noqa: E402
+from app import Handler, Monitor, QuietServer, build_source, open_http_server  # noqa: E402
 from gui.settings import as_namespace  # noqa: E402
 from prolink import link  # noqa: E402
 
@@ -26,6 +26,7 @@ class Backend(QObject):
     state_changed = Signal(dict)
     status_changed = Signal(str, str)   # status key, detail message
     track_ready = Signal(int)           # track id whose meta/waveform is ready
+    port_changed = Signal(int)          # actual bound HTTP port (may differ from settings)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -33,6 +34,7 @@ class Backend(QObject):
         self._server: QuietServer | None = None
         self._server_thread: threading.Thread | None = None
         self._settings: dict[str, Any] = {}
+        self._bound_port: int | None = None
         self._lock = threading.RLock()
         self._status = "idle"
         self._detail = ""
@@ -54,6 +56,8 @@ class Backend(QObject):
 
     @property
     def port(self) -> int:
+        if self._bound_port is not None:
+            return int(self._bound_port)
         return int(self._settings.get("port", 8777))
 
     def start(self, settings: dict[str, Any]) -> None:
@@ -72,6 +76,7 @@ class Backend(QObject):
             server = self._server
             self._monitor = None
             self._server = None
+            self._bound_port = None
             self._meta_cache.clear()
             self._wave_cache.clear()
             self._art_cache.clear()
@@ -154,9 +159,10 @@ class Backend(QObject):
             monitor.start()
 
             server = None
+            bound_port = int(args.port)
             if settings.get("start_web_server", True):
                 Handler.monitor = monitor
-                server = QuietServer(("127.0.0.1", args.port), Handler)
+                server, bound_port = open_http_server(args.port, Handler)
                 thread = threading.Thread(target=server.serve_forever, daemon=True)
                 thread.start()
                 self._server_thread = thread
@@ -165,10 +171,19 @@ class Backend(QObject):
                 self._monitor = monitor
                 self._server = server
                 self._settings = settings
+                self._bound_port = bound_port if server is not None else None
+
+            if server is not None and bound_port != int(args.port):
+                # Keep overlay URL / Open web panel in sync with the real port.
+                self._settings["port"] = bound_port
+                self.port_changed.emit(bound_port)
 
             detail = getattr(source, "description", "") or ""
             if host:
                 detail = f"{detail} · {host}" if detail else str(host)
+            if server is not None and bound_port != int(args.port):
+                detail = (f"{detail} · http :{bound_port}" if detail
+                          else f"http :{bound_port}")
             self._set_status("connected", detail)
         except Exception as exc:
             self._set_status("error", str(exc))

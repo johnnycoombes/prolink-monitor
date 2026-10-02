@@ -391,6 +391,7 @@ class QuietServer(ThreadingHTTPServer):
     """A browser closing an SSE stream is normal, not something to dump a stack for."""
 
     daemon_threads = True
+    allow_reuse_address = True
 
     def handle_error(self, request, client_address):
         exc = sys.exc_info()[1]
@@ -398,6 +399,46 @@ class QuietServer(ThreadingHTTPServer):
                             BrokenPipeError)):
             return
         super().handle_error(request, client_address)
+
+
+# Fallback ports when the requested one is blocked (common on Windows when Hyper-V
+# or another service has reserved the default range — WinError 10013).
+_HTTP_PORT_FALLBACKS = (8787, 8877, 9777, 18777, 0)
+
+
+def open_http_server(port: int, handler=None, host: str = "127.0.0.1"):
+    """Bind the panel HTTP server, trying alternate ports if ``port`` is blocked.
+
+    Returns ``(server, actual_port)``. Raises ``OSError`` if nothing will bind.
+    Port ``0`` asks the OS for any free port.
+    """
+    handler = handler or Handler
+    wanted = int(port)
+    tried: list[int] = []
+    errors: list[tuple[int, OSError]] = []
+
+    candidates = [wanted]
+    for alt in _HTTP_PORT_FALLBACKS:
+        if alt not in candidates:
+            candidates.append(alt)
+
+    for candidate in candidates:
+        tried.append(candidate)
+        try:
+            server = QuietServer((host, candidate), handler)
+        except OSError as exc:
+            errors.append((candidate, exc))
+            continue
+        actual = int(server.server_address[1])
+        return server, actual
+
+    # Prefer the error from the port the user asked for.
+    primary = next((e for p, e in errors if p == wanted), errors[-1][1])
+    detail = "; ".join(f"{p}: {e}" for p, e in errors[:3])
+    raise OSError(
+        f"could not bind HTTP port (tried {tried}). "
+        f"Pass --port with a free number. Last errors: {detail}"
+    ) from primary
 
 
 # -------------------------------------------------------------------- start-up
@@ -482,9 +523,20 @@ def main() -> int:
         return 1
     print(f"  mode: {source.description}")
 
-    server = QuietServer(("127.0.0.1", args.port), Handler)
-    url = f"http://127.0.0.1:{args.port}/"
-    print(f"  panel: {url}\n")
+    try:
+        server, bound_port = open_http_server(args.port, Handler)
+    except OSError as e:
+        print(f"\nERROR: {e}")
+        print("  On Windows, WinError 10013 usually means the port is reserved\n"
+              "  (Hyper-V / excluded range) or in use. Try e.g. --port 18777")
+        monitor.stop()
+        return 1
+    if bound_port != args.port:
+        print(f"  ! port {args.port} was blocked; using {bound_port} instead "
+              f"(pass --port to pick one)")
+    url = f"http://127.0.0.1:{bound_port}/"
+    print(f"  panel: {url}")
+    print(f"  overlay: http://127.0.0.1:{bound_port}/overlay\n")
 
     if monitor.engine.wait_for_devices(6.0):
         for d in monitor.engine.active_decks():

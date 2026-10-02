@@ -346,6 +346,18 @@ the interface supplies the English labels.
 
 ## Troubleshooting
 
+**`PermissionError: [WinError 10013]` when starting the web panel.** Windows has
+blocked the HTTP port (often Hyper-V / WSL reserved ranges, or something already
+listening). The app will try a few alternate ports automatically; to pick one
+yourself:
+
+```bash
+python app.py --port 18777
+```
+
+Or set **Web server port** in the desktop Settings. Check reserved ranges with
+`netsh interface ipv4 show excludedportrange protocol=tcp`.
+
 **"could not open UDP port 50000".** rekordbox is running. Close it, or use
 `--mode sniffer`.
 
