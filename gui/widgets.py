@@ -225,7 +225,7 @@ class WaveformView(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(110)
+        self.setMinimumHeight(100)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._color = QColor(COLORS["accent"])
         self._detail = None
@@ -268,8 +268,9 @@ class WaveformView(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, False)
         w, h = self.width(), self.height()
-        overview_h = max(28, int(h * 0.28))
-        detail_h = h - overview_h - 1
+        # Keep the overview as a slim strip; give most height to the detail wave.
+        overview_h = max(28, min(48, int(h * 0.14)))
+        detail_h = max(1, h - overview_h - 1)
 
         bg = QColor("#0b0d10")
         p.fillRect(0, 0, w, overview_h, bg)
@@ -340,7 +341,7 @@ class WaveformView(QWidget):
                 p.setPen(pen)
                 p.drawLine(x0 + x, y0, x0 + x, y0 + h)
 
-        span = (h / 2) * 0.92
+        span = (h / 2) * 0.98
         for px in range(w):
             lo = int(start + px / px_per_col)
             hi = int(start + (px + 1) / px_per_col + 0.999)
@@ -388,6 +389,7 @@ class DeckCard(QFrame):
         self._overview = None
         self._art_id = 0
         self._elements = deck_elements_from()
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -399,8 +401,8 @@ class DeckCard(QFrame):
         root.addWidget(accent)
 
         body = QHBoxLayout()
-        body.setContentsMargins(14, 12, 14, 12)
-        body.setSpacing(14)
+        body.setContentsMargins(12, 10, 12, 10)
+        body.setSpacing(12)
         root.addLayout(body, 1)
         self._body = body
 
@@ -409,7 +411,7 @@ class DeckCard(QFrame):
         ident.setSpacing(6)
         top = QHBoxLayout()
         self.art = QLabel("♪")
-        self.art.setFixedSize(64, 64)
+        self.art.setFixedSize(72, 72)
         self.art.setAlignment(Qt.AlignCenter)
         self.art.setStyleSheet(
             f"background:{COLORS['panel_high']}; border:1px solid {COLORS['line']};"
@@ -446,11 +448,11 @@ class DeckCard(QFrame):
         top.addLayout(who, 1)
         ident.addLayout(top)
         self.wrap_ident = QWidget()
-        self.wrap_ident.setFixedWidth(260)
+        self.wrap_ident.setFixedWidth(220)
         self.wrap_ident.setLayout(ident)
-        body.addWidget(self.wrap_ident)
+        body.addWidget(self.wrap_ident, 0)
 
-        # waveform
+        # waveform — takes all leftover horizontal (and vertical) space
         self.wave = WaveformView()
         self.wave.set_deck_color(self._color)
         body.addWidget(self.wave, 1)
@@ -498,11 +500,11 @@ class DeckCard(QFrame):
         read.addWidget(self.state_wrap)
         read.addStretch(1)
         self.wrap_read = QWidget()
-        self.wrap_read.setFixedWidth(170)
+        self.wrap_read.setFixedWidth(150)
         self.wrap_read.setLayout(read)
-        body.addWidget(self.wrap_read)
+        body.addWidget(self.wrap_read, 0)
 
-        self.setMinimumHeight(150)
+        self.setMinimumHeight(200)
         self.apply_elements(self._elements)
 
     def apply_elements(self, elements: dict[str, bool] | None) -> None:
@@ -529,7 +531,7 @@ class DeckCard(QFrame):
             or e["deck_show_meta"] or e["deck_show_tags"]
         )
         self.wrap_ident.setVisible(True)  # deck number always present
-        self.wrap_ident.setFixedWidth(260 if left_bits else 48)
+        self.wrap_ident.setFixedWidth(220 if left_bits else 44)
 
         right_bits = (
             e["deck_show_bpm"] or e["deck_show_tempo"] or e["deck_show_time"]
@@ -537,13 +539,23 @@ class DeckCard(QFrame):
         )
         self.wrap_read.setVisible(right_bits)
 
-        # When the waveform is the only big piece, let the card stretch taller.
+        # Base mins — MonitorPage raises these further so cards fill the panel.
         if e["deck_show_waveform"] and not left_bits and not right_bits:
-            self.setMinimumHeight(180)
+            self.setMinimumHeight(160)
         elif e["deck_show_waveform"]:
-            self.setMinimumHeight(150)
+            self.setMinimumHeight(140)
         else:
-            self.setMinimumHeight(96)
+            self.setMinimumHeight(80)
+        self.setMaximumHeight(16777215)
+
+    def set_fill_height(self, height: int) -> None:
+        """Stretch this card so its waveform uses the allotted panel slice."""
+        floor = 80
+        if self._elements.get("deck_show_waveform", True):
+            floor = 140
+        self.setMinimumHeight(max(floor, int(height)))
+        # Cap max so equal stretch stays even when the host is viewport-sized.
+        self.setMaximumHeight(max(floor, int(height)))
 
     def set_zoom(self, seconds: int) -> None:
         self.wave.set_zoom(seconds)
@@ -567,7 +579,7 @@ class DeckCard(QFrame):
             img = QImage.fromData(art)
             if not img.isNull():
                 pix = QPixmap.fromImage(img).scaled(
-                    64, 64, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                    72, 72, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
                 self.art.setPixmap(pix)
                 self.art.setText("")
                 self._art_id = (meta or {}).get("id", 0)
