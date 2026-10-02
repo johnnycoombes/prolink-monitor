@@ -23,7 +23,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.settings = load_settings()
-        self.i18n = I18n(self.settings.get("language", "en"))
+        self.i18n = I18n()
         self.backend = Backend(self)
 
         self.setWindowTitle(self.i18n.t("app_title"))
@@ -127,7 +127,7 @@ class MainWindow(QMainWindow):
         if self.settings.get("auto_connect", True):
             self.connect_backend()
 
-    # -- navigation / i18n --------------------------------------------------
+    # -- navigation ---------------------------------------------------------
     def _navigate(self, key: str) -> None:
         if key == "settings":
             self.page_settings.load_settings(
@@ -135,17 +135,6 @@ class MainWindow(QMainWindow):
         page = self._pages.get(key)
         if page is not None:
             self.stack.setCurrentWidget(page)
-
-    def _retranslate(self) -> None:
-        self.setWindowTitle(self.i18n.t("app_title"))
-        self.sidebar.retranslate()
-        for page in self._pages.values():
-            page.retranslate()
-        self.btn_connect.setText(self.i18n.t("connect"))
-        self.btn_disconnect.setText(self.i18n.t("disconnect"))
-        self.btn_web.setText(self.i18n.t("open_web"))
-        # refresh status label language
-        self._on_status(self.backend.status, getattr(self.backend, "_detail", ""))
 
     # -- backend ------------------------------------------------------------
     def connect_backend(self) -> None:
@@ -195,10 +184,6 @@ class MainWindow(QMainWindow):
         merged = {**self.settings, **data}
         save_settings(merged)
         self.settings = load_settings()
-        lang = self.settings.get("language", "en")
-        if lang != self.i18n.lang:
-            self.i18n.set_lang(lang)
-            self._retranslate()
         self.page_monitor.apply_prefs(self.settings)
         self.page_settings.load_settings(self.settings)
         if reconnect:

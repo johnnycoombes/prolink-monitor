@@ -376,16 +376,12 @@ class SettingsPage(Page):
         self.wave_style.addItem(i18n.t("wave_rgb"), "rgb")
         self.wave_style.addItem(i18n.t("wave_3band"), "3band")
         self.wave_style.addItem(i18n.t("wave_blue"), "blue")
-        self.language = QComboBox()
-        self.language.addItem("English", "en")
-        self.language.addItem("Español", "es")
         self.show_empty = QCheckBox(i18n.t("show_empty"))
         self.poll_hz = QSpinBox()
         self.poll_hz.setRange(5, 30)
         disp.addRow(i18n.t("max_decks"), self.max_decks)
         disp.addRow(i18n.t("zoom"), self.zoom)
         disp.addRow(i18n.t("wave"), self.wave_style)
-        disp.addRow(i18n.t("language"), self.language)
         disp.addRow(i18n.t("poll_hz"), self.poll_hz)
         disp.addRow("", self.show_empty)
 
@@ -433,8 +429,6 @@ class SettingsPage(Page):
         self.zoom.setCurrentIndex(max(0, idx))
         idx = self.wave_style.findData(data.get("waveform_style", "rgb"))
         self.wave_style.setCurrentIndex(max(0, idx))
-        idx = self.language.findData(data.get("language", "en"))
-        self.language.setCurrentIndex(max(0, idx))
         self.show_empty.setChecked(bool(data.get("show_empty_decks", True)))
         self.poll_hz.setValue(int(data.get("poll_hz", 20)))
         self.auto_connect.setChecked(bool(data.get("auto_connect", True)))
@@ -453,7 +447,6 @@ class SettingsPage(Page):
             "max_decks": self.max_decks.currentData(),
             "zoom_seconds": self.zoom.currentData(),
             "waveform_style": self.wave_style.currentData(),
-            "language": self.language.currentData(),
             "show_empty_decks": self.show_empty.isChecked(),
             "poll_hz": self.poll_hz.value(),
             "auto_connect": self.auto_connect.isChecked(),
