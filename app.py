@@ -323,6 +323,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path in ("/", "/index.html"):
                 return self._file("index.html", "text/html; charset=utf-8")
+            if path in ("/overlay", "/overlay.html"):
+                return self._file("overlay.html", "text/html; charset=utf-8")
             if path == "/api/state":
                 return self._json(self.monitor.state())
             if path == "/api/events":

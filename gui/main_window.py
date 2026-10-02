@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 
 from gui.backend import Backend
 from gui.i18n import I18n
-from gui.pages import AboutPage, DevicesPage, LibraryPage, MonitorPage, SettingsPage
+from gui.pages import AboutPage, DevicesPage, LibraryPage, MonitorPage, OverlayPage, SettingsPage
 from gui.settings import load_settings, save_settings
 from gui.theme import COLORS
 from gui.widgets import Sidebar
@@ -83,12 +83,14 @@ class MainWindow(QMainWindow):
         self.page_monitor = MonitorPage(self.i18n, self.backend)
         self.page_devices = DevicesPage(self.i18n)
         self.page_library = LibraryPage(self.i18n)
+        self.page_overlay = OverlayPage(self.i18n, self.backend)
         self.page_settings = SettingsPage(self.i18n)
         self.page_about = AboutPage(self.i18n)
         self._pages = {
             "monitor": self.page_monitor,
             "devices": self.page_devices,
             "library": self.page_library,
+            "overlay": self.page_overlay,
             "settings": self.page_settings,
             "about": self.page_about,
         }
@@ -112,6 +114,9 @@ class MainWindow(QMainWindow):
         self.page_settings.load_settings(self.settings)
         self.page_settings.saved.connect(self._on_settings_saved)
         self.page_monitor.apply_prefs(self.settings)
+        self.page_overlay.load_prefs(self.settings, port=int(self.settings.get("port", 8777)))
+        self.page_overlay.prefs_changed.connect(self._on_overlay_prefs)
+        self.page_overlay.set_web_ready(False)
 
         self.backend.state_changed.connect(self._on_state)
         self.backend.status_changed.connect(self._on_status)
@@ -131,7 +136,14 @@ class MainWindow(QMainWindow):
     def _navigate(self, key: str) -> None:
         if key == "settings":
             self.page_settings.load_settings(
-                {**self.settings, **self.page_monitor.prefs_snapshot()})
+                {**self.settings, **self.page_monitor.prefs_snapshot(),
+                 **self.page_overlay.collect()})
+        elif key == "overlay":
+            self.page_overlay.load_prefs(
+                self.settings, port=int(self.settings.get("port", 8777)))
+            ready = (self.backend.status == "connected"
+                     and bool(self.settings.get("start_web_server", True)))
+            self.page_overlay.set_web_ready(ready)
         page = self._pages.get(key)
         if page is not None:
             self.stack.setCurrentWidget(page)
@@ -162,8 +174,11 @@ class MainWindow(QMainWindow):
         busy = status in ("connecting", "connected")
         self.btn_connect.setEnabled(status != "connecting")
         self.btn_disconnect.setEnabled(busy)
-        self.btn_web.setEnabled(status == "connected" and bool(
-            self.settings.get("start_web_server", True)))
+        web_ready = status == "connected" and bool(
+            self.settings.get("start_web_server", True))
+        self.btn_web.setEnabled(web_ready)
+        self.page_overlay.set_port(int(self.settings.get("port", 8777)))
+        self.page_overlay.set_web_ready(web_ready)
 
     def _on_state(self, state: dict) -> None:
         self.page_monitor.update_state(state)
@@ -186,11 +201,20 @@ class MainWindow(QMainWindow):
         self.settings = load_settings()
         self.page_monitor.apply_prefs(self.settings)
         self.page_settings.load_settings(self.settings)
+        self.page_overlay.load_prefs(self.settings, port=int(self.settings.get("port", 8777)))
         if reconnect:
             self.connect_backend()
         else:
             QMessageBox.information(self, self.i18n.t("settings_title"),
                                     self.i18n.t("saved"))
+
+    def _on_overlay_prefs(self, data: dict) -> None:
+        self.settings.update(data)
+        try:
+            save_settings(self.settings)
+        except OSError:
+            pass
+        self.page_settings.load_settings(self.settings)
 
     def _nudge_zoom(self, direction: int) -> None:
         levels = [4, 8, 16, 32]
@@ -206,6 +230,7 @@ class MainWindow(QMainWindow):
         self.settings["window_width"] = self.width()
         self.settings["window_height"] = self.height()
         self.settings.update(self.page_monitor.prefs_snapshot())
+        self.settings.update(self.page_overlay.collect())
         try:
             save_settings(self.settings)
         except OSError:

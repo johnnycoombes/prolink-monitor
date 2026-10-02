@@ -27,6 +27,10 @@ DEFAULTS: dict[str, Any] = {
     "sidebar_compact": False,
     "poll_hz": 20,
     "show_empty_decks": True,
+    "overlay_layout": "nowplaying",   # nowplaying | dual | minimal
+    "overlay_corner": "bl",           # bl | br | tl | tr | center
+    "overlay_playing_only": True,
+    "overlay_decks": 1,
 }
 
 
@@ -107,6 +111,15 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     except (TypeError, ValueError):
         out["poll_hz"] = 20
     out["show_empty_decks"] = bool(data.get("show_empty_decks", True))
+    layout = str(data.get("overlay_layout") or "nowplaying").lower()
+    out["overlay_layout"] = layout if layout in ("nowplaying", "dual", "minimal") else "nowplaying"
+    corner = str(data.get("overlay_corner") or "bl").lower()
+    out["overlay_corner"] = corner if corner in ("bl", "br", "tl", "tr", "center") else "bl"
+    out["overlay_playing_only"] = bool(data.get("overlay_playing_only", True))
+    try:
+        out["overlay_decks"] = max(1, min(4, int(data.get("overlay_decks", 1))))
+    except (TypeError, ValueError):
+        out["overlay_decks"] = 1
     return out
 
 

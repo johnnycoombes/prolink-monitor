@@ -90,6 +90,9 @@ class Backend(QObject):
     def open_web_panel(self) -> None:
         webbrowser.open(f"http://127.0.0.1:{self.port}/")
 
+    def open_overlay(self, url: str | None = None) -> None:
+        webbrowser.open(url or f"http://127.0.0.1:{self.port}/overlay?preview=1")
+
     def meta(self, track_id: int) -> dict | None:
         if not track_id or self._monitor is None:
             return None

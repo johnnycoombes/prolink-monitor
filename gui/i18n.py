@@ -9,6 +9,7 @@ STRINGS = {
     "nav_monitor": "MONITOR",
     "nav_devices": "DEVICES",
     "nav_library": "LIBRARY",
+    "nav_overlay": "OVERLAY",
     "nav_settings": "SETTINGS",
     "nav_about": "ABOUT",
     "monitor_title": "Live decks",
@@ -17,6 +18,8 @@ STRINGS = {
     "devices_sub": "Players and mixers seen on Pro DJ Link",
     "library_title": "Library",
     "library_sub": "Media loaded from player USB / SD over NFS",
+    "overlay_title": "OBS overlay",
+    "overlay_sub": "Transparent Browser Source for stream layouts",
     "settings_title": "Settings",
     "settings_sub": "Connection, display and behaviour",
     "about_title": "About",
@@ -28,6 +31,31 @@ STRINGS = {
     "saved": "Settings saved",
     "apply_reconnect": "Save & reconnect",
     "open_web": "Open web panel",
+    "open_overlay": "Open overlay",
+    "copy_url": "Copy URL",
+    "copied": "Copied to clipboard",
+    "overlay_url": "Browser Source URL",
+    "overlay_layout": "Layout",
+    "overlay_corner": "Corner",
+    "overlay_playing": "Only decks with a track",
+    "overlay_decks": "Decks shown",
+    "overlay_preview": "Preview background",
+    "overlay_layout_now": "Now playing",
+    "overlay_layout_dual": "Dual decks",
+    "overlay_layout_min": "Minimal",
+    "overlay_corner_bl": "Bottom left",
+    "overlay_corner_br": "Bottom right",
+    "overlay_corner_tl": "Top left",
+    "overlay_corner_tr": "Top right",
+    "overlay_corner_center": "Center",
+    "overlay_howto": (
+        "In OBS: Sources → Browser → create new. Paste the URL below, "
+        "set Width/Height to your canvas (e.g. 1920×1080), and tick "
+        "“Shutdown source when not visible” if you want it paused off-air. "
+        "The page background is transparent."
+    ),
+    "overlay_need_web": "Start the local web server (Settings) and connect first.",
+    "section_overlay": "OVERLAY",
     "waiting": "Waiting for the player",
     "searching": "Looking for players on the network…",
     "seen_no_status": "Devices are visible but none is sending status yet.",
@@ -81,6 +109,8 @@ STRINGS = {
     "about_body": (
         "Desktop front-end for this prolink-monitor fork.\n"
         "Talks to AlphaTheta / Pioneer DJ gear over Pro DJ Link.\n\n"
+        "Includes a transparent OBS Browser Source overlay served from\n"
+        "the local web API (/overlay).\n\n"
         "Based on the original prolink-monitor by @fidow:\n"
         "https://github.com/fidow/prolink-monitor\n\n"
         "Protocol work builds on Deep Symmetry (dysentery, crate-digger)\n"

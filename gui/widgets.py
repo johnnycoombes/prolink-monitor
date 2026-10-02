@@ -191,7 +191,7 @@ class Sidebar(QFrame):
         layout.addWidget(sub)
         layout.addSpacing(18)
 
-        for key in ("monitor", "devices", "library", "settings", "about"):
+        for key in ("monitor", "devices", "library", "overlay", "settings", "about"):
             btn = QPushButton(i18n.t(f"nav_{key}"))
             btn.setObjectName("NavButton")
             btn.setCursor(Qt.PointingHandCursor)
