@@ -199,6 +199,26 @@ QPushButton#Chip[active="true"] {{
     border: none;
 }}
 
+QToolButton#Chip {{
+    background-color: {COLORS["panel_high"]};
+    border: 1px solid {COLORS["line"]};
+    border-radius: 3px;
+    padding: 5px 10px;
+    font-family: "Cascadia Mono", "DejaVu Sans Mono", "Consolas", monospace;
+    font-size: 11px;
+    font-weight: 600;
+}}
+
+QToolButton#Chip:hover {{
+    background-color: {COLORS["panel_hover"]};
+    border-color: {COLORS["line_bright"]};
+}}
+
+QToolButton#Chip::menu-indicator {{
+    image: none;
+    width: 0;
+}}
+
 QLineEdit, QSpinBox, QComboBox, QPlainTextEdit {{
     background-color: {COLORS["input_bg"]};
     border: 1px solid {COLORS["line"]};
