@@ -1,21 +1,41 @@
 # prolink-monitor
 
-Reads, live, what an AlphaTheta / Pioneer DJ player is doing on the network: which
-track sits on each deck, how far into it, at what tempo and key, and draws its
-waveform with a moving playhead.
+**Fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor).**
 
-It talks to the gear directly. No external Python packages.
+Live monitoring for AlphaTheta / Pioneer DJ players over Pro DJ Link: which track
+sits on each deck, how far into it, at what tempo and key, with a scrolling
+waveform and moving playhead.
+
+The monitor core still talks to the gear directly and needs **no external Python
+packages**. This fork adds a PySide6 desktop app and player-style waveform colours.
 
 ![panel](doc/panel.png)
 
 ---
 
+## This fork
+
+Compared with the [original project](https://github.com/fidow/prolink-monitor):
+
+| | Original | This fork |
+|---|---|---|
+| UI | Browser panel (`python app.py`) | Same web panel **plus** a native **Engine Room** desktop app (`python desktop.py`) |
+| Navigation | Single live panel | Sidebar: Monitor, Devices, Library, Settings, About |
+| Settings | Zoom / decks remembered in the browser | Connection and display settings saved under `~/.prolink-monitor/` |
+| Waveforms | Colour detail (RGB) with blue fallback | Switchable **RGB**, **3-Band** and **Blue**, parsed like [Beat Link `WaveformDetail`](https://deepsymmetry.org/beatlink/apidocs/org/deepsymmetry/beatlink/data/WaveformDetail.html) |
+| Language | English / Spanish | English only |
+
+Everything else — Pro DJ Link engine, NFS library, console monitor, protocol probe —
+comes from the original and is still the same idea.
+
+---
+
 ## Tested on
 
-**An AlphaTheta XDJ-AZ (firmware 1.30), on Windows 11, and nothing else.**
-
-Every field offset, the NFS access and the waveform decoding were verified against
-that one unit. It has never been run on macOS or Linux.
+**An AlphaTheta XDJ-AZ (firmware 1.30), on Windows 11, and nothing else** — that is
+what the original author verified field offsets, NFS access and waveform decoding
+against. The desktop shell in this fork has also been exercised on Linux/X11
+without live DJ gear.
 
 Two things were written with separate players in mind, both untested:
 
@@ -44,16 +64,10 @@ Per deck:
 
 The panel pulses on the downbeat of every deck that is playing.
 
-The header has switches for the **waveform zoom** (4 / 8 / 16 / 32 seconds, also
-`+` and `-` on the keyboard) and for how many **decks** to show at once (2, 3 or 4 —
-fewer decks means a taller waveform each). Decks holding a track are shown first.
-Both choices, and the language, are remembered.
-
-### Language
-
-The interface is in English by default and switches to Spanish when the browser
-asks for it. There is an EN/ES switch in the header, and the choice sticks.
-Everything else — code, console output, logs — is English only.
+The header (web) or Monitor toolbar (desktop) has switches for **waveform zoom**
+(4 / 8 / 16 / 32 seconds, also `+` and `-` on the keyboard), how many **decks** to
+show (2, 3 or 4), and the **waveform colour** (RGB / 3BAND / BLUE). Decks holding a
+track are shown first. Those choices are remembered.
 
 ---
 
@@ -84,16 +98,16 @@ python desktop.py
 
 Or `python -m gui`. The window has a sidebar for **Monitor**, **Devices**,
 **Library**, **Settings** and **About**. Connection mode, player address, device
-number, zoom, visible decks, language and more live under Settings and are saved
-to `~/.prolink-monitor/settings.json`.
+number, zoom, visible decks, waveform style and more live under Settings and are
+saved to `~/.prolink-monitor/settings.json`.
 
 The monitor core itself still needs no packages; PySide6 is only for the desktop
 shell. The optional local web panel can be started from Settings and opened with
 **Open web panel**.
 
-Waveform colour follows the player: **RGB** (mixed lows/mids/highs), **3BAND**
-(blue, orange and white stacked the way a CDJ draws it) or **BLUE**. The choice
-is on the Monitor page and under Settings, and the web panel has the same switch.
+Waveform colour follows the player: **RGB**, **3BAND** (stacked blue / amber /
+white the way a CDJ draws it) or **BLUE**. The same switch is on the Monitor page,
+in Settings, and on the web panel.
 
 ### Web panel
 
@@ -289,10 +303,11 @@ prolink/
 `/api/waveform/<id>` format: two blocks back to back (detail then overview), each
 with a 24-byte little-endian header — `PLWF`, version, column count, columns per
 second (float), duration in ms, flags — followed by the heights (1 byte, 0-31) and
-the RGB (3 bytes per column).
+the RGB (3 bytes per column). Optional `PLWB` / `PLBC` blocks after that carry
+3-band and blue lanes for the style switch.
 
 State is sent with **stable keys**, not display text (`playing`, `cued`, `usb`...);
-the interface translates them.
+the interface supplies the English labels.
 
 ---
 
@@ -323,13 +338,19 @@ and how many tracks it has.
 
 ## Credits
 
-The protocol work this builds on is not mine:
+This repository is a **fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor)**
+by [@fidow](https://github.com/fidow). The Pro DJ Link engine, NFS library access,
+web panel architecture, console monitor and protocol probe started there.
+
+The protocol research that work builds on:
 
 - [dysentery](https://github.com/Deep-Symmetry/dysentery) and
   [crate-digger](https://github.com/Deep-Symmetry/crate-digger) by Deep Symmetry,
   which document the packets, `export.pdb` and the analysis files.
+- [Beat Link](https://github.com/Deep-Symmetry/beat-link) `WaveformDetail` /
+  `WaveformFinder` — used here as the reference for RGB, 3-Band and Blue column
+  layout.
 - The reverse engineering by [@henrybetts](https://github.com/henrybetts) and
   [@flesniak](https://github.com/flesniak) that those projects are built on.
 
-This is an independent implementation, not affiliated with or endorsed by
-AlphaTheta / Pioneer DJ.
+Independent project — not affiliated with or endorsed by AlphaTheta / Pioneer DJ.
