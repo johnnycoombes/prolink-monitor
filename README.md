@@ -429,6 +429,7 @@ prolink/
   anlz.py           analysis file parser (waveforms, beats, cues)
   library.py        ties NFS + database + analysis together, with caching
   mixstatus.py      SmartTiming now-playing / setlist (prolink-connect style)
+  session.py        realtime session playlist recorder (bars helpers too)
 ```
 
 ### API
@@ -437,8 +438,12 @@ prolink/
 |---|---|
 | `/` | live monitor panel |
 | `/overlay` | transparent OBS overlay |
-| `/api/state` | full state as JSON (includes `now_playing` / `setlist`) |
+| `/api/state` | full state as JSON (includes `now_playing` / `setlist` / `session`) |
 | `/api/setlist` | SmartTiming mix status and setlist only |
+| `/api/session` | session playlist recorder state |
+| `/api/session/start` | start recording (first track → `00:00:00`) |
+| `/api/session/stop` | stop recording (keep the list) |
+| `/api/session/clear` | clear the session playlist |
 | `/api/events` | the same state over SSE, 60 times a second |
 | `/api/track/<id>` | metadata, beat grid, cues and phrases |
 | `/api/waveform/<id>` | waveforms in binary: detail and overview |
