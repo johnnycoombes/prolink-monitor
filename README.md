@@ -7,9 +7,11 @@ sits on each deck, how far into it, at what tempo and key, with a scrolling
 waveform and moving playhead.
 
 The monitor core still talks to the gear directly and needs **no external Python
-packages**. This fork adds a PySide6 desktop app and player-style waveform colours.
+packages**. This fork adds a PySide6 **Engine Room** desktop app, player-style
+waveform colours, configurable deck cards, a hideable sidebar, and a transparent
+**OBS Browser Source** overlay.
 
-![panel](doc/panel.png)
+![Engine Room — 2 decks](doc/desktop-monitor.png)
 
 ---
 
@@ -19,15 +21,62 @@ Compared with the [original project](https://github.com/fidow/prolink-monitor):
 
 | | Original | This fork |
 |---|---|---|
-| UI | Browser panel (`python app.py`) | Same web panel **plus** a native **Engine Room** desktop app (`python desktop.py`) and an **OBS Browser Source** overlay |
-| Navigation | Single live panel | Sidebar: Monitor, Devices, Library, Overlay, Settings, About |
-| Settings | Zoom / decks remembered in the browser | Connection, display and **per-deck element** settings saved under `~/.prolink-monitor/` |
-| Waveforms | Colour detail (RGB) with blue fallback | Switchable **RGB**, **3-Band** and **Blue**, parsed like [Beat Link `WaveformDetail`](https://deepsymmetry.org/beatlink/apidocs/org/deepsymmetry/beatlink/data/WaveformDetail.html) |
+| UI | Browser panel (`python app.py`) | Same web panel **plus** a native **Engine Room** desktop app (`python desktop.py`) |
+| Navigation | Single live panel | Sidebar: Monitor, Devices, Library, Overlay, Settings, About — **hideable** (`Ctrl+B`) |
+| Settings | Zoom / decks remembered in the browser | Connection, display and **per-deck element** settings under `~/.prolink-monitor/` |
+| Waveforms | Colour detail (RGB) with blue fallback | Switchable **RGB**, **3-Band** and **Blue**, parsed like [Beat Link `WaveformDetail`](https://deepsymmetry.org/beatlink/apidocs/org/deepsymmetry/beatlink/data/WaveformDetail.html); cards **fill the panel** |
+| Deck cards | Fixed layout | Toggle artwork, BPM, tempo, time, key, tags, waveform and more |
 | Streaming | — | Transparent `/overlay` page for OBS (now playing / dual / minimal) |
 | Language | English / Spanish | English only |
 
 Everything else — Pro DJ Link engine, NFS library, console monitor, protocol probe —
 comes from the original and is still the same idea.
+
+---
+
+## Screenshots
+
+### Desktop — Monitor
+
+Waveforms fill the available height. Switch **2 / 3 / 4** visible decks, zoom and
+waveform colour from the toolbar.
+
+![2-deck Monitor](doc/desktop-monitor.png)
+
+![4-deck Monitor](doc/desktop-monitor-4deck.png)
+
+Hide the sidebar with **☰** or **Ctrl+B** for a wider Monitor; a **Navigate** menu
+stays in the top bar.
+
+![Sidebar hidden](doc/desktop-sidebar-hidden.png)
+
+### Desktop — Deck elements
+
+In **Settings → Deck elements**, choose which pieces each Monitor card shows.
+Hidden columns free space for the waveform.
+
+![Deck elements settings](doc/settings-deck-elements.png)
+
+### Desktop — OBS Overlay builder
+
+The **Overlay** page builds a Browser Source URL (layout, corner, decks) and can
+copy it to the clipboard.
+
+![Overlay page](doc/desktop-overlay.png)
+
+### OBS overlay
+
+Transparent HTML served at `/overlay`, driven by the same SSE API as the web panel.
+
+![Now playing overlay](doc/overlay-nowplaying.png)
+
+![Dual decks overlay](doc/overlay-dual.png)
+
+### Web panel
+
+The original browser panel is still available via `python app.py`.
+
+![Web panel](doc/panel.png)
 
 ---
 
@@ -102,22 +151,24 @@ Or `python -m gui`. The window has a sidebar for **Monitor**, **Devices**,
 number, zoom, visible decks, waveform style and more live under Settings and are
 saved to `~/.prolink-monitor/settings.json`.
 
-The sidebar can be hidden with the **☰** button (or **Ctrl+B**) to give the Monitor
-more width; a **Navigate** menu appears in the top bar while it is hidden. Preference
-is remembered.
+**Sidebar.** Hide it with the **☰** button, **Hide sidebar** at the bottom of the
+panel, or **Ctrl+B**. While hidden, a **Navigate** menu appears in the top bar.
+Preference is remembered (also under Settings → Behaviour → Show sidebar).
 
-Under **Deck elements** in Settings you can turn individual Monitor card pieces on
-or off — artwork, title, artist, waveform, BPM, tempo (±%), time, key, and the
-rest. Hidden columns free space for the waveform.
+**Deck elements.** Under Settings you can turn individual Monitor card pieces on or
+off — artwork, title, artist, album/genre/label, MASTER/SYNC/ON AIR tags, waveform,
+BPM, tempo (±%), elapsed/remaining, key and play state. Hidden columns free space
+for the waveform.
+
+**Waveforms.** Cards split the Monitor viewport evenly so waves grow with the window
+and deck count. Colour follows the player: **RGB**, **3BAND** (stacked blue / amber /
+white the way a CDJ draws it) or **BLUE**. The same switch is on the Monitor page,
+in Settings, and on the web panel.
 
 The monitor core itself still needs no packages; PySide6 is only for the desktop
 shell. The optional local web server can be started from Settings and opened with
 **Open web panel**. The **Overlay** page builds a transparent OBS Browser Source
 URL from the same server.
-
-Waveform colour follows the player: **RGB**, **3BAND** (stacked blue / amber /
-white the way a CDJ draws it) or **BLUE**. The same switch is on the Monitor page,
-in Settings, and on the web panel.
 
 ### OBS overlay
 
@@ -319,6 +370,7 @@ monitor.py          console monitor
 probe.py            protocol probe: reports bytes that change
 web/index.html      the panel
 web/overlay.html    transparent OBS Browser Source overlay
+doc/                README screenshots
 requirements.txt    desktop dependency (PySide6)
 prolink/
   proto.py          Pro DJ Link packets (keep-alive, beat, status)
