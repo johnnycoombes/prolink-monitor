@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal, QEvent
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy, QSpinBox,
-    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QGridLayout,
+    QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy,
+    QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from gui.theme import COLORS
@@ -214,7 +215,8 @@ class MonitorPage(Page):
         if recording:
             n = len(session.get("tracks") or [])
             elapsed = session.get("elapsed") or "00:00:00"
-            self.record_btn.setText(f"{self._i18n.t('session_stop')} · {elapsed} · {n}")
+            label = self._i18n.t("session_paused") if session.get("paused") else self._i18n.t("session_stop")
+            self.record_btn.setText(f"{label} · {elapsed} · {n}")
             self.record_btn.setProperty("active", "true")
         else:
             self.record_btn.setText(self._i18n.t("session_record"))
@@ -480,6 +482,7 @@ class SessionPage(Page):
         super().__init__(i18n, "session_title", "session_sub", parent)
         self.backend = backend
         self._last_count = -1
+        self._export_note = ""
 
         tools = QHBoxLayout()
         tools.setSpacing(8)
@@ -489,10 +492,10 @@ class SessionPage(Page):
         self.record_btn.clicked.connect(self._toggle_record)
         self.stop_btn = QPushButton(i18n.t("session_stop"))
         self.stop_btn.setCursor(Qt.PointingHandCursor)
-        self.stop_btn.clicked.connect(lambda: self.backend.stop_session())
+        self.stop_btn.clicked.connect(self._stop)
         self.clear_btn = QPushButton(i18n.t("session_clear"))
         self.clear_btn.setCursor(Qt.PointingHandCursor)
-        self.clear_btn.clicked.connect(lambda: self.backend.clear_session())
+        self.clear_btn.clicked.connect(self._clear)
         self.copy_btn = QPushButton(i18n.t("session_copy"))
         self.copy_btn.setCursor(Qt.PointingHandCursor)
         self.copy_btn.clicked.connect(self._copy_playlist)
@@ -508,6 +511,27 @@ class SessionPage(Page):
         )
         tools.addWidget(self.status)
         self.layout_root.addLayout(tools)
+
+        exports = QHBoxLayout()
+        exports.setSpacing(8)
+        self.export_csv_btn = QPushButton(i18n.t("session_export_csv"))
+        self.export_json_btn = QPushButton(i18n.t("session_export_json"))
+        self.export_m3u_btn = QPushButton(i18n.t("session_export_m3u"))
+        self.export_all_btn = QPushButton(i18n.t("session_export_all"))
+        self.export_all_btn.setObjectName("Primary")
+        for btn, fmt in (
+            (self.export_csv_btn, "csv"),
+            (self.export_json_btn, "json"),
+            (self.export_m3u_btn, "m3u"),
+        ):
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda _=False, f=fmt: self._export_one(f))
+            exports.addWidget(btn)
+        self.export_all_btn.setCursor(Qt.PointingHandCursor)
+        self.export_all_btn.clicked.connect(self._export_all)
+        exports.addWidget(self.export_all_btn)
+        exports.addStretch(1)
+        self.layout_root.addLayout(exports)
 
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels([
@@ -542,18 +566,32 @@ class SessionPage(Page):
         self.clear_btn.setText(self._i18n.t("session_clear"))
         self.stop_btn.setText(self._i18n.t("session_stop"))
         self.copy_btn.setText(self._i18n.t("session_copy"))
+        self.export_csv_btn.setText(self._i18n.t("session_export_csv"))
+        self.export_json_btn.setText(self._i18n.t("session_export_json"))
+        self.export_m3u_btn.setText(self._i18n.t("session_export_m3u"))
+        self.export_all_btn.setText(self._i18n.t("session_export_all"))
         self.empty.setText(self._i18n.t("session_empty"))
 
     def _toggle_record(self) -> None:
-        # Prefer live monitor state via backend.
         mon = self.backend.monitor
-        recording = False
-        if mon is not None:
-            recording = bool(mon.session.recording)
+        recording = bool(mon is not None and mon.session.recording)
         if recording:
-            self.backend.stop_session()
+            self._stop()
         else:
+            self._export_note = ""
             self.backend.start_session()
+
+    def _stop(self) -> None:
+        paths = self.backend.stop_session()
+        if paths:
+            folder = os.path.dirname(paths[0]) if paths else ""
+            self._export_note = f"{self._i18n.t('session_exported')} {folder}"
+        else:
+            self._export_note = ""
+
+    def _clear(self) -> None:
+        self._export_note = ""
+        self.backend.clear_session()
 
     def _copy_playlist(self) -> None:
         from PySide6.QtWidgets import QApplication
@@ -566,23 +604,60 @@ class SessionPage(Page):
             lines.append("\t".join(vals))
         QApplication.clipboard().setText("\n".join(lines))
 
+    def _export_one(self, fmt: str) -> None:
+        body = self.backend.export_session(fmt)
+        if not body:
+            return
+        filters = {
+            "csv": "CSV (*.csv)",
+            "json": "JSON (*.json)",
+            "m3u": "M3U playlist (*.m3u)",
+        }
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            self._i18n.t(f"session_export_{fmt}"),
+            f"session.{fmt}",
+            filters.get(fmt, "All files (*)"),
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(body)
+            self._export_note = f"{self._i18n.t('session_exported')} {path}"
+        except OSError:
+            self._export_note = ""
+
+    def _export_all(self) -> None:
+        paths = self.backend.save_session_exports()
+        if paths:
+            folder = os.path.dirname(paths[0])
+            self._export_note = f"{self._i18n.t('session_exported')} {folder}"
+
     def update_state(self, state: dict) -> None:
         session = state.get("session") or {}
         recording = bool(session.get("recording"))
+        paused = bool(session.get("paused"))
         tracks = session.get("tracks") or []
         elapsed = session.get("elapsed") or "00:00:00"
         if recording:
+            label = (
+                self._i18n.t("session_paused") if paused
+                else self._i18n.t("session_recording")
+            )
             self.record_btn.setText(self._i18n.t("session_recording"))
             self.status.setText(
-                f"{self._i18n.t('session_recording')} · {elapsed} · "
-                f"{len(tracks)} {self._i18n.t('tracks')}"
+                f"{label} · {elapsed} · {len(tracks)} {self._i18n.t('tracks')}"
             )
+            color = COLORS["dim"] if paused else COLORS["danger"]
             self.status.setStyleSheet(
-                f"font-family:monospace; font-size:12px; color:{COLORS['danger']};"
+                f"font-family:monospace; font-size:12px; color:{color};"
             )
         else:
             self.record_btn.setText(self._i18n.t("session_record"))
-            if tracks:
+            if self._export_note:
+                self.status.setText(self._export_note)
+            elif tracks:
                 self.status.setText(
                     f"{self._i18n.t('session_stopped')} · {elapsed} · "
                     f"{len(tracks)} {self._i18n.t('tracks')}"
@@ -595,9 +670,6 @@ class SessionPage(Page):
 
         self.empty.setVisible(not tracks)
         self.table.setVisible(bool(tracks))
-        if len(tracks) == self._last_count and not recording:
-            # Still refresh timestamps row contents if titles filled in.
-            pass
         self._last_count = len(tracks)
         self.table.setRowCount(len(tracks))
         for row, t in enumerate(tracks):
@@ -643,6 +715,7 @@ class OverlayPage(Page):
         self.layout_box.addItem(i18n.t("overlay_layout_now"), "nowplaying")
         self.layout_box.addItem(i18n.t("overlay_layout_dual"), "dual")
         self.layout_box.addItem(i18n.t("overlay_layout_min"), "minimal")
+        self.layout_box.addItem(i18n.t("overlay_layout_setlist"), "setlist")
         self.corner_box = QComboBox()
         for key, label in (
             ("bl", "overlay_corner_bl"),
@@ -896,6 +969,7 @@ class SettingsPage(Page):
         self.overlay_layout.addItem(i18n.t("overlay_layout_now"), "nowplaying")
         self.overlay_layout.addItem(i18n.t("overlay_layout_dual"), "dual")
         self.overlay_layout.addItem(i18n.t("overlay_layout_min"), "minimal")
+        self.overlay_layout.addItem(i18n.t("overlay_layout_setlist"), "setlist")
         self.overlay_corner = QComboBox()
         for key, label in (
             ("bl", "overlay_corner_bl"),
@@ -920,6 +994,13 @@ class SettingsPage(Page):
         ov.addRow(i18n.t("overlay_wave"), self.overlay_wave)
         ov.addRow("", self.overlay_playing)
         ov.addRow("", self.overlay_mix)
+
+        sess = section("section_session")
+        self.session_autosave = QCheckBox(i18n.t("session_autosave"))
+        self.session_autosave_dir = QLineEdit()
+        self.session_autosave_dir.setPlaceholderText("~/.prolink-monitor/sessions")
+        sess.addRow(self.session_autosave)
+        sess.addRow(i18n.t("session_autosave_dir"), self.session_autosave_dir)
 
         beh = section("section_behaviour")
         self.auto_connect = QCheckBox(i18n.t("auto_connect"))
@@ -981,6 +1062,8 @@ class SettingsPage(Page):
         self.overlay_mix.setChecked(bool(data.get("overlay_mix", True)))
         idx = self.overlay_wave.findData(data.get("overlay_waveform_style", "rgb"))
         self.overlay_wave.setCurrentIndex(max(0, idx))
+        self.session_autosave.setChecked(bool(data.get("session_autosave", False)))
+        self.session_autosave_dir.setText(data.get("session_autosave_dir") or "")
         self.auto_connect.setChecked(bool(data.get("auto_connect", True)))
         self.start_web.setChecked(bool(data.get("start_web_server", True)))
         self.show_sidebar.setChecked(bool(data.get("sidebar_visible", True)))
@@ -1006,6 +1089,8 @@ class SettingsPage(Page):
             "overlay_playing_only": self.overlay_playing.isChecked(),
             "overlay_mix": self.overlay_mix.isChecked(),
             "overlay_waveform_style": self.overlay_wave.currentData(),
+            "session_autosave": self.session_autosave.isChecked(),
+            "session_autosave_dir": self.session_autosave_dir.text().strip(),
             "auto_connect": self.auto_connect.isChecked(),
             "start_web_server": self.start_web.isChecked(),
             "sidebar_visible": self.show_sidebar.isChecked(),

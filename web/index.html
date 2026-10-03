@@ -1026,9 +1026,11 @@ function renderSession(session) {
   session = session || {};
   const tracks = session.tracks || [];
   const recording = !!session.recording;
+  const paused = !!session.paused;
   btn.classList.toggle('on', recording);
   if (recording) {
-    btn.textContent = `Stop · ${session.elapsed || '00:00:00'} · ${tracks.length}`;
+    const label = paused ? 'Paused' : 'Stop';
+    btn.textContent = `${label} · ${session.elapsed || '00:00:00'} · ${tracks.length}`;
   } else {
     btn.textContent = 'Record';
   }

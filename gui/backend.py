@@ -16,7 +16,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from app import Handler, Monitor, QuietServer, build_source, open_http_server  # noqa: E402
-from gui.settings import as_namespace  # noqa: E402
+from gui.settings import as_namespace, sessions_dir  # noqa: E402
 from prolink import link  # noqa: E402
 
 
@@ -155,17 +155,51 @@ class Backend(QObject):
         if mon is not None:
             mon.session.start()
 
-    def stop_session(self) -> None:
+    def stop_session(self) -> list[str]:
+        """Stop recording; auto-save exports when enabled. Returns saved paths."""
         with self._lock:
             mon = self._monitor
-        if mon is not None:
-            mon.session.stop()
+            settings = dict(self._settings)
+        if mon is None:
+            return []
+        mon.session.stop()
+        if not settings.get("session_autosave"):
+            return []
+        try:
+            return mon.session.save_exports(sessions_dir(settings))
+        except OSError:
+            return []
 
     def clear_session(self) -> None:
         with self._lock:
             mon = self._monitor
         if mon is not None:
             mon.session.clear()
+
+    def export_session(self, fmt: str = "json") -> str:
+        """Return playlist text for fmt in csv|json|m3u."""
+        with self._lock:
+            mon = self._monitor
+        if mon is None:
+            return ""
+        fmt = (fmt or "json").lower()
+        if fmt == "csv":
+            return mon.session.export_csv()
+        if fmt == "m3u":
+            return mon.session.export_m3u()
+        return mon.session.export_json()
+
+    def save_session_exports(self, directory: str | None = None) -> list[str]:
+        with self._lock:
+            mon = self._monitor
+            settings = dict(self._settings)
+        if mon is None:
+            return []
+        path = directory or sessions_dir(settings)
+        try:
+            return mon.session.save_exports(path)
+        except OSError:
+            return []
 
     # -- boot / poll --------------------------------------------------------
     def _boot(self, settings: dict[str, Any]) -> None:

@@ -353,7 +353,8 @@ class Monitor:
                 snap["artist"] = meta.get("artist") or ""
                 snap["key"] = meta.get("key") or ""
             self.mixstatus.handle(snap)
-            self.session.handle(snap)
+        # One observe pass: set-clock pause/resume + track logging.
+        self.session.observe(decks)
         with self.engine.lock:
             devices = [{"number": a.device_number, "name": a.name,
                         "kind": a.kind, "ip": a.ip}
@@ -415,11 +416,15 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):    # keep the console quiet
         pass
 
-    def _send(self, code: int, body: bytes, ctype: str, cache: str = "no-store") -> None:
+    def _send(self, code: int, body: bytes, ctype: str, cache: str = "no-store",
+              headers: dict[str, str] | None = None) -> None:
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", cache)
+        if headers:
+            for key, value in headers.items():
+                self.send_header(key, value)
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -431,7 +436,8 @@ class Handler(BaseHTTPRequestHandler):
                    "application/json; charset=utf-8")
 
     def do_GET(self):
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         try:
             if path in ("/", "/index.html"):
                 return self._file("index.html", "text/html; charset=utf-8")
@@ -452,6 +458,26 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/session/clear":
                 self.monitor.session.clear()
                 return self._json(self.monitor.session.as_state())
+            if path == "/api/session/export":
+                from urllib.parse import parse_qs
+                fmt = (parse_qs(parsed.query).get("fmt") or ["json"])[0].lower()
+                session = self.monitor.session
+                if fmt == "csv":
+                    body = session.export_csv()
+                    ctype = "text/csv; charset=utf-8"
+                    name = "session.csv"
+                elif fmt == "m3u":
+                    body = session.export_m3u()
+                    ctype = "audio/x-mpegurl; charset=utf-8"
+                    name = "session.m3u"
+                else:
+                    body = session.export_json()
+                    ctype = "application/json; charset=utf-8"
+                    name = "session.json"
+                return self._send(
+                    200, body.encode("utf-8"), ctype,
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'},
+                )
             if path == "/api/events":
                 return self._events()
             if path.startswith("/api/track/"):
