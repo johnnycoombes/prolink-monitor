@@ -2,24 +2,41 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QKeySequence, QShortcut
+from PySide6.QtCore import Qt, QEvent, QTimer
+from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton,
-    QStackedWidget, QToolButton, QVBoxLayout, QWidget,
+    QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox,
+    QPushButton, QStackedWidget, QSystemTrayIcon, QToolButton, QVBoxLayout, QWidget,
 )
 
 from gui.backend import Backend
 from gui.i18n import I18n
 from gui.pages import (
-    AboutPage, DevicesPage, LibraryPage, MonitorPage, OverlayPage, SessionPage, SettingsPage,
+    AboutPage, DevicesPage, HealthPage, LibraryPage, MonitorPage, OverlayPage,
+    SessionPage, SettingsPage,
 )
 from gui.settings import load_settings, save_settings
 from gui.theme import COLORS
 from gui.widgets import Sidebar
 from prolink.session import ZOOM_BARS, DEFAULT_ZOOM_BARS
+
+
+def _tray_icon() -> QIcon:
+    """Simple branded tray glyph (no external asset required)."""
+    size = 64
+    pm = QPixmap(size, size)
+    pm.fill(QColor(0, 0, 0, 0))
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(COLORS["panel"]))
+    p.drawRoundedRect(2, 2, size - 4, size - 4, 14, 14)
+    p.setBrush(QColor(COLORS["accent"]))
+    p.drawEllipse(16, 16, 32, 32)
+    p.setBrush(QColor(COLORS["bg"]))
+    p.drawEllipse(24, 24, 16, 16)
+    p.end()
+    return QIcon(pm)
 
 
 class MainWindow(QMainWindow):
@@ -29,6 +46,8 @@ class MainWindow(QMainWindow):
         self.i18n = I18n()
         self.backend = Backend(self)
         self._sidebar_visible = bool(self.settings.get("sidebar_visible", True))
+        self._force_quit = False
+        self._tray: QSystemTrayIcon | None = None
 
         self.setWindowTitle(self.i18n.t("app_title"))
         self.resize(
@@ -111,6 +130,7 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.page_monitor = MonitorPage(self.i18n, self.backend)
         self.page_devices = DevicesPage(self.i18n)
+        self.page_health = HealthPage(self.i18n)
         self.page_library = LibraryPage(self.i18n, self.backend)
         self.page_session = SessionPage(self.i18n, self.backend)
         self.page_overlay = OverlayPage(self.i18n, self.backend)
@@ -119,6 +139,7 @@ class MainWindow(QMainWindow):
         self._pages = {
             "monitor": self.page_monitor,
             "devices": self.page_devices,
+            "health": self.page_health,
             "library": self.page_library,
             "session": self.page_session,
             "overlay": self.page_overlay,
@@ -159,10 +180,8 @@ class MainWindow(QMainWindow):
         self._library_sig: tuple | None = None
         self._footer_sig: tuple | None = None
 
-        QShortcut(QKeySequence("+"), self, activated=lambda: self._nudge_zoom(-1))
-        QShortcut(QKeySequence("="), self, activated=lambda: self._nudge_zoom(-1))
-        QShortcut(QKeySequence("-"), self, activated=lambda: self._nudge_zoom(1))
-        QShortcut(QKeySequence("Ctrl+B"), self, activated=self.toggle_sidebar)
+        self._install_hotkeys()
+        self._setup_tray()
 
         self.set_sidebar_visible(self._sidebar_visible, persist=False)
         self._navigate("monitor")
@@ -170,6 +189,125 @@ class MainWindow(QMainWindow):
 
         if self.settings.get("auto_connect", True):
             self.connect_backend()
+
+    # -- hotkeys ------------------------------------------------------------
+    def _install_hotkeys(self) -> None:
+        def bind(seq: str, slot) -> None:
+            sc = QShortcut(QKeySequence(seq), self)
+            sc.setContext(Qt.ApplicationShortcut)
+            sc.activated.connect(slot)
+
+        bind("+", lambda: self._nudge_zoom(-1))
+        bind("=", lambda: self._nudge_zoom(-1))
+        bind("-", lambda: self._nudge_zoom(1))
+        bind("Ctrl+=", lambda: self._nudge_zoom(-1))
+        bind("Ctrl+-", lambda: self._nudge_zoom(1))
+        bind("Ctrl+B", self.toggle_sidebar)
+        bind("Ctrl+R", self._toggle_record)
+        bind("Ctrl+O", self._open_overlay_hotkey)
+
+    def _toggle_record(self) -> None:
+        mon = self.backend.monitor
+        recording = bool(mon is not None and mon.session.recording)
+        if recording:
+            self.backend.stop_session()
+        else:
+            self.backend.start_session()
+
+    def _open_overlay_hotkey(self) -> None:
+        if self.backend.status != "connected":
+            return
+        if not self.settings.get("start_web_server", True):
+            return
+        self._navigate("overlay")
+        self.page_overlay._open_overlay()
+
+    # -- system tray --------------------------------------------------------
+    def _setup_tray(self) -> None:
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        app = QApplication.instance()
+        if app is not None:
+            app.setQuitOnLastWindowClosed(False)
+
+        self._tray = QSystemTrayIcon(_tray_icon(), self)
+        self._tray.setToolTip(self.i18n.t("tray_tooltip"))
+        menu = QMenu()
+        act_show = QAction(self.i18n.t("tray_show"), self)
+        act_show.triggered.connect(self.restore_from_tray)
+        act_record = QAction(f"{self.i18n.t('session_record')}  ({self.i18n.t('hotkey_record')})", self)
+        act_record.triggered.connect(self._toggle_record)
+        act_overlay = QAction(f"{self.i18n.t('open_overlay')}  ({self.i18n.t('hotkey_overlay')})", self)
+        act_overlay.triggered.connect(self._open_overlay_hotkey)
+        act_connect = QAction(self.i18n.t("connect"), self)
+        act_connect.triggered.connect(self.connect_backend)
+        act_disconnect = QAction(self.i18n.t("disconnect"), self)
+        act_disconnect.triggered.connect(self.disconnect_backend)
+        act_quit = QAction(self.i18n.t("tray_quit"), self)
+        act_quit.triggered.connect(self.quit_app)
+        menu.addAction(act_show)
+        menu.addSeparator()
+        menu.addAction(act_record)
+        menu.addAction(act_overlay)
+        menu.addSeparator()
+        menu.addAction(act_connect)
+        menu.addAction(act_disconnect)
+        menu.addSeparator()
+        menu.addAction(act_quit)
+        self._tray_act_record = act_record
+        self._tray_act_overlay = act_overlay
+        self._tray_act_connect = act_connect
+        self._tray_act_disconnect = act_disconnect
+        self._tray.setContextMenu(menu)
+        self._tray.activated.connect(self._on_tray_activated)
+        self._tray.show()
+
+    def _on_tray_activated(self, reason) -> None:
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+            self.restore_from_tray()
+
+    def restore_from_tray(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def quit_app(self) -> None:
+        self._force_quit = True
+        self.close()
+
+    def _tray_enabled(self) -> bool:
+        return self._tray is not None and self._tray.isVisible()
+
+    def _connected(self) -> bool:
+        return self.backend.status == "connected"
+
+    def _should_minimize_to_tray(self) -> bool:
+        return (
+            self._tray_enabled()
+            and self._connected()
+            and bool(self.settings.get("minimize_to_tray", True))
+        )
+
+    def _should_close_to_tray(self) -> bool:
+        return (
+            not self._force_quit
+            and self._tray_enabled()
+            and self._connected()
+            and bool(self.settings.get("close_to_tray", True))
+        )
+
+    def _hide_to_tray(self) -> None:
+        self.hide()
+        if self._tray is not None:
+            try:
+                self._tray.showMessage(
+                    self.i18n.t("app_title"),
+                    self.i18n.t("tray_minimized"),
+                    QSystemTrayIcon.Information,
+                    2500,
+                )
+            except Exception:
+                pass
 
     # -- sidebar ------------------------------------------------------------
     def toggle_sidebar(self) -> None:
@@ -246,9 +384,21 @@ class MainWindow(QMainWindow):
         self.btn_web.setEnabled(web_ready)
         self.page_overlay.set_port(self.backend.port)
         self.page_overlay.set_web_ready(web_ready)
+        if self._tray is not None:
+            tip = self.i18n.t("tray_tooltip")
+            if status == "connected":
+                tip = f"{tip} · {self.i18n.t('connected')}"
+            elif status == "error":
+                tip = f"{tip} · {self.i18n.t('error')}"
+            self._tray.setToolTip(tip)
+            if hasattr(self, "_tray_act_connect"):
+                self._tray_act_connect.setEnabled(status != "connecting")
+                self._tray_act_disconnect.setEnabled(busy)
+                self._tray_act_overlay.setEnabled(web_ready)
 
     def _on_state(self, state: dict) -> None:
         self.page_monitor.update_state(state)
+        self.page_health.update_state(state)
 
         devices = state.get("devices") or []
         devices_sig = tuple(
@@ -339,7 +489,20 @@ class MainWindow(QMainWindow):
         nxt = levels[max(0, min(len(levels) - 1, i + direction))]
         self.page_monitor.set_zoom(nxt)
 
+    def changeEvent(self, event):  # noqa: N802
+        if event.type() == QEvent.WindowStateChange and self.isMinimized():
+            if self._should_minimize_to_tray():
+                # Defer hide so Qt finishes the minimize transition cleanly.
+                QTimer.singleShot(0, self._hide_to_tray)
+                event.accept()
+                return
+        super().changeEvent(event)
+
     def closeEvent(self, event):  # noqa: N802
+        if self._should_close_to_tray():
+            event.ignore()
+            self._hide_to_tray()
+            return
         self.settings["window_width"] = self.width()
         self.settings["window_height"] = self.height()
         self.settings["sidebar_visible"] = self._sidebar_visible
@@ -350,4 +513,9 @@ class MainWindow(QMainWindow):
         except OSError:
             pass
         self.backend.stop()
+        if self._tray is not None:
+            self._tray.hide()
         super().closeEvent(event)
+        app = QApplication.instance()
+        if app is not None and self._force_quit:
+            app.quit()

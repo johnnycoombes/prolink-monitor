@@ -55,6 +55,8 @@ DEFAULTS: dict[str, Any] = {
     "overlay_show_next": True,
     "session_autosave": False,
     "session_autosave_dir": "",       # empty → ~/.prolink-monitor/sessions
+    "minimize_to_tray": True,         # when connected, minimize hides to tray
+    "close_to_tray": True,            # when connected, window close hides to tray
 }
 
 # Keys that toggle individual pieces of each Monitor deck card.
@@ -223,6 +225,8 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     out["overlay_show_next"] = bool(data.get("overlay_show_next", True))
     out["session_autosave"] = bool(data.get("session_autosave", False))
     out["session_autosave_dir"] = str(data.get("session_autosave_dir") or "").strip()
+    out["minimize_to_tray"] = bool(data.get("minimize_to_tray", True))
+    out["close_to_tray"] = bool(data.get("close_to_tray", True))
     return out
 
 

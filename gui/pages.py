@@ -471,6 +471,224 @@ class DevicesPage(Page):
                 self.table.setItem(row, col, item)
 
 
+_POSITION_SOURCE_KEYS = {
+    "exact": "health_source_exact",
+    "beat_grid": "health_source_beat_grid",
+    "none": "health_source_none",
+}
+
+
+class HealthPage(Page):
+    """Packet rates, AP vs beat-grid position source, and NFS RTT."""
+
+    def __init__(self, i18n, parent=None):
+        super().__init__(i18n, "health_title", "health_sub", parent)
+        self._prev_packets = 0
+        self._prev_t = 0.0
+        self._prev_decks: dict[int, tuple[int, int, float]] = {}
+
+        overview = QFrame()
+        overview.setObjectName("Card")
+        ov_l = QVBoxLayout(overview)
+        ov_l.setContentsMargins(18, 14, 18, 14)
+        ov_title = QLabel(i18n.t("health_overview"))
+        ov_title.setObjectName("SectionTitle")
+        ov_l.addWidget(ov_title)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(24)
+        grid.setVerticalSpacing(8)
+        self._mode_val = QLabel("—")
+        self._host_val = QLabel("—")
+        self._pkts_val = QLabel("—")
+        self._rate_val = QLabel("—")
+        for w in (self._mode_val, self._host_val, self._pkts_val, self._rate_val):
+            w.setStyleSheet("font-family:monospace; font-size:14px; font-weight:600;")
+        pairs = (
+            (i18n.t("health_mode"), self._mode_val),
+            (i18n.t("health_host"), self._host_val),
+            (i18n.t("health_packets_total"), self._pkts_val),
+            (i18n.t("health_packet_rate"), self._rate_val),
+        )
+        self._overview_labels: list[QLabel] = []
+        for col, (title, value) in enumerate(pairs):
+            lbl = QLabel(title)
+            lbl.setObjectName("Dim")
+            lbl.setStyleSheet(f"color:{COLORS['dim']}; font-size:11px;")
+            self._overview_labels.append(lbl)
+            grid.addWidget(lbl, 0, col)
+            grid.addWidget(value, 1, col)
+        ov_l.addLayout(grid)
+        self.layout_root.addWidget(overview)
+
+        hint = QLabel(i18n.t("health_hint"))
+        hint.setWordWrap(True)
+        hint.setObjectName("Dim")
+        hint.setStyleSheet(f"color:{COLORS['dim']}; font-size:12px;")
+        self._hint = hint
+        self.layout_root.addWidget(hint)
+
+        decks_lbl = QLabel(i18n.t("health_decks"))
+        decks_lbl.setObjectName("SectionTitle")
+        self._decks_lbl = decks_lbl
+        self.layout_root.addWidget(decks_lbl)
+
+        self.deck_table = QTableWidget(0, 6)
+        self.deck_table.setHorizontalHeaderLabels([
+            i18n.t("health_col_deck"),
+            i18n.t("health_col_source"),
+            i18n.t("health_col_beat_rate"),
+            i18n.t("health_col_ap_rate"),
+            i18n.t("health_col_beat_n"),
+            i18n.t("health_col_ap_n"),
+        ])
+        self.deck_table.horizontalHeader().setStretchLastSection(True)
+        self.deck_table.verticalHeader().setVisible(False)
+        self.deck_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.deck_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.deck_table.setMinimumHeight(140)
+        self.layout_root.addWidget(self.deck_table, 1)
+        self.deck_empty = QLabel(i18n.t("health_no_decks"))
+        self.deck_empty.setObjectName("Dim")
+        self.layout_root.addWidget(self.deck_empty)
+
+        nfs_lbl = QLabel(i18n.t("health_nfs"))
+        nfs_lbl.setObjectName("SectionTitle")
+        self._nfs_lbl = nfs_lbl
+        self.layout_root.addWidget(nfs_lbl)
+
+        self.nfs_table = QTableWidget(0, 5)
+        self.nfs_table.setHorizontalHeaderLabels([
+            i18n.t("health_col_nfs_host"),
+            i18n.t("health_col_nfs_export"),
+            i18n.t("health_col_nfs_rtt"),
+            i18n.t("health_col_nfs_calls"),
+            i18n.t("health_col_nfs_timeouts"),
+        ])
+        self.nfs_table.horizontalHeader().setStretchLastSection(True)
+        self.nfs_table.verticalHeader().setVisible(False)
+        self.nfs_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.nfs_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.nfs_table.setMinimumHeight(100)
+        self.layout_root.addWidget(self.nfs_table, 1)
+        self.nfs_empty = QLabel(i18n.t("health_no_nfs"))
+        self.nfs_empty.setObjectName("Dim")
+        self.layout_root.addWidget(self.nfs_empty)
+
+    def retranslate(self) -> None:
+        super().retranslate()
+        titles = (
+            self._i18n.t("health_mode"),
+            self._i18n.t("health_host"),
+            self._i18n.t("health_packets_total"),
+            self._i18n.t("health_packet_rate"),
+        )
+        for lbl, text in zip(self._overview_labels, titles):
+            lbl.setText(text)
+        self._hint.setText(self._i18n.t("health_hint"))
+        self._decks_lbl.setText(self._i18n.t("health_decks"))
+        self._nfs_lbl.setText(self._i18n.t("health_nfs"))
+        self.deck_empty.setText(self._i18n.t("health_no_decks"))
+        self.nfs_empty.setText(self._i18n.t("health_no_nfs"))
+        self.deck_table.setHorizontalHeaderLabels([
+            self._i18n.t("health_col_deck"),
+            self._i18n.t("health_col_source"),
+            self._i18n.t("health_col_beat_rate"),
+            self._i18n.t("health_col_ap_rate"),
+            self._i18n.t("health_col_beat_n"),
+            self._i18n.t("health_col_ap_n"),
+        ])
+        self.nfs_table.setHorizontalHeaderLabels([
+            self._i18n.t("health_col_nfs_host"),
+            self._i18n.t("health_col_nfs_export"),
+            self._i18n.t("health_col_nfs_rtt"),
+            self._i18n.t("health_col_nfs_calls"),
+            self._i18n.t("health_col_nfs_timeouts"),
+        ])
+
+    def _source_label(self, raw: str) -> str:
+        key = _POSITION_SOURCE_KEYS.get(str(raw or "none"), "health_source_none")
+        return self._i18n.t(key)
+
+    @staticmethod
+    def _fmt_rate(rate: float | None) -> str:
+        if rate is None:
+            return "—"
+        if rate < 10:
+            return f"{rate:.1f}"
+        return f"{rate:.0f}"
+
+    @staticmethod
+    def _fmt_rtt(ms: float | None) -> str:
+        if ms is None:
+            return "—"
+        return f"{ms:.1f}"
+
+    def update_state(self, state: dict) -> None:
+        now = float(state.get("t") or time.time())
+        packets = int(state.get("packets") or 0)
+        mode = state.get("mode") or state.get("mode_kind") or "—"
+        host = state.get("host") or "—"
+        self._mode_val.setText(str(mode))
+        self._host_val.setText(str(host))
+        self._pkts_val.setText(f"{packets:,}")
+
+        rate: float | None = None
+        if self._prev_t > 0:
+            dt = now - self._prev_t
+            if dt > 0.05:
+                rate = max(0.0, (packets - self._prev_packets) / dt)
+        self._rate_val.setText(
+            "—" if rate is None else f"{self._fmt_rate(rate)} /s"
+        )
+        self._prev_packets = packets
+        self._prev_t = now
+
+        decks = list(state.get("decks") or [])
+        self.deck_empty.setVisible(not decks)
+        self.deck_table.setRowCount(len(decks))
+        for row, d in enumerate(decks):
+            num = int(d.get("number") or 0)
+            beat_n = int(d.get("beat_packets") or 0)
+            ap_n = int(d.get("absolute_packets") or 0)
+            beat_rate: float | None = None
+            ap_rate: float | None = None
+            prev = self._prev_decks.get(num)
+            if prev is not None:
+                p_beat, p_ap, p_t = prev
+                dt = now - p_t
+                if dt > 0.05:
+                    beat_rate = max(0.0, (beat_n - p_beat) / dt)
+                    ap_rate = max(0.0, (ap_n - p_ap) / dt)
+            self._prev_decks[num] = (beat_n, ap_n, now)
+            vals = [
+                str(num),
+                self._source_label(str(d.get("position_source") or "none")),
+                self._fmt_rate(beat_rate),
+                self._fmt_rate(ap_rate),
+                f"{beat_n:,}",
+                f"{ap_n:,}",
+            ]
+            for col, val in enumerate(vals):
+                self.deck_table.setItem(row, col, QTableWidgetItem(val))
+
+        nfs = list(state.get("nfs") or [])
+        self.nfs_empty.setVisible(not nfs)
+        self.nfs_table.setRowCount(len(nfs))
+        for row, entry in enumerate(nfs):
+            rtt = entry.get("rtt_ms")
+            if rtt is None:
+                rtt = entry.get("last_rtt_ms")
+            vals = [
+                str(entry.get("host") or ""),
+                str(entry.get("export") or ""),
+                self._fmt_rtt(float(rtt) if rtt is not None else None),
+                f"{int(entry.get('calls') or 0):,}",
+                f"{int(entry.get('timeouts') or 0):,}",
+            ]
+            for col, val in enumerate(vals):
+                self.nfs_table.setItem(row, col, QTableWidgetItem(val))
+
+
 class LibraryPage(Page):
     """Browse export.pdb tracks, OneLibrary playlists/history, and on-deck art."""
 
@@ -1340,6 +1558,12 @@ class SettingsPage(Page):
         beh.addRow(self.start_web)
         beh.addRow(self.show_sidebar)
 
+        desk = section("section_desktop")
+        self.minimize_to_tray = QCheckBox(i18n.t("minimize_to_tray"))
+        self.close_to_tray = QCheckBox(i18n.t("close_to_tray"))
+        desk.addRow(self.minimize_to_tray)
+        desk.addRow(self.close_to_tray)
+
         form_wrap.addStretch(1)
         scroll.setWidget(body)
         self.layout_root.addWidget(scroll, 1)
@@ -1398,6 +1622,8 @@ class SettingsPage(Page):
         self.auto_connect.setChecked(bool(data.get("auto_connect", True)))
         self.start_web.setChecked(bool(data.get("start_web_server", True)))
         self.show_sidebar.setChecked(bool(data.get("sidebar_visible", True)))
+        self.minimize_to_tray.setChecked(bool(data.get("minimize_to_tray", True)))
+        self.close_to_tray.setChecked(bool(data.get("close_to_tray", True)))
 
     def collect(self) -> dict:
         data = {
@@ -1426,6 +1652,8 @@ class SettingsPage(Page):
             "auto_connect": self.auto_connect.isChecked(),
             "start_web_server": self.start_web.isChecked(),
             "sidebar_visible": self.show_sidebar.isChecked(),
+            "minimize_to_tray": self.minimize_to_tray.isChecked(),
+            "close_to_tray": self.close_to_tray.isChecked(),
         }
         for key, cb in self.deck_checks.items():
             data[key] = cb.isChecked()
