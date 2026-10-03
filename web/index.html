@@ -197,6 +197,24 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .spinner{width:26px;height:26px;border:2px solid var(--line);border-top-color:var(--d2);
   border-radius:50%;animation:spin .9s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+#rec-btn{
+  font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.1em;
+  text-transform:uppercase;cursor:pointer;border:1px solid var(--line-bright);
+  background:var(--panel-high);color:var(--text);padding:5px 10px;border-radius:4px;
+}
+#rec-btn.on{border-color:var(--red);color:var(--red);background:rgba(255,59,48,.12)}
+#session{
+  display:none;flex:none;max-height:120px;overflow:auto;
+  border-top:1px solid var(--line);background:var(--panel);
+  padding:8px 14px;font-family:var(--mono);font-size:11px;
+}
+#session.show{display:block}
+#session .head{color:var(--dimmest);letter-spacing:.12em;text-transform:uppercase;margin-bottom:6px}
+#session .row{display:grid;grid-template-columns:72px 36px 1fr 1fr 48px;gap:10px;
+  padding:2px 0;color:var(--dim)}
+#session .row .t{color:var(--d2);font-weight:700}
+#session .row .title{color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 </style>
 </head>
 <body>
@@ -210,20 +228,22 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
     <div class="switch" id="wave-switch">
       <button data-w="rgb">RGB</button><button data-w="3band">3BAND</button><button data-w="blue">BLUE</button>
     </div>
-    <span class="switch-label" data-i18n="zoom">zoom</span>
+    <span class="switch-label" data-i18n="zoom">bars</span>
     <div class="switch" id="zoom-switch">
-      <button data-s="4">4s</button><button data-s="8">8s</button><button data-s="16">16s</button><button data-s="32">32s</button><button data-s="64">64s</button>
+      <button data-b="1">1</button><button data-b="2">2</button><button data-b="4">4</button><button data-b="8">8</button><button data-b="16">16</button>
     </div>
     <span class="switch-label" data-i18n="decks">decks</span>
     <div class="switch" id="deck-switch">
       <button data-n="2">2</button><button data-n="4">4</button>
     </div>
+    <button id="rec-btn" type="button" title="Record session playlist">Record</button>
     <div class="pill" id="p-dev"></div>
     <div class="led" id="led"></div>
   </div>
 </header>
 
 <div id="decks"></div>
+<div id="session"><div class="head">session playlist</div><div id="session-rows"></div></div>
 
 <div id="waiting" class="show">
   <div class="spinner"></div>
@@ -236,7 +256,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 const STRINGS = {
   brand: 'Prolink Listener <span>// pro dj link</span>',
   starting: 'starting…',
-  decks: 'decks', zoom: 'zoom', wave: 'wave',
+  decks: 'decks', zoom: 'bars', wave: 'wave',
   mode: 'mode', library: 'library', devices: 'devices', tracks: 'tracks',
   noDevices: 'no devices',
   elapsed: 'elapsed', remaining: 'remaining',
@@ -274,12 +294,27 @@ function applyStrings() {
 
 /* ------------------------------------------------------------------- state */
 const DECK_COLORS = {1:'--d1',2:'--d2',3:'--d3',4:'--d4',5:'--d1',6:'--d2'};
-const ZOOM_LEVELS = [4, 8, 16, 32, 64];      // seconds of track shown in the detail view
+const ZOOM_BARS = [1, 2, 4, 8, 16];      // 4/4 bars shown in the detail view
 const WAVE_STYLES = ['rgb', '3band', 'blue'];
-let visibleSeconds = ZOOM_LEVELS.includes(+localStorage.getItem('zoom'))
-  ? +localStorage.getItem('zoom') : 8;
+const DEFAULT_BPM = 120;
+
+function migrateZoomBars(raw) {
+  // Prefer zoomBars; fall back from legacy zoom-seconds (≈ bars×2 at 120 BPM).
+  const bars = +raw;
+  if (ZOOM_BARS.includes(bars)) return bars;
+  const sec = +localStorage.getItem('zoom');
+  const map = {4: 2, 8: 4, 16: 8, 32: 16, 64: 16};
+  return map[sec] || 4;
+}
+
+let zoomBars = migrateZoomBars(localStorage.getItem('zoomBars'));
 let waveStyle = WAVE_STYLES.includes(localStorage.getItem('waveStyle'))
   ? localStorage.getItem('waveStyle') : 'rgb';
+
+function barsToSeconds(bars, bpm) {
+  const b = (bpm && bpm > 0) ? bpm : DEFAULT_BPM;
+  return Math.max(0.25, bars * 4 * 60 / b);
+}
 
 const decks = new Map();          // number -> deck view
 const tracks = new Map();         // id -> {meta, detail, overview}
@@ -321,11 +356,12 @@ function setWaveStyle(style) {
   }
 }
 
-function setZoom(seconds) {
-  visibleSeconds = seconds;
-  localStorage.setItem('zoom', seconds);
+function setZoom(bars) {
+  if (!ZOOM_BARS.includes(bars)) bars = 4;
+  zoomBars = bars;
+  localStorage.setItem('zoomBars', bars);
   document.querySelectorAll('#zoom-switch button').forEach(
-    b => b.classList.toggle('on', +b.dataset.s === seconds));
+    b => b.classList.toggle('on', +b.dataset.b === bars));
   for (const d of decks.values()) {
     d.overviewId = null;
     d.detailKey = null;
@@ -334,9 +370,9 @@ function setZoom(seconds) {
 }
 
 function stepZoom(direction) {
-  const i = ZOOM_LEVELS.indexOf(visibleSeconds);
-  const next = ZOOM_LEVELS[Math.min(ZOOM_LEVELS.length - 1, Math.max(0, i + direction))];
-  if (next !== visibleSeconds) setZoom(next);
+  const i = ZOOM_BARS.indexOf(zoomBars);
+  const next = ZOOM_BARS[Math.min(ZOOM_BARS.length - 1, Math.max(0, i + direction))];
+  if (next !== zoomBars) setZoom(next);
 }
 
 function setDeckCount(n) {
@@ -754,11 +790,16 @@ function drawDetail(d, track, pos, playing, looping) {
   const {n, cps, h} = track.detail;
   const mid = H / 2;
   const span = mid * 0.98;
+  const bpm = (last && last.decks
+    ? (last.decks.find(x => x.number === d.n) || {}).track_bpm
+      || (last.decks.find(x => x.number === d.n) || {}).bpm
+    : 0) || DEFAULT_BPM;
+  const visibleSeconds = barsToSeconds(zoomBars, bpm);
   const visibleCols = visibleSeconds * cps;
   const pxPerCol = cssW / visibleCols;
   const currentCol = (pos / 1000) * cps;
   const start = currentCol - visibleCols / 2;
-  const key = `${track.meta.id}|${waveStyle}|${visibleSeconds}|${cssW}|${H}`;
+  const key = `${track.meta.id}|${waveStyle}|${zoomBars}|${Math.round(bpm)}|${cssW}|${H}`;
 
   function paintRange(o, rangeStart, xLo, xHi) {
     // Peak-pick CSS pixels [xLo, xHi) into offscreen context `o`.
@@ -937,6 +978,52 @@ function applyState(e) {
       devices.length ? T('seenNoStatus') : T('searching');
   }
   prune(visible(e.decks));           // drop decks that went quiet or no longer fit
+  renderSession(e.session);
+}
+
+function renderSession(session) {
+  const box = document.getElementById('session');
+  const rows = document.getElementById('session-rows');
+  const btn = document.getElementById('rec-btn');
+  session = session || {};
+  const tracks = session.tracks || [];
+  const recording = !!session.recording;
+  btn.classList.toggle('on', recording);
+  if (recording) {
+    btn.textContent = `Stop · ${session.elapsed || '00:00:00'} · ${tracks.length}`;
+  } else {
+    btn.textContent = 'Record';
+  }
+  if (!tracks.length && !recording) {
+    box.classList.remove('show');
+    rows.innerHTML = '';
+    return;
+  }
+  box.classList.add('show');
+  rows.innerHTML = tracks.map(t => `
+    <div class="row">
+      <span class="t">${t.timestamp || '00:00:00'}</span>
+      <span>D${t.deck || '—'}</span>
+      <span class="title">${escapeHtml(t.title || '—')}</span>
+      <span>${escapeHtml(t.artist || '')}</span>
+      <span>${t.bpm ? Number(t.bpm).toFixed(1) : '—'}</span>
+    </div>`).join('');
+}
+
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+async function toggleSession() {
+  const recording = document.getElementById('rec-btn').classList.contains('on');
+  const path = recording ? '/api/session/stop' : '/api/session/start';
+  try {
+    const r = await fetch(path);
+    const data = await r.json();
+    renderSession(data);
+  } catch (_) {}
 }
 
 function connect() {
@@ -952,9 +1039,10 @@ function connect() {
 document.querySelectorAll('#deck-switch button').forEach(
   b => b.addEventListener('click', () => setDeckCount(+b.dataset.n)));
 document.querySelectorAll('#zoom-switch button').forEach(
-  b => b.addEventListener('click', () => setZoom(+b.dataset.s)));
+  b => b.addEventListener('click', () => setZoom(+b.dataset.b)));
 document.querySelectorAll('#wave-switch button').forEach(
   b => b.addEventListener('click', () => setWaveStyle(b.dataset.w)));
+document.getElementById('rec-btn').addEventListener('click', toggleSession);
 // + and - zoom too, so it can be driven without leaving the keyboard
 document.addEventListener('keydown', ev => {
   if (ev.key === '+' || ev.key === '=') stepZoom(-1);
@@ -962,7 +1050,7 @@ document.addEventListener('keydown', ev => {
 });
 
 setDeckCount(maxDecks);
-setZoom(visibleSeconds);
+setZoom(zoomBars);
 setWaveStyle(waveStyle);
 applyStrings();
 connect();
