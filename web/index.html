@@ -859,13 +859,14 @@ function drawDetail(d, track, pos, playing, looping) {
   }
 
   if (resized || d.detailKey !== key || !d.detailOff) {
-    const off = document.createElement('canvas');
-    off.width = W; off.height = H;
+    const off = d.detailOff || document.createElement('canvas');
+    if (off.width !== W || off.height !== H) { off.width = W; off.height = H; }
     const o = off.getContext('2d');
     o.imageSmoothingEnabled = false;
     o.clearRect(0, 0, W, H);
     paintRange(o, start, 0, cssW);
     d.detailOff = off;
+    d.detailScratch = d.detailScratch || document.createElement('canvas');
     d.detailStart = start;
     d.detailKey = key;
   } else {
@@ -877,9 +878,13 @@ function drawDetail(d, track, pos, playing, looping) {
       paintRange(o, start, 0, cssW);
       d.detailStart = start;
     } else if (shift !== 0) {
-      const off = document.createElement('canvas');
-      off.width = W; off.height = H;
-      const o = off.getContext('2d');
+      // Reuse a scratch canvas instead of allocating every scrolled pixel.
+      let scratch = d.detailScratch;
+      if (!scratch) scratch = d.detailScratch = document.createElement('canvas');
+      if (scratch.width !== W || scratch.height !== H) {
+        scratch.width = W; scratch.height = H;
+      }
+      const o = scratch.getContext('2d');
       o.imageSmoothingEnabled = false;
       o.clearRect(0, 0, W, H);
       if (shift > 0) {
@@ -890,7 +895,8 @@ function drawDetail(d, track, pos, playing, looping) {
         o.drawImage(d.detailOff, Math.round(-sh * r), 0);
         paintRange(o, start, cssW - sh, cssW);
       }
-      d.detailOff = off;
+      d.detailScratch = d.detailOff;
+      d.detailOff = scratch;
       d.detailStart -= shift / pxPerCol;
     }
   }
@@ -967,6 +973,23 @@ function render() {
 
 /* ---------------------------------------------------------------- transport */
 function applyState(e) {
+  // Paint frames only refresh playhead fields; merge into the last full state.
+  if (e && e.paint && last) {
+    const byNum = new Map((e.decks || []).map(d => [d.number, d]));
+    last = Object.assign({}, last, {t: e.t});
+    last.decks = (last.decks || []).map(d => {
+      const p = byNum.get(d.number);
+      return p ? Object.assign({}, d, p) : d;
+    });
+    // Append any newly visible decks not in the last full snapshot.
+    for (const p of (e.decks || [])) {
+      if (!(last.decks || []).some(d => d.number === p.number)) {
+        last.decks.push(p);
+      }
+    }
+    receivedAt = performance.now();
+    return;
+  }
   last = e; receivedAt = performance.now();
 
   const modeName = e.mode_kind === 'vcdj' ? T('modeVcdj')

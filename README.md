@@ -188,7 +188,10 @@ it. The web panel has the same Record control and a live strip; HTTP endpoints a
 **Smooth playhead.** Prolink Listener paints the playhead/waveforms on a separate timer
 (default **60 Hz**, Settings → Playhead refresh rate) while metadata and library
 stats refresh at ~20 Hz. Waveform strips are cached and scrolled instead of being
-fully redrawn every frame; the web panel uses the same scroll-cache idea.
+fully redrawn every frame; the web panel uses the same scroll-cache idea. SSE
+sends lightweight playhead frames at 60 Hz and a full state snapshot ~15 times a
+second — see [doc/PERFORMANCE.md](doc/PERFORMANCE.md) for bottlenecks and a
+native (C++) roadmap.
 
 The monitor core itself still needs no packages; PySide6 is only for the desktop
 shell. The optional local web server can be started from Settings and opened with
