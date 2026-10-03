@@ -440,12 +440,15 @@ class OverlayPage(Page):
         for n in (1, 2, 3, 4):
             self.decks_box.addItem(str(n), n)
         self.playing_only = QCheckBox(i18n.t("overlay_playing"))
+        self.use_mix = QCheckBox(i18n.t("overlay_mix"))
+        self.use_mix.setChecked(True)
         self.preview = QCheckBox(i18n.t("overlay_preview"))
 
         form.addRow(i18n.t("overlay_layout"), self.layout_box)
         form.addRow(i18n.t("overlay_corner"), self.corner_box)
         form.addRow(i18n.t("overlay_decks"), self.decks_box)
         form.addRow("", self.playing_only)
+        form.addRow("", self.use_mix)
         form.addRow("", self.preview)
         self.layout_root.addWidget(card)
 
@@ -484,6 +487,7 @@ class OverlayPage(Page):
         for w in (self.layout_box, self.corner_box, self.decks_box):
             w.currentIndexChanged.connect(self._on_change)
         self.playing_only.toggled.connect(self._on_change)
+        self.use_mix.toggled.connect(self._on_change)
         self.preview.toggled.connect(self._on_change)
         self.layout_box.currentIndexChanged.connect(self._maybe_bump_decks)
 
@@ -500,6 +504,7 @@ class OverlayPage(Page):
         idx = self.decks_box.findData(decks)
         self.decks_box.setCurrentIndex(max(0, idx))
         self.playing_only.setChecked(bool(data.get("overlay_playing_only", True)))
+        self.use_mix.setChecked(bool(data.get("overlay_mix", True)))
         self.preview.setChecked(False)
         self._refresh_url()
 
@@ -509,6 +514,7 @@ class OverlayPage(Page):
             "overlay_corner": self.corner_box.currentData(),
             "overlay_decks": self.decks_box.currentData(),
             "overlay_playing_only": self.playing_only.isChecked(),
+            "overlay_mix": self.use_mix.isChecked(),
         }
 
     def set_port(self, port: int) -> None:
@@ -531,6 +537,8 @@ class OverlayPage(Page):
         ]
         if not self.playing_only.isChecked():
             qs.append("playing=0")
+        if not self.use_mix.isChecked():
+            qs.append("mix=0")
         use_preview = self.preview.isChecked() if preview is None else preview
         if use_preview:
             qs.append("preview=1")
@@ -673,10 +681,12 @@ class SettingsPage(Page):
         for n in (1, 2, 3, 4):
             self.overlay_decks.addItem(str(n), n)
         self.overlay_playing = QCheckBox(i18n.t("overlay_playing"))
+        self.overlay_mix = QCheckBox(i18n.t("overlay_mix"))
         ov.addRow(i18n.t("overlay_layout"), self.overlay_layout)
         ov.addRow(i18n.t("overlay_corner"), self.overlay_corner)
         ov.addRow(i18n.t("overlay_decks"), self.overlay_decks)
         ov.addRow("", self.overlay_playing)
+        ov.addRow("", self.overlay_mix)
 
         beh = section("section_behaviour")
         self.auto_connect = QCheckBox(i18n.t("auto_connect"))
@@ -735,6 +745,7 @@ class SettingsPage(Page):
         idx = self.overlay_decks.findData(int(data.get("overlay_decks", 1)))
         self.overlay_decks.setCurrentIndex(max(0, idx))
         self.overlay_playing.setChecked(bool(data.get("overlay_playing_only", True)))
+        self.overlay_mix.setChecked(bool(data.get("overlay_mix", True)))
         self.auto_connect.setChecked(bool(data.get("auto_connect", True)))
         self.start_web.setChecked(bool(data.get("start_web_server", True)))
         self.show_sidebar.setChecked(bool(data.get("sidebar_visible", True)))
@@ -758,6 +769,7 @@ class SettingsPage(Page):
             "overlay_corner": self.overlay_corner.currentData(),
             "overlay_decks": self.overlay_decks.currentData(),
             "overlay_playing_only": self.overlay_playing.isChecked(),
+            "overlay_mix": self.overlay_mix.isChecked(),
             "auto_connect": self.auto_connect.isChecked(),
             "start_web_server": self.start_web.isChecked(),
             "sidebar_visible": self.show_sidebar.isChecked(),

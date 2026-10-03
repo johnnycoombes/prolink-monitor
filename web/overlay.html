@@ -172,6 +172,8 @@ const corner = ['bl','br','tl','tr','center'].includes(params.get('corner'))
   ? params.get('corner') : 'bl';
 const onlyPlaying = params.get('playing') !== '0';
 const preview = params.get('preview') === '1';
+/* SmartTiming now-playing (prolink-connect style). Default on for single-deck layouts. */
+const useMix = params.get('mix') !== '0';
 const maxDecks = Math.min(4, Math.max(1, +(params.get('decks') || (layout === 'dual' ? 2 : 1))));
 
 if (preview) document.body.classList.add('preview');
@@ -203,6 +205,22 @@ function visibleDecks(list){
   }
   if (onlyPlaying) rows = rows.filter(d => d.playing || d.track_id);
   return rows.slice(0, maxDecks);
+}
+
+/** Prefer MixStatus now_playing when mix=1 (default for nowplaying/minimal). */
+function pickDecks(state){
+  const list = state.decks || [];
+  if (layout === 'dual' || !useMix) return visibleDecks(list);
+  const np = state.now_playing;
+  if (np && np.number) {
+    const live = list.find(d => d.number === np.number);
+    // Prefer live deck status (position/bpm) with mix metadata for title tags.
+    const deck = live
+      ? Object.assign({}, np, live)
+      : np;
+    if (deck.track_id || deck.playing) return [deck];
+  }
+  return visibleDecks(list);
 }
 
 async function loadTrack(id){
@@ -304,7 +322,7 @@ function paint(){
     return;
   }
   const dt = (performance.now() - receivedAt) / 1000;
-  const decks = visibleDecks(last.decks);
+  const decks = pickDecks(last);
   if (!decks.length || !decks.some(d => d.track_id)){
     card.classList.remove('show');
     idle.classList.add('show');
@@ -324,7 +342,10 @@ function paint(){
   else html = renderNow(decks[0], positions[0]);
 
   // Avoid wiping artwork flashes: only replace when structure changes.
-  const sig = decks.map(d => `${d.number}:${d.track_id||0}:${!!tracks.get(d.track_id)}`).join('|') + '|' + layout;
+  const np = last.now_playing;
+  const mixSig = useMix && np ? `:mix${np.number}:${np.track_id||0}` : '';
+  const sig = decks.map(d => `${d.number}:${d.track_id||0}:${!!tracks.get(d.track_id)}`).join('|')
+    + '|' + layout + mixSig;
   if (card.dataset.sig !== sig){
     card.innerHTML = html;
     card.dataset.sig = sig;

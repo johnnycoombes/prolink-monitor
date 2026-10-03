@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from prolink import anlz, link, proto                     # noqa: E402
 from prolink.library import Library                       # noqa: E402
+from prolink.mixstatus import MixStatus, MixStatusConfig  # noqa: E402
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
@@ -49,6 +50,7 @@ class Monitor:
         # loaded on one deck often lives on another deck's USB drive
         self._track_host: dict[int, str] = {}
         self._lock = threading.RLock()
+        self.mixstatus = MixStatus(MixStatusConfig())
 
     def _cache_key(self, host: str, media, track_id: int) -> tuple:
         fp = getattr(media, "_pdb_fingerprint", None) or (0, 0)
@@ -265,6 +267,15 @@ class Monitor:
                 "sync": s.sync,
                 "on_air": s.on_air,
             })
+        # Enrich snaps with metadata and feed the mix / setlist processor.
+        for snap in decks:
+            tid = snap.get("track_id") or 0
+            meta = self.meta(tid) if tid else None
+            if meta:
+                snap["title"] = meta.get("title") or ""
+                snap["artist"] = meta.get("artist") or ""
+                snap["key"] = meta.get("key") or ""
+            self.mixstatus.handle(snap)
         with self.engine.lock:
             devices = [{"number": a.device_number, "name": a.name,
                         "kind": a.kind, "ip": a.ip}
@@ -298,6 +309,7 @@ class Monitor:
                         int(totals.get("onelibrary_playlists", 0)) + ol.playlists)
                     totals["onelibrary_history"] = (
                         int(totals.get("onelibrary_history", 0)) + ol.history)
+        mix = self.mixstatus.as_state()
         return {
             "t": time.time(),
             "decks": decks,
@@ -311,6 +323,9 @@ class Monitor:
             "library": totals or None,
             "library_error": None if totals else first_error,
             "onelibrary": onelibrary_info,
+            "mix": mix,
+            "now_playing": mix.get("now_playing"),
+            "setlist": mix.get("setlist") or [],
         }
 
 
@@ -372,6 +387,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._file("overlay.html", "text/html; charset=utf-8")
             if path == "/api/state":
                 return self._json(self.monitor.state())
+            if path == "/api/setlist":
+                return self._json(self.monitor.mixstatus.as_state())
             if path == "/api/events":
                 return self._events()
             if path.startswith("/api/track/"):

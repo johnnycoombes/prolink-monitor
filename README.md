@@ -26,7 +26,7 @@ Compared with the [original project](https://github.com/fidow/prolink-monitor):
 | Settings | Zoom / decks remembered in the browser | Connection, display and **per-deck element** settings under `~/.prolink-monitor/` |
 | Waveforms | Colour detail (RGB) with blue fallback | Switchable **RGB**, **3-Band** and **Blue**, parsed like [Beat Link `WaveformDetail`](https://deepsymmetry.org/beatlink/apidocs/org/deepsymmetry/beatlink/data/WaveformDetail.html); cards **fill the panel** |
 | Deck cards | Fixed layout | Toggle artwork, BPM, tempo, time, key, tags, waveform and more |
-| Streaming | — | Transparent `/overlay` page for OBS (now playing / dual / minimal) |
+| Streaming | — | Transparent `/overlay` page for OBS (now playing / dual / minimal); SmartTiming setlist |
 | Language | English / Spanish | English only |
 
 Everything else — Pro DJ Link engine, NFS library, console monitor, protocol probe —
@@ -194,12 +194,19 @@ The page background is transparent. Query parameters:
 | `corner` | `bl` / `br` / `tl` / `tr` / `center` | `bl` | Screen corner |
 | `decks` | `1`–`4` | `1` (`2` for dual) | How many decks to show |
 | `playing` | `1` / `0` | `1` | Only decks that have a track |
+| `mix` | `1` / `0` | `1` | Use SmartTiming now-playing (single-deck layouts) |
 | `preview` | `1` / `0` | `0` | Dark preview background (local testing) |
+
+With `mix=1` (default), `nowplaying` / `minimal` follow the **audience** track —
+the deck that has been playing and on-air long enough (prolink-connect
+SmartTiming: 128 beats ≈ two phrases, brief drop-outs ignored). Dual layout still
+shows the selected decks side by side. Live JSON is also on `/api/setlist`.
 
 Example:
 
 ```
 http://127.0.0.1:8777/overlay?layout=dual&corner=br&decks=2
+http://127.0.0.1:8777/overlay?layout=nowplaying&mix=1
 ```
 
 In the desktop app, open **Overlay**, pick layout/corner, then **Copy URL** into
@@ -399,6 +406,7 @@ prolink/
   pdb.py            export.pdb parser
   anlz.py           analysis file parser (waveforms, beats, cues)
   library.py        ties NFS + database + analysis together, with caching
+  mixstatus.py      SmartTiming now-playing / setlist (prolink-connect style)
 ```
 
 ### API
@@ -407,7 +415,8 @@ prolink/
 |---|---|
 | `/` | live monitor panel |
 | `/overlay` | transparent OBS overlay |
-| `/api/state` | full state as JSON |
+| `/api/state` | full state as JSON (includes `now_playing` / `setlist`) |
+| `/api/setlist` | SmartTiming mix status and setlist only |
 | `/api/events` | the same state over SSE, 20 times a second |
 | `/api/track/<id>` | metadata, beat grid, cues and phrases |
 | `/api/waveform/<id>` | waveforms in binary: detail and overview |

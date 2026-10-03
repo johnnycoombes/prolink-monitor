@@ -43,6 +43,7 @@ DEFAULTS: dict[str, Any] = {
     "overlay_layout": "nowplaying",   # nowplaying | dual | minimal
     "overlay_corner": "bl",           # bl | br | tl | tr | center
     "overlay_playing_only": True,
+    "overlay_mix": True,
     "overlay_decks": 1,
 }
 
@@ -154,6 +155,7 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     corner = str(data.get("overlay_corner") or "bl").lower()
     out["overlay_corner"] = corner if corner in ("bl", "br", "tl", "tr", "center") else "bl"
     out["overlay_playing_only"] = bool(data.get("overlay_playing_only", True))
+    out["overlay_mix"] = bool(data.get("overlay_mix", True))
     try:
         out["overlay_decks"] = max(1, min(4, int(data.get("overlay_decks", 1))))
     except (TypeError, ValueError):
