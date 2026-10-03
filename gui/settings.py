@@ -126,7 +126,7 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
         out["max_decks"] = 4
     try:
         zoom = int(data.get("zoom_seconds", 8))
-        out["zoom_seconds"] = zoom if zoom in (4, 8, 16, 32) else 8
+        out["zoom_seconds"] = zoom if zoom in (4, 8, 16, 32, 64) else 8
     except (TypeError, ValueError):
         out["zoom_seconds"] = 8
     style = str(data.get("waveform_style") or "rgb").lower()

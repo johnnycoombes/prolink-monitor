@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Engine Room — Pro DJ Link</title>
+<title>Prolink Listener — Pro DJ Link</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Archivo:wght@400;500;600&display=swap" rel="stylesheet">
@@ -174,6 +174,16 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .bar-dots i.on{background:var(--c);box-shadow:0 0 7px var(--c)}
 .key{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--c);
   flex:none;letter-spacing:.03em}
+.loop-badge{
+  display:none;align-items:center;gap:5px;flex:none;
+  font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.08em;
+  text-transform:uppercase;color:#2ee89a;
+  border:1px solid rgba(46,232,154,.55);border-radius:999px;
+  padding:2px 7px 2px 5px;background:rgba(46,232,154,.1);
+}
+.loop-badge.on{display:inline-flex}
+.loop-badge svg{width:11px;height:11px;fill:none;stroke:currentColor;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round}
 
 /* ------------------------------------------------------------------ waiting */
 #waiting{
@@ -192,7 +202,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 <body>
 
 <header>
-  <div class="brand" data-i18n="brand">Engine Room <span>// pro dj link</span></div>
+  <div class="brand" data-i18n="brand">Prolink Listener <span>// pro dj link</span></div>
   <div class="pill" id="p-mode" data-i18n="starting">starting…</div>
   <div class="pill" id="p-lib"></div>
   <div class="right">
@@ -202,7 +212,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
     </div>
     <span class="switch-label" data-i18n="zoom">zoom</span>
     <div class="switch" id="zoom-switch">
-      <button data-s="4">4s</button><button data-s="8">8s</button><button data-s="16">16s</button><button data-s="32">32s</button>
+      <button data-s="4">4s</button><button data-s="8">8s</button><button data-s="16">16s</button><button data-s="32">32s</button><button data-s="64">64s</button>
     </div>
     <span class="switch-label" data-i18n="decks">decks</span>
     <div class="switch" id="deck-switch">
@@ -224,7 +234,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 <script>
 /* ------------------------------------------------------------------- strings */
 const STRINGS = {
-  brand: 'Engine Room <span>// pro dj link</span>',
+  brand: 'Prolink Listener <span>// pro dj link</span>',
   starting: 'starting…',
   decks: 'decks', zoom: 'zoom', wave: 'wave',
   mode: 'mode', library: 'library', devices: 'devices', tracks: 'tracks',
@@ -264,7 +274,7 @@ function applyStrings() {
 
 /* ------------------------------------------------------------------- state */
 const DECK_COLORS = {1:'--d1',2:'--d2',3:'--d3',4:'--d4',5:'--d1',6:'--d2'};
-const ZOOM_LEVELS = [4, 8, 16, 32];      // seconds of track shown in the detail view
+const ZOOM_LEVELS = [4, 8, 16, 32, 64];      // seconds of track shown in the detail view
 const WAVE_STYLES = ['rgb', '3band', 'blue'];
 let visibleSeconds = ZOOM_LEVELS.includes(+localStorage.getItem('zoom'))
   ? +localStorage.getItem('zoom') : 8;
@@ -347,6 +357,28 @@ const mmss = ms => {
   return `${String(Math.floor(t / 60)).padStart(2,'0')}:${String(t % 60).padStart(2,'0')}`;
 };
 
+/** Prefer a sane track length: Absolute Position on some players inflated duration. */
+function durationMs(deck, track) {
+  const deckDur = +(deck && deck.duration_ms || 0);
+  const metaDur = +(track && track.meta && track.meta.duration_ms || 0);
+  const sane = d => d > 1000 && d < 12 * 3600 * 1000; // 1s … 12h
+  if (sane(deckDur) && sane(metaDur)) {
+    if (deckDur > metaDur * 2) return metaDur;
+    if (metaDur > deckDur * 2) return deckDur;
+    return Math.max(deckDur, metaDur);
+  }
+  if (sane(metaDur)) return metaDur;
+  if (sane(deckDur)) return deckDur;
+  return metaDur || deckDur || 0;
+}
+
+function loopBeats(loop, bpm) {
+  if (!loop || !bpm || bpm <= 0) return 0;
+  const ms = Math.max(0, (loop.end || 0) - (loop.t || 0));
+  const beats = Math.round(ms / (60000 / bpm));
+  return Math.max(0, beats);
+}
+
 function readWaveform(buf, off) {
   const dv = new DataView(buf);
   const n = dv.getUint32(off + 8, true);
@@ -376,11 +408,13 @@ function readBands(buf, off) {
 
 function attachBands(wave, bands) {
   if (wave && bands && bands.n === wave.n) {
-    wave.low = bands.low; wave.mid = bands.mid; wave.high = bands.high;
-    let peak = 1;
+    let peak = 0;
     for (const lane of [bands.low, bands.mid, bands.high]) {
       for (let i = 0; i < lane.length; i++) if (lane[i] > peak) peak = lane[i];
     }
+    // All-zero PLWB (no PWV7) — leave lanes unset so 3BAND can fall back cleanly.
+    if (peak < 2) return;
+    wave.low = bands.low; wave.mid = bands.mid; wave.high = bands.high;
     wave.bandPeak = peak;
   }
 }
@@ -419,18 +453,24 @@ function fillMirrored(ctx, x, mid, px, colW) {
 }
 
 function bandHeightsAt(wave, src) {
-  /** Return [low, mid, high, peak] for 3BAND, synthesizing from RGB when PWV7 is absent. */
-  if (wave.low && src < wave.low.length) {
+  /** Return [low, mid, high, peak] for 3BAND.
+
+  Prefer real PWV7 lanes. When they are missing/zero, split the column height
+  into low/mid/high so the view still reads as 3-band (not muddy grey-brown
+  from near-equal RGB synthesise).
+  */
+  if (wave.low && wave.mid && wave.high && src < wave.low.length) {
     const low = wave.low[src], md = wave.mid[src], hi = wave.high[src];
-    if (low || md || hi) return [low, md, hi, wave.bandPeak || 1];
+    if (low || md || hi) {
+      // Ignore "attached" all-zero / near-empty packs that only produce brown mush.
+      const peak = wave.bandPeak || 1;
+      if (peak >= 2) return [low, md, hi, peak];
+    }
   }
-  // Colour waveform RGB ≈ high / mid / low energy (Pioneer colour map).
-  if (wave.rgb && src < wave.n) {
-    const r = wave.rgb[src * 3], g = wave.rgb[src * 3 + 1], b = wave.rgb[src * 3 + 2];
-    const peak = Math.max(1, r, g, b);
-    return [b, g, r, peak];
-  }
-  return null;
+  const amp = wave.h ? wave.h[src] : 0;
+  if (!amp) return null;
+  // Fake but readable 3-band from mono height: blue body, amber body, white tip.
+  return [amp, Math.max(1, Math.round(amp * 0.72)), Math.max(1, Math.round(amp * 0.28)), 31];
 }
 
 function fillWave(ctx, x, mid, amp, src, wave, span, colW) {
@@ -458,6 +498,7 @@ function fillWave(ctx, x, mid, amp, src, wave, span, colW) {
       fillMirrored(ctx, x, mid, highPx, colW);
       return;
     }
+    // Last resort: plain RGB so we never silently look like Blue.
   }
   let drawAmp = amp;
   if (waveStyle === 'blue') {
@@ -527,6 +568,15 @@ function createDeck(n) {
       </div>
       <div class="state-row">
         <div class="bar-dots" data-bar><i></i><i></i><i></i><i></i></div>
+        <div class="loop-badge" data-loop title="Loop">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M17 1l4 4-4 4"/>
+            <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+            <path d="M7 23l-4-4 4-4"/>
+            <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+          </svg>
+          <span data-loop-len></span>
+        </div>
         <div class="state" data-state></div>
         <div class="key" data-key></div>
       </div>
@@ -539,6 +589,7 @@ function createDeck(n) {
     bpm: q('[data-bpm]'), pitch: q('[data-pitch]'), elapsed: q('[data-elapsed]'),
     remaining: q('[data-remaining]'), state: q('[data-state]'), key: q('[data-key]'),
     elapsedLabel: q('[data-elapsed-label]'), remainingLabel: q('[data-remaining-label]'),
+    loopBadge: q('[data-loop]'), loopLen: q('[data-loop-len]'),
     barDots: [...q('[data-bar]').children],
     cvOverview: q('[data-cv-overview]'), cvDetail: q('[data-cv-detail]'),
     trackId: 0, metaId: 0, artId: 0, lastBar: 0
@@ -821,18 +872,30 @@ function render() {
     }
 
     // extrapolate the playhead from the last state we received
-    let pos = s.position_ms + (s.playing ? dt * 1000 * s.speed : 0);
-    if (s.duration_ms) pos = Math.min(pos, s.duration_ms);
-
-    drawInfo(d, s);
     const track = tracks.get(s.track_id);
     if (s.track_id && !track) loadTrack(s.track_id);
+    const dur = durationMs(s, track);
+    let pos = s.position_ms + (s.playing ? dt * 1000 * s.speed : 0);
+    if (dur) pos = Math.min(pos, dur);
+
+    drawInfo(d, s);
 
     d.elapsed.textContent = mmss(pos);
-    const remaining = (s.duration_ms || 0) - pos;
-    d.remaining.textContent = '-' + mmss(remaining);
+    const remaining = dur ? Math.max(0, dur - pos) : 0;
+    d.remaining.textContent = dur ? ('-' + mmss(remaining)) : '—';
     d.remaining.parentElement.classList.toggle('low',
-      s.duration_ms > 0 && remaining < 30000);
+      dur > 0 && remaining < 30000);
+
+    const looping = s.state === 'looping';
+    const loop = track ? activeLoop(track.meta, pos, looping) : null;
+    const beats = loopBeats(loop, s.track_bpm || s.bpm);
+    if (looping && loop) {
+      d.loopBadge.classList.add('on');
+      d.loopLen.textContent = beats ? `${beats}` : 'LOOP';
+    } else {
+      d.loopBadge.classList.remove('on');
+      d.loopLen.textContent = '';
+    }
 
     for (let i = 0; i < 4; i++) d.barDots[i].classList.toggle('on', s.bar === i + 1);
     if (s.bar === 1 && d.lastBar !== 1 && s.playing) {
@@ -841,8 +904,8 @@ function render() {
     }
     d.lastBar = s.bar;
 
-    drawOverview(d, track, pos, s.state === 'looping');
-    drawDetail(d, track, pos, s.playing, s.state === 'looping');
+    drawOverview(d, track, pos, looping);
+    drawDetail(d, track, pos, s.playing, looping);
   }
 }
 

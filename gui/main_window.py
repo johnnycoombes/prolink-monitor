@@ -323,7 +323,7 @@ class MainWindow(QMainWindow):
         self.page_overlay.set_web_ready(True)
 
     def _nudge_zoom(self, direction: int) -> None:
-        levels = [4, 8, 16, 32]
+        levels = [4, 8, 16, 32, 64]
         cur = self.page_monitor._zoom
         try:
             i = levels.index(cur)

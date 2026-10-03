@@ -433,7 +433,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "not_found"}, 404)
 
     def _events(self) -> None:
-        """Server-sent events: state at 20 Hz. The client interpolates between them."""
+        """Server-sent events: state at 60 Hz. The client interpolates between them."""
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
@@ -444,7 +444,7 @@ class Handler(BaseHTTPRequestHandler):
                 payload = json.dumps(self.monitor.state(), ensure_ascii=False)
                 self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
                 self.wfile.flush()
-                time.sleep(0.05)
+                time.sleep(1.0 / 60.0)
         except (BrokenPipeError, ConnectionResetError, OSError):
             return
 

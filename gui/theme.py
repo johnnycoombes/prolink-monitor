@@ -1,4 +1,4 @@
-"""Dark Qt stylesheet and color tokens for Engine Room desktop."""
+"""Dark Qt stylesheet and color tokens for Prolink Listener desktop."""
 
 from __future__ import annotations
 

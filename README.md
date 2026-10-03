@@ -7,11 +7,11 @@ sits on each deck, how far into it, at what tempo and key, with a scrolling
 waveform and moving playhead.
 
 The monitor core still talks to the gear directly and needs **no external Python
-packages**. This fork adds a PySide6 **Engine Room** desktop app, player-style
+packages**. This fork adds a PySide6 **Prolink Listener** desktop app, player-style
 waveform colours, configurable deck cards, a hideable sidebar, and a transparent
 **OBS Browser Source** overlay.
 
-![Engine Room — 4 decks RGB](doc/desktop-4deck-rgb.png)
+![Prolink Listener — 4 decks RGB](doc/desktop-4deck-rgb.png)
 
 ---
 
@@ -21,7 +21,7 @@ Compared with the [original project](https://github.com/fidow/prolink-monitor):
 
 | | Original | This fork |
 |---|---|---|
-| UI | Browser panel (`python app.py`) | Same web panel **plus** a native **Engine Room** desktop app (`python desktop.py`) |
+| UI | Browser panel (`python app.py`) | Same web panel **plus** a native **Prolink Listener** desktop app (`python desktop.py`) |
 | Navigation | Single live panel | Sidebar: Monitor, Devices, Library, Overlay, Settings, About — **hideable** (`Ctrl+B`) |
 | Settings | Zoom / decks remembered in the browser | Connection, display and **per-deck element** settings under `~/.prolink-monitor/` |
 | Waveforms | Colour detail (RGB) with blue fallback | Switchable **RGB**, **3-Band** and **Blue**, parsed like [Beat Link `WaveformDetail`](https://deepsymmetry.org/beatlink/apidocs/org/deepsymmetry/beatlink/data/WaveformDetail.html); cards **fill the panel** |
@@ -172,7 +172,7 @@ and deck count. Colour follows the player: **RGB**, **3BAND** (stacked blue / am
 white the way a CDJ draws it) or **BLUE**. The same switch is on the Monitor page,
 in Settings, and on the web panel.
 
-**Smooth playhead.** Engine Room paints the playhead/waveforms on a separate timer
+**Smooth playhead.** Prolink Listener paints the playhead/waveforms on a separate timer
 (default **60 Hz**, Settings → Playhead refresh rate) while metadata and library
 stats refresh at ~20 Hz. Waveform strips are cached and scrolled instead of being
 fully redrawn every frame; the web panel uses the same scroll-cache idea.
@@ -424,7 +424,7 @@ prolink/
 | `/overlay` | transparent OBS overlay |
 | `/api/state` | full state as JSON (includes `now_playing` / `setlist`) |
 | `/api/setlist` | SmartTiming mix status and setlist only |
-| `/api/events` | the same state over SSE, 20 times a second |
+| `/api/events` | the same state over SSE, 60 times a second |
 | `/api/track/<id>` | metadata, beat grid, cues and phrases |
 | `/api/waveform/<id>` | waveforms in binary: detail and overview |
 | `/api/artwork/<id>` | artwork as JPEG |

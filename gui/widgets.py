@@ -21,6 +21,28 @@ def mmss(ms: float) -> str:
     return f"{total // 60:02d}:{total % 60:02d}"
 
 
+def sane_duration_ms(deck_ms: float, meta_ms: float = 0) -> float:
+    """Prefer a plausible track length when Absolute Position inflated duration."""
+    deck = float(deck_ms or 0)
+    meta = float(meta_ms or 0)
+    limit = 12 * 3600 * 1000  # 12h
+
+    def ok(d: float) -> bool:
+        return 1000 < d < limit
+
+    if ok(deck) and ok(meta):
+        if deck > meta * 2:
+            return meta
+        if meta > deck * 2:
+            return deck
+        return max(deck, meta)
+    if ok(meta):
+        return meta
+    if ok(deck):
+        return deck
+    return meta or deck or 0.0
+
+
 # Beat Link WaveformFinder.WaveformStyle / ThreeBandLayer.
 WAVE_STYLES = ("rgb", "3band", "blue")
 BAND_LOW = (32, 83, 217)          # low frequencies
@@ -102,13 +124,15 @@ def _read_blue(data: bytes, offset: int):
 def _attach_bands(wave: dict | None, bands: dict | None) -> None:
     if not wave or not bands or bands["n"] != wave["n"]:
         return
-    wave["low"] = bands["low"]
-    wave["mid"] = bands["mid"]
-    wave["high"] = bands["high"]
     peak = 1
     for lane in (bands["low"], bands["mid"], bands["high"]):
         if lane:
-            peak = max(peak, max(lane))
+            peak = max(peak, max(lane) if lane else 0)
+    if peak < 2:
+        return
+    wave["low"] = bands["low"]
+    wave["mid"] = bands["mid"]
+    wave["high"] = bands["high"]
     wave["band_peak"] = peak
 
 
@@ -126,21 +150,24 @@ def _fill_mirrored(p: QPainter, x: int, mid: float, px: float, color: QColor) ->
 
 
 def _band_heights_at(wave: dict, src: int) -> tuple[int, int, int, int] | None:
-    """Return (low, mid, high, peak) for 3BAND, synthesizing from RGB when needed."""
+    """Return (low, mid, high, peak) for 3BAND.
+
+    Prefer real PWV7 lanes. When missing/near-zero, split the mono height so
+    the view still reads as 3-band instead of muddy grey-brown.
+    """
     lows = wave.get("low")
     if lows is not None and src < len(lows):
         low = lows[src]
         md = wave["mid"][src]
         hi = wave["high"][src]
-        if low or md or hi:
-            return low, md, hi, int(wave.get("band_peak") or 1)
-    rgb = wave.get("rgb")
-    if rgb is not None and src < wave["n"]:
-        r = rgb[src * 3]
-        g = rgb[src * 3 + 1]
-        b = rgb[src * 3 + 2]
-        peak = max(1, r, g, b)
-        return b, g, r, peak
+        peak = int(wave.get("band_peak") or 1)
+        if (low or md or hi) and peak >= 2:
+            return low, md, hi, peak
+    heights = wave.get("h")
+    if heights is not None and src < len(heights):
+        amp = int(heights[src])
+        if amp:
+            return amp, max(1, round(amp * 0.72)), max(1, round(amp * 0.28)), 31
     return None
 
 
@@ -799,10 +826,14 @@ class DeckCard(QFrame):
     def advance_playhead(self, pos_ms: float, playing: bool, duration_ms: float = 0,
                          *, bar: int = 0, looping: bool = False) -> None:
         """Lightweight per-frame update: times + waveform position + phase."""
+        meta_dur = float((self._meta or {}).get("duration_ms") or 0)
+        dur = sane_duration_ms(duration_ms, meta_dur)
+        if dur:
+            pos_ms = min(pos_ms, dur)
         self.elapsed.setText(mmss(pos_ms))
-        remain = (duration_ms or 0) - pos_ms
-        self.remaining.setText("-" + mmss(remain))
-        low = bool(duration_ms and remain < 30000)
+        remain = max(0.0, dur - pos_ms) if dur else 0.0
+        self.remaining.setText(("-" + mmss(remain)) if dur else "—")
+        low = bool(dur and remain < 30000)
         self.remaining.setStyleSheet(
             "font-family:monospace; font-size:15px; font-weight:700; color:"
             + (COLORS["danger"] if low else COLORS["dim"]) + ";"
@@ -832,13 +863,28 @@ class DeckCard(QFrame):
         cues = (self._meta or {}).get("cues") or []
         loops = [c for c in cues
                  if c.get("type") == "loop" and (c.get("end") or 0) > (c.get("t") or 0)]
+        pick = None
         if loops:
-            inside = next(
-                (c for c in loops if c["t"] <= pos_ms <= c["end"]), None)
-            pick = inside or (loops[0] if looping else None)
+            pick = next((c for c in loops if c["t"] <= pos_ms <= c["end"]), None)
+            if pick is None and looping:
+                pick = loops[0]
             if pick is not None:
                 start, end = float(pick["t"]), float(pick["end"])
         self.wave.set_loop_region(start, end, active=bool(looping and start is not None))
+        # Loop length badge next to state.
+        if looping and pick is not None:
+            bpm = 0.0
+            # Prefer live BPM from last deck update stored on the card title path.
+            bpm = float(getattr(self, "_last_bpm", 0) or 0)
+            if bpm <= 0:
+                bpm = float((self._meta or {}).get("track_bpm") or 0)
+            beats = 0
+            if bpm > 0:
+                beats = max(0, round((end - start) / (60000.0 / bpm)))
+            label = f"↻ {beats}" if beats else "↻ LOOP"
+            self.state.setText(f"{label}  ·  {self._i18n.state('looping')}")
+        elif looping:
+            self.state.setText(f"↻  ·  {self._i18n.state('looping')}")
 
     def update_deck(self, deck: dict, pos_ms: float) -> None:
         tid = deck.get("track_id") or 0
@@ -886,6 +932,7 @@ class DeckCard(QFrame):
             self.tags.setText(tags_html)
 
         bpm = deck.get("bpm") or 0
+        self._last_bpm = float(bpm or 0)
         self.bpm.setText(f"{bpm:.2f} BPM" if bpm else "— BPM")
         pitch = float(deck.get("pitch") or 0)
         sign = "+" if pitch >= 0 else ""

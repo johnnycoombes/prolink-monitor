@@ -70,6 +70,22 @@ class AbsolutePositionPlayheadTests(unittest.TestCase):
         # Model still extrapolates from the exact anchor, not beat 40.
         self.assertLess(abs(deck._model[0] - 5000.0), 200.0)
 
+    def test_abs_length_seconds_vs_milliseconds(self):
+        self.assertEqual(link._abs_track_length_ms(245), 245_000)
+        # Values too large to be seconds are treated as already-ms (XDJ-AZ).
+        self.assertEqual(link._abs_track_length_ms(649_750), 649_750)
+
+    def test_abs_length_does_not_inflate_grid(self):
+        deck = link.Deck(1)
+        deck.track_length_ms = 650_000  # from ANLZ beat grid (~10:50)
+        deck.status = proto.Status(track_id=1, play_state_raw=0x03, pitch=1.0)
+        deck.status.playing = True
+        # Firmware sent milliseconds in the seconds field (would become ~180h if *1000).
+        ap = proto.parse(_abs_packet(track_s=649_750, pos_ms=372_000, pitch_x100=0))
+        assert isinstance(ap, proto.AbsolutePosition)
+        deck.on_absolute_position(ap, time.monotonic())
+        self.assertEqual(deck.track_length_ms, 650_000)
+
 
 if __name__ == "__main__":
     unittest.main()
