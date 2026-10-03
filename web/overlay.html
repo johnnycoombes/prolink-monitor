@@ -189,11 +189,20 @@ function mmss(ms){
   return `${String(Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`;
 }
 
+/* Same stack order as the Monitor / web panel: 2→1-2, 4→3-1-2-4. */
+const DECK_LAYOUT = {2: [1, 2], 4: [3, 1, 2, 4]};
+
 function visibleDecks(list){
-  let rows = [...(list||[])];
+  const byNum = new Map((list || []).map(d => [d.number, d]));
+  const layoutN = maxDecks >= 4 ? 4 : 2;
+  const order = DECK_LAYOUT[layoutN] || DECK_LAYOUT[2];
+  let rows = [];
+  for (const n of order) {
+    const d = byNum.get(n);
+    if (d) rows.push(d);
+  }
   if (onlyPlaying) rows = rows.filter(d => d.playing || d.track_id);
-  rows.sort((a,b) => (a.track_id?0:1)-(b.track_id?0:1) || a.number-b.number);
-  return rows.slice(0, maxDecks).sort((a,b)=>a.number-b.number);
+  return rows.slice(0, maxDecks);
 }
 
 async function loadTrack(id){
