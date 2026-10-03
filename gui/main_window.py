@@ -13,10 +13,13 @@ from PySide6.QtWidgets import (
 
 from gui.backend import Backend
 from gui.i18n import I18n
-from gui.pages import AboutPage, DevicesPage, LibraryPage, MonitorPage, OverlayPage, SettingsPage
+from gui.pages import (
+    AboutPage, DevicesPage, LibraryPage, MonitorPage, OverlayPage, SessionPage, SettingsPage,
+)
 from gui.settings import load_settings, save_settings
 from gui.theme import COLORS
 from gui.widgets import Sidebar
+from prolink.session import ZOOM_BARS, DEFAULT_ZOOM_BARS
 
 
 class MainWindow(QMainWindow):
@@ -109,6 +112,7 @@ class MainWindow(QMainWindow):
         self.page_monitor = MonitorPage(self.i18n, self.backend)
         self.page_devices = DevicesPage(self.i18n)
         self.page_library = LibraryPage(self.i18n)
+        self.page_session = SessionPage(self.i18n, self.backend)
         self.page_overlay = OverlayPage(self.i18n, self.backend)
         self.page_settings = SettingsPage(self.i18n)
         self.page_about = AboutPage(self.i18n)
@@ -116,6 +120,7 @@ class MainWindow(QMainWindow):
             "monitor": self.page_monitor,
             "devices": self.page_devices,
             "library": self.page_library,
+            "session": self.page_session,
             "overlay": self.page_overlay,
             "settings": self.page_settings,
             "about": self.page_about,
@@ -269,6 +274,8 @@ class MainWindow(QMainWindow):
             self._library_sig = library_sig
             self.page_library.update_state(state)
 
+        self.page_session.update_state(state)
+
         packets = state.get("packets") or 0
         mode = state.get("mode") or state.get("mode_kind") or "—"
         footer_sig = (mode, len(devices), packets)
@@ -323,12 +330,12 @@ class MainWindow(QMainWindow):
         self.page_overlay.set_web_ready(True)
 
     def _nudge_zoom(self, direction: int) -> None:
-        levels = [4, 8, 16, 32, 64]
+        levels = list(ZOOM_BARS)
         cur = self.page_monitor._zoom
         try:
             i = levels.index(cur)
         except ValueError:
-            i = 1
+            i = levels.index(DEFAULT_ZOOM_BARS)
         nxt = levels[max(0, min(len(levels) - 1, i + direction))]
         self.page_monitor.set_zoom(nxt)
 

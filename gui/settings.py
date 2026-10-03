@@ -18,7 +18,7 @@ DEFAULTS: dict[str, Any] = {
     "tshark": "",
     "cache": "",
     "max_decks": 4,
-    "zoom_seconds": 8,
+    "zoom_bars": 4,                # 4/4 bars shown in the detail waveform
     "waveform_style": "rgb",       # rgb | 3band | blue
     "auto_connect": True,
     "start_web_server": True,
@@ -80,6 +80,7 @@ def settings_path() -> str:
 def load_settings() -> dict[str, Any]:
     path = settings_path()
     data = deepcopy(DEFAULTS)
+    legacy: dict[str, Any] = {}
     try:
         with open(path, encoding="utf-8") as f:
             saved = json.load(f)
@@ -87,9 +88,12 @@ def load_settings() -> dict[str, Any]:
             for key, value in saved.items():
                 if key in DEFAULTS:
                     data[key] = value
+            # Migrate pre-bars zoom_seconds → zoom_bars (≈ seconds/2 at 120 BPM).
+            if "zoom_bars" not in saved and "zoom_seconds" in saved:
+                legacy["zoom_seconds"] = saved["zoom_seconds"]
     except (OSError, json.JSONDecodeError, TypeError):
         pass
-    return _sanitize(data)
+    return _sanitize({**data, **legacy})
 
 
 def save_settings(data: dict[str, Any]) -> None:
@@ -125,10 +129,15 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     except (TypeError, ValueError):
         out["max_decks"] = 4
     try:
-        zoom = int(data.get("zoom_seconds", 8))
-        out["zoom_seconds"] = zoom if zoom in (4, 8, 16, 32, 64) else 8
+        if "zoom_bars" in data and data.get("zoom_bars") is not None:
+            zoom = int(data.get("zoom_bars", 4))
+        else:
+            # Legacy seconds → bars at 120 BPM (1 bar ≈ 2 s).
+            sec = int(data.get("zoom_seconds", 8))
+            zoom = {4: 2, 8: 4, 16: 8, 32: 16, 64: 16}.get(sec, 4)
+        out["zoom_bars"] = zoom if zoom in (1, 2, 4, 8, 16) else 4
     except (TypeError, ValueError):
-        out["zoom_seconds"] = 8
+        out["zoom_bars"] = 4
     style = str(data.get("waveform_style") or "rgb").lower()
     out["waveform_style"] = style if style in ("rgb", "3band", "blue") else "rgb"
     out["auto_connect"] = bool(data.get("auto_connect", True))

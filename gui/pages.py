@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 from gui.theme import COLORS
 from gui.widgets import DeckCard, parse_waveform
 from gui.settings import deck_elements_from
+from prolink.session import ZOOM_BARS, DEFAULT_ZOOM_BARS
 
 # Visual stack order for Monitor cards (Pioneer-style 4-deck layout).
 DECK_LAYOUT = {
@@ -64,7 +65,7 @@ class MonitorPage(Page):
         super().__init__(i18n, "monitor_title", "monitor_sub", parent)
         self.backend = backend
         self._cards: dict[int, DeckCard] = {}
-        self._zoom = 8
+        self._zoom = DEFAULT_ZOOM_BARS
         self._max_decks = 4
         self._wave_style = "rgb"
         self._show_empty = True
@@ -81,13 +82,14 @@ class MonitorPage(Page):
         zoom_lbl.setObjectName("SectionTitle")
         tools.addWidget(zoom_lbl)
         self._zoom_btns: dict[int, QPushButton] = {}
-        for s in (4, 8, 16, 32, 64):
-            b = QPushButton(f"{s}s")
+        for bars in ZOOM_BARS:
+            b = QPushButton(f"{bars}")
             b.setObjectName("Chip")
+            b.setToolTip(i18n.t("zoom_bars_tip").format(bars=bars, beats=bars * 4))
             b.setCursor(Qt.PointingHandCursor)
-            b.clicked.connect(lambda _=False, v=s: self.set_zoom(v))
+            b.clicked.connect(lambda _=False, v=bars: self.set_zoom(v))
             tools.addWidget(b)
-            self._zoom_btns[s] = b
+            self._zoom_btns[bars] = b
 
         tools.addSpacing(16)
         decks_lbl = QLabel(i18n.t("max_decks"))
@@ -114,7 +116,14 @@ class MonitorPage(Page):
             b.clicked.connect(lambda _=False, v=key: self.set_wave_style(v))
             tools.addWidget(b)
             self._style_btns[key] = b
+
         tools.addStretch(1)
+        self.record_btn = QPushButton(i18n.t("session_record"))
+        self.record_btn.setObjectName("Chip")
+        self.record_btn.setCursor(Qt.PointingHandCursor)
+        self.record_btn.setToolTip(i18n.t("session_record_tip"))
+        self.record_btn.clicked.connect(self._toggle_record)
+        tools.addWidget(self.record_btn)
         self.layout_root.addLayout(tools)
 
         self.waiting = QLabel(i18n.t("waiting"))
@@ -137,12 +146,12 @@ class MonitorPage(Page):
         self.layout_root.addWidget(self.scroll, 1)
         self.scroll.viewport().installEventFilter(self)
 
-        self.set_zoom(8)
+        self.set_zoom(DEFAULT_ZOOM_BARS)
         self.set_max_decks(4)
         self.set_wave_style("rgb")
 
     def apply_prefs(self, settings: dict) -> None:
-        self.set_zoom(int(settings.get("zoom_seconds", 8)))
+        self.set_zoom(int(settings.get("zoom_bars", DEFAULT_ZOOM_BARS)))
         self.set_max_decks(int(settings.get("max_decks", 4)))
         self.set_wave_style(str(settings.get("waveform_style") or "rgb"))
         self._show_empty = bool(settings.get("show_empty_decks", True))
@@ -154,14 +163,15 @@ class MonitorPage(Page):
             card.apply_elements(self._elements)
         self._relayout_deck_heights()
 
-    def set_zoom(self, seconds: int) -> None:
-        self._zoom = seconds
+    def set_zoom(self, bars: int) -> None:
+        bars = int(bars) if int(bars) in ZOOM_BARS else DEFAULT_ZOOM_BARS
+        self._zoom = bars
         for s, b in self._zoom_btns.items():
-            b.setProperty("active", "true" if s == seconds else "false")
+            b.setProperty("active", "true" if s == bars else "false")
             b.style().unpolish(b)
             b.style().polish(b)
         for card in self._cards.values():
-            card.set_zoom(seconds)
+            card.set_zoom(bars)
 
     def set_max_decks(self, n: int) -> None:
         self._max_decks = normalize_max_decks(n)
@@ -185,11 +195,32 @@ class MonitorPage(Page):
 
     def prefs_snapshot(self) -> dict:
         return {
-            "zoom_seconds": self._zoom,
+            "zoom_bars": self._zoom,
             "max_decks": self._max_decks,
             "waveform_style": self._wave_style,
             **self._elements,
         }
+
+    def _toggle_record(self) -> None:
+        session = (self._last_state or {}).get("session") or {}
+        if session.get("recording"):
+            self.backend.stop_session()
+        else:
+            self.backend.start_session()
+
+    def _sync_record_btn(self, state: dict) -> None:
+        session = state.get("session") or {}
+        recording = bool(session.get("recording"))
+        if recording:
+            n = len(session.get("tracks") or [])
+            elapsed = session.get("elapsed") or "00:00:00"
+            self.record_btn.setText(f"{self._i18n.t('session_stop')} · {elapsed} · {n}")
+            self.record_btn.setProperty("active", "true")
+        else:
+            self.record_btn.setText(self._i18n.t("session_record"))
+            self.record_btn.setProperty("active", "false")
+        self.record_btn.style().unpolish(self.record_btn)
+        self.record_btn.style().polish(self.record_btn)
 
     def eventFilter(self, obj, event):  # noqa: N802
         if obj is self.scroll.viewport() and event.type() == QEvent.Type.Resize:
@@ -221,6 +252,7 @@ class MonitorPage(Page):
     def update_state(self, state: dict) -> None:
         self._last_state = state
         self._received_at = time.time()
+        self._sync_record_btn(state)
         decks = list(state.get("decks") or [])
         visible = self._visible(decks)
         alive = {d["number"] for d in visible}
@@ -437,8 +469,151 @@ class LibraryPage(Page):
                 self.onelibrary_label.setText(f"OneLibrary · {detail}")
         else:
             self.onelibrary_label.setText("")
-        err = state.get("library_error") or ""
-        self.error_label.setText(err if not lib else "")
+        err = state.get("library_error")
+        self.error_label.setText(err or "")
+
+
+class SessionPage(Page):
+    """Realtime chronological playlist of tracks played during a recorded session."""
+
+    def __init__(self, i18n, backend, parent=None):
+        super().__init__(i18n, "session_title", "session_sub", parent)
+        self.backend = backend
+        self._last_count = -1
+
+        tools = QHBoxLayout()
+        tools.setSpacing(8)
+        self.record_btn = QPushButton(i18n.t("session_record"))
+        self.record_btn.setObjectName("Primary")
+        self.record_btn.setCursor(Qt.PointingHandCursor)
+        self.record_btn.clicked.connect(self._toggle_record)
+        self.stop_btn = QPushButton(i18n.t("session_stop"))
+        self.stop_btn.setCursor(Qt.PointingHandCursor)
+        self.stop_btn.clicked.connect(lambda: self.backend.stop_session())
+        self.clear_btn = QPushButton(i18n.t("session_clear"))
+        self.clear_btn.setCursor(Qt.PointingHandCursor)
+        self.clear_btn.clicked.connect(lambda: self.backend.clear_session())
+        self.copy_btn = QPushButton(i18n.t("session_copy"))
+        self.copy_btn.setCursor(Qt.PointingHandCursor)
+        self.copy_btn.clicked.connect(self._copy_playlist)
+        tools.addWidget(self.record_btn)
+        tools.addWidget(self.stop_btn)
+        tools.addWidget(self.clear_btn)
+        tools.addWidget(self.copy_btn)
+        tools.addStretch(1)
+        self.status = QLabel(i18n.t("session_idle"))
+        self.status.setObjectName("Mono")
+        self.status.setStyleSheet(
+            f"font-family:monospace; font-size:12px; color:{COLORS['dim']};"
+        )
+        tools.addWidget(self.status)
+        self.layout_root.addLayout(tools)
+
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels([
+            i18n.t("session_col_time"),
+            i18n.t("session_col_deck"),
+            i18n.t("session_col_title"),
+            i18n.t("session_col_artist"),
+            i18n.t("session_col_bpm"),
+        ])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        self.layout_root.addWidget(self.table, 1)
+
+        self.empty = QLabel(i18n.t("session_empty"))
+        self.empty.setAlignment(Qt.AlignCenter)
+        self.empty.setStyleSheet(
+            f"color:{COLORS['dim']}; font-family:monospace; font-size:13px; padding:24px;"
+        )
+        self.layout_root.addWidget(self.empty)
+
+    def retranslate(self) -> None:
+        super().retranslate()
+        self.table.setHorizontalHeaderLabels([
+            self._i18n.t("session_col_time"),
+            self._i18n.t("session_col_deck"),
+            self._i18n.t("session_col_title"),
+            self._i18n.t("session_col_artist"),
+            self._i18n.t("session_col_bpm"),
+        ])
+        self.clear_btn.setText(self._i18n.t("session_clear"))
+        self.stop_btn.setText(self._i18n.t("session_stop"))
+        self.copy_btn.setText(self._i18n.t("session_copy"))
+        self.empty.setText(self._i18n.t("session_empty"))
+
+    def _toggle_record(self) -> None:
+        # Prefer live monitor state via backend.
+        mon = self.backend.monitor
+        recording = False
+        if mon is not None:
+            recording = bool(mon.session.recording)
+        if recording:
+            self.backend.stop_session()
+        else:
+            self.backend.start_session()
+
+    def _copy_playlist(self) -> None:
+        from PySide6.QtWidgets import QApplication
+        lines = []
+        for row in range(self.table.rowCount()):
+            vals = []
+            for col in range(self.table.columnCount()):
+                item = self.table.item(row, col)
+                vals.append(item.text() if item else "")
+            lines.append("\t".join(vals))
+        QApplication.clipboard().setText("\n".join(lines))
+
+    def update_state(self, state: dict) -> None:
+        session = state.get("session") or {}
+        recording = bool(session.get("recording"))
+        tracks = session.get("tracks") or []
+        elapsed = session.get("elapsed") or "00:00:00"
+        if recording:
+            self.record_btn.setText(self._i18n.t("session_recording"))
+            self.status.setText(
+                f"{self._i18n.t('session_recording')} · {elapsed} · "
+                f"{len(tracks)} {self._i18n.t('tracks')}"
+            )
+            self.status.setStyleSheet(
+                f"font-family:monospace; font-size:12px; color:{COLORS['danger']};"
+            )
+        else:
+            self.record_btn.setText(self._i18n.t("session_record"))
+            if tracks:
+                self.status.setText(
+                    f"{self._i18n.t('session_stopped')} · {elapsed} · "
+                    f"{len(tracks)} {self._i18n.t('tracks')}"
+                )
+            else:
+                self.status.setText(self._i18n.t("session_idle"))
+            self.status.setStyleSheet(
+                f"font-family:monospace; font-size:12px; color:{COLORS['dim']};"
+            )
+
+        self.empty.setVisible(not tracks)
+        self.table.setVisible(bool(tracks))
+        if len(tracks) == self._last_count and not recording:
+            # Still refresh timestamps row contents if titles filled in.
+            pass
+        self._last_count = len(tracks)
+        self.table.setRowCount(len(tracks))
+        for row, t in enumerate(tracks):
+            bpm = t.get("bpm") or 0
+            vals = [
+                t.get("timestamp") or "00:00:00",
+                str(t.get("deck") or ""),
+                t.get("title") or "—",
+                t.get("artist") or "",
+                f"{bpm:.1f}" if bpm else "—",
+            ]
+            for col, val in enumerate(vals):
+                item = QTableWidgetItem(val)
+                if col == 0:
+                    item.setForeground(Qt.GlobalColor.cyan)
+                self.table.setItem(row, col, item)
 
 
 class OverlayPage(Page):
@@ -665,8 +840,11 @@ class SettingsPage(Page):
         for n in (2, 4):
             self.max_decks.addItem(str(n), n)
         self.zoom = QComboBox()
-        for s in (4, 8, 16, 32, 64):
-            self.zoom.addItem(f"{s}s", s)
+        for bars in ZOOM_BARS:
+            self.zoom.addItem(
+                i18n.t("zoom_bars_option").format(bars=bars, beats=bars * 4),
+                bars,
+            )
         self.wave_style = QComboBox()
         self.wave_style.addItem(i18n.t("wave_rgb"), "rgb")
         self.wave_style.addItem(i18n.t("wave_3band"), "3band")
@@ -771,7 +949,7 @@ class SettingsPage(Page):
         self.cache.setText(data.get("cache") or "")
         idx = self.max_decks.findData(normalize_max_decks(data.get("max_decks", 4)))
         self.max_decks.setCurrentIndex(max(0, idx))
-        idx = self.zoom.findData(int(data.get("zoom_seconds", 8)))
+        idx = self.zoom.findData(int(data.get("zoom_bars", DEFAULT_ZOOM_BARS)))
         self.zoom.setCurrentIndex(max(0, idx))
         idx = self.wave_style.findData(data.get("waveform_style", "rgb"))
         self.wave_style.setCurrentIndex(max(0, idx))
@@ -802,7 +980,7 @@ class SettingsPage(Page):
             "tshark": self.tshark.text().strip(),
             "cache": self.cache.text().strip(),
             "max_decks": self.max_decks.currentData(),
-            "zoom_seconds": self.zoom.currentData(),
+            "zoom_bars": self.zoom.currentData(),
             "waveform_style": self.wave_style.currentData(),
             "show_empty_decks": self.show_empty.isChecked(),
             "poll_hz": self.poll_hz.value(),

@@ -149,6 +149,24 @@ class Backend(QObject):
                 self._art_cache[track_id] = data
         return data
 
+    def start_session(self) -> None:
+        with self._lock:
+            mon = self._monitor
+        if mon is not None:
+            mon.session.start()
+
+    def stop_session(self) -> None:
+        with self._lock:
+            mon = self._monitor
+        if mon is not None:
+            mon.session.stop()
+
+    def clear_session(self) -> None:
+        with self._lock:
+            mon = self._monitor
+        if mon is not None:
+            mon.session.clear()
+
     # -- boot / poll --------------------------------------------------------
     def _boot(self, settings: dict[str, Any]) -> None:
         args = as_namespace(settings)

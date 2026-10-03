@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from prolink import anlz, link, proto                     # noqa: E402
 from prolink.library import Library                       # noqa: E402
 from prolink.mixstatus import MixStatus, MixStatusConfig  # noqa: E402
+from prolink.session import SessionRecorder               # noqa: E402
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
@@ -51,6 +52,7 @@ class Monitor:
         self._track_host: dict[int, str] = {}
         self._lock = threading.RLock()
         self.mixstatus = MixStatus(MixStatusConfig())
+        self.session = SessionRecorder()
 
     def _cache_key(self, host: str, media, track_id: int) -> tuple:
         fp = getattr(media, "_pdb_fingerprint", None) or (0, 0)
@@ -276,6 +278,7 @@ class Monitor:
                 snap["artist"] = meta.get("artist") or ""
                 snap["key"] = meta.get("key") or ""
             self.mixstatus.handle(snap)
+            self.session.handle(snap)
         with self.engine.lock:
             devices = [{"number": a.device_number, "name": a.name,
                         "kind": a.kind, "ip": a.ip}
@@ -326,6 +329,7 @@ class Monitor:
             "mix": mix,
             "now_playing": mix.get("now_playing"),
             "setlist": mix.get("setlist") or [],
+            "session": self.session.as_state(),
         }
 
 
@@ -389,6 +393,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(self.monitor.state())
             if path == "/api/setlist":
                 return self._json(self.monitor.mixstatus.as_state())
+            if path == "/api/session":
+                return self._json(self.monitor.session.as_state())
+            if path == "/api/session/start":
+                self.monitor.session.start()
+                return self._json(self.monitor.session.as_state())
+            if path == "/api/session/stop":
+                self.monitor.session.stop()
+                return self._json(self.monitor.session.as_state())
+            if path == "/api/session/clear":
+                self.monitor.session.clear()
+                return self._json(self.monitor.session.as_state())
             if path == "/api/events":
                 return self._events()
             if path.startswith("/api/track/"):

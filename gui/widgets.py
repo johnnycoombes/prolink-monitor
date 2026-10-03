@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 
 from gui.theme import COLORS, DECK_COLORS
 from gui.settings import deck_elements_from
+from prolink.session import ZOOM_BARS, bars_to_seconds
 
 
 def mmss(ms: float) -> str:
@@ -224,7 +225,7 @@ class Sidebar(QFrame):
         self._i18n = i18n
         self._buttons: dict[str, QPushButton] = {}
         self._active = "monitor"
-        self._nav_keys = ("monitor", "devices", "library", "overlay", "settings", "about")
+        self._nav_keys = ("monitor", "devices", "library", "session", "overlay", "settings", "about")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 18, 14, 18)
@@ -297,7 +298,8 @@ class WaveformView(QWidget):
         self._meta: dict[str, Any] | None = None
         self._pos_ms = 0.0
         self._playing = False
-        self._zoom = 8
+        self._zoom_bars = 4
+        self._bpm = 120.0
         self._offair = False
         self._style = "rgb"
         self._loop_start_ms: float | None = None
@@ -309,14 +311,26 @@ class WaveformView(QWidget):
         self._detail_key: tuple | None = None
         self._detail_start: float = 0.0
 
+    def _visible_seconds(self) -> float:
+        return bars_to_seconds(self._zoom_bars, self._bpm)
+
     def set_deck_color(self, color: str) -> None:
         self._color = QColor(color)
         self.update()
 
-    def set_zoom(self, seconds: int) -> None:
-        if seconds == self._zoom:
+    def set_zoom(self, bars: int) -> None:
+        bars = int(bars) if int(bars) in ZOOM_BARS else 4
+        if bars == self._zoom_bars:
             return
-        self._zoom = seconds
+        self._zoom_bars = bars
+        self._invalidate_detail()
+        self.update()
+
+    def set_bpm(self, bpm: float) -> None:
+        bpm = float(bpm or 0) or 120.0
+        if abs(bpm - self._bpm) < 0.05:
+            return
+        self._bpm = bpm
         self._invalidate_detail()
         self.update()
 
@@ -455,7 +469,7 @@ class WaveformView(QWidget):
         d = self._detail
         if d and d["n"] and self._loop_active and self._loop_start_ms is not None:
             cps = d["cps"] or 150.0
-            visible = max(1.0, self._zoom * cps)
+            visible = max(1.0, self._visible_seconds() * cps)
             px_per_col = w / visible
             current = (self._pos_ms / 1000.0) * cps
             start = current - visible / 2
@@ -483,11 +497,11 @@ class WaveformView(QWidget):
             return
 
         cps = d["cps"] or 150.0
-        visible = max(1.0, self._zoom * cps)
+        visible = max(1.0, self._visible_seconds() * cps)
         px_per_col = w / visible
         current = (self._pos_ms / 1000.0) * cps
         start = current - visible / 2
-        key = (id(d), self._style, self._zoom, w, h, self._offair)
+        key = (id(d), self._style, self._zoom_bars, round(self._bpm, 1), w, h, self._offair)
 
         if (self._detail_pm is None or self._detail_key != key
                 or self._detail_pm.width() != w or self._detail_pm.height() != h):
@@ -537,7 +551,7 @@ class WaveformView(QWidget):
         cps = d["cps"] or 150.0
         heights = d["h"]
         mid = y0 + h / 2
-        visible = max(1.0, self._zoom * cps)
+        visible = max(1.0, self._visible_seconds() * cps)
         px_per_col = w / visible
         span = (h / 2) * 0.98
 
@@ -698,6 +712,15 @@ class DeckCard(QFrame):
         self.state.setStyleSheet(
             f"font-family:monospace; font-size:10px; color:{COLORS['dim']};"
         )
+        self.loop_badge = QLabel("")
+        self.loop_badge.setObjectName("LoopBadge")
+        self.loop_badge.setStyleSheet(
+            "font-family:monospace; font-size:10px; font-weight:700; "
+            "letter-spacing:1px; color:#2ee89a; "
+            "border:1px solid rgba(46,232,154,140); border-radius:9px; "
+            "padding:2px 7px 2px 5px; background:rgba(46,232,154,26);"
+        )
+        self.loop_badge.hide()
         self.key = QLabel("")
         self.key.setStyleSheet(
             f"font-family:monospace; font-size:12px; font-weight:700; color:{self._color};"
@@ -721,6 +744,8 @@ class DeckCard(QFrame):
         self.state_wrap = QWidget()
         state_row = QHBoxLayout(self.state_wrap)
         state_row.setContentsMargins(0, 0, 0, 0)
+        state_row.setSpacing(6)
+        state_row.addWidget(self.loop_badge, 0)
         state_row.addWidget(self.state, 1)
         state_row.addWidget(self.key)
         read.addWidget(self.bpm)
@@ -789,8 +814,8 @@ class DeckCard(QFrame):
         # Cap max so equal stretch stays even when the host is viewport-sized.
         self.setMaximumHeight(max(floor, int(height)))
 
-    def set_zoom(self, seconds: int) -> None:
-        self.wave.set_zoom(seconds)
+    def set_zoom(self, bars: int) -> None:
+        self.wave.set_zoom(bars)
 
     def set_wave_style(self, style: str) -> None:
         self.wave.set_style(style)
@@ -871,20 +896,22 @@ class DeckCard(QFrame):
             if pick is not None:
                 start, end = float(pick["t"]), float(pick["end"])
         self.wave.set_loop_region(start, end, active=bool(looping and start is not None))
-        # Loop length badge next to state.
+        # Loop length badge (icon + beats) — same idea as the web panel.
         if looping and pick is not None:
-            bpm = 0.0
-            # Prefer live BPM from last deck update stored on the card title path.
             bpm = float(getattr(self, "_last_bpm", 0) or 0)
             if bpm <= 0:
                 bpm = float((self._meta or {}).get("track_bpm") or 0)
             beats = 0
-            if bpm > 0:
+            if bpm > 0 and end is not None and start is not None:
                 beats = max(0, round((end - start) / (60000.0 / bpm)))
-            label = f"↻ {beats}" if beats else "↻ LOOP"
-            self.state.setText(f"{label}  ·  {self._i18n.state('looping')}")
+            self.loop_badge.setText(f"↻ {beats}" if beats else "↻ LOOP")
+            self.loop_badge.show()
         elif looping:
-            self.state.setText(f"↻  ·  {self._i18n.state('looping')}")
+            self.loop_badge.setText("↻ LOOP")
+            self.loop_badge.show()
+        else:
+            self.loop_badge.hide()
+            self.loop_badge.setText("")
 
     def update_deck(self, deck: dict, pos_ms: float) -> None:
         tid = deck.get("track_id") or 0
@@ -924,8 +951,7 @@ class DeckCard(QFrame):
             tags.append(self._chip(self._i18n.t("on_air"), COLORS["danger"]))
         elif tid:
             tags.append(self._chip(self._i18n.t("channel_closed"), COLORS["dim"]))
-        if deck.get("state") == "looping":
-            tags.append(self._chip(self._i18n.t("looping"), "#2ee89a"))
+        # Loop length is shown as the icon badge next to state (not a tag chip).
         tags_html = " ".join(tags)
         if tags_html != self._last_tags:
             self._last_tags = tags_html
@@ -933,6 +959,7 @@ class DeckCard(QFrame):
 
         bpm = deck.get("bpm") or 0
         self._last_bpm = float(bpm or 0)
+        self.wave.set_bpm(float(deck.get("track_bpm") or bpm or 120.0))
         self.bpm.setText(f"{bpm:.2f} BPM" if bpm else "— BPM")
         pitch = float(deck.get("pitch") or 0)
         sign = "+" if pitch >= 0 else ""

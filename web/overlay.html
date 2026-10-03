@@ -99,7 +99,9 @@ body.preview{
 .tag.master{color:#ffd45e}
 .tag.sync{color:var(--dim)}
 .tag.onair{color:#ff6b61;background:rgba(255,107,97,.12)}
-.tag.loop{color:#2ee89a;background:rgba(46,232,154,.12)}
+.tag.loop{color:#2ee89a;background:rgba(46,232,154,.12);display:inline-flex;align-items:center;gap:4px}
+.tag.loop svg{width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round}
 .title{
   font-size:clamp(20px,2.4vw,28px);font-weight:700;line-height:1.15;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
@@ -312,12 +314,38 @@ function artHtml(trackId, pack){
   return `<div class="art">♪</div>`;
 }
 
-function tagsHtml(deck){
+function loopBeats(loop, bpm) {
+  if (!loop || !bpm || bpm <= 0) return 0;
+  const ms = Math.max(0, (loop.end || 0) - (loop.t || 0));
+  return Math.max(0, Math.round(ms / (60000 / bpm)));
+}
+
+function activeLoop(meta, pos, looping) {
+  if (!meta || !meta.cues) return null;
+  const loops = meta.cues.filter(c => c.type === 'loop' && c.end > c.t);
+  if (!loops.length) return null;
+  const inside = loops.find(c => pos >= c.t && pos <= c.end);
+  if (inside) return inside;
+  return looping ? loops[0] : null;
+}
+
+const LOOP_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true">
+  <path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+  <path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+</svg>`;
+
+function tagsHtml(deck, pack, pos){
   const bits = [`<span class="tag deck">DECK ${deck.number}</span>`];
   if (deck.master) bits.push('<span class="tag master">MASTER</span>');
   if (deck.sync) bits.push('<span class="tag sync">SYNC</span>');
   if (deck.on_air) bits.push('<span class="tag onair">ON AIR</span>');
-  if (deck.state === 'looping') bits.push('<span class="tag loop">LOOP</span>');
+  const looping = deck.state === 'looping';
+  if (looping) {
+    const loop = activeLoop(pack && pack.meta, pos || 0, true);
+    const beats = loopBeats(loop, deck.track_bpm || deck.bpm);
+    const label = beats ? String(beats) : 'LOOP';
+    bits.push(`<span class="tag loop" title="Loop">${LOOP_ICON}${label}</span>`);
+  }
   return `<div class="tags">${bits.join('')}</div>`;
 }
 
@@ -381,7 +409,7 @@ function renderNow(deck, pos){
     <div class="now" style="--deck:${color}">
       ${artHtml(deck.track_id, pack)}
       <div class="meta">
-        ${tagsHtml(deck)}
+        ${tagsHtml(deck, pack, pos)}
         <div class="title">${escapeHtml(title)}</div>
         <div class="artist">${escapeHtml(artist)}</div>
         <div class="readouts">
@@ -423,7 +451,7 @@ function renderDual(decks, positions){
     <div class="slot" style="--deck:${DECK_COLORS[d.number]||'#22d3ee'}">
       ${artHtml(d.track_id, pack)}
       <div class="meta">
-        ${tagsHtml(d)}
+        ${tagsHtml(d, pack, positions[i])}
         <div class="title">${escapeHtml(title)}</div>
         <div class="artist">${escapeHtml(artist)}</div>
         <div class="readouts">
