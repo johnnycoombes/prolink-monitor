@@ -38,6 +38,7 @@ STRINGS = {
     "overlay_layout": "Layout",
     "overlay_corner": "Corner",
     "overlay_playing": "Only decks with a track",
+    "overlay_mix": "SmartTiming now-playing (audience track)",
     "overlay_decks": "Decks shown",
     "overlay_preview": "Preview background",
     "overlay_layout_now": "Now playing",
