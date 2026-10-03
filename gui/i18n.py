@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 STRINGS = {
-    "app_title": "Engine Room",
-    "brand": "ENGINE ROOM",
+    "app_title": "Prolink Listener",
+    "brand": "PROLINK LISTENER",
     "brand_sub": "// pro dj link",
     "nav_monitor": "MONITOR",
     "nav_devices": "DEVICES",

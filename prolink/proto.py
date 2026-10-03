@@ -35,7 +35,7 @@ TYPE_MIXER_CLOCK = 0x20
 # Layout from Deep Symmetry / Beat Link ``PrecisePosition``.
 ABS_POS_MIN_LEN = 0x3C
 ABS_POS_DEVICE = 0x21
-ABS_POS_TRACK_LEN = 0x24   # seconds, floored
+ABS_POS_TRACK_LEN = 0x24   # seconds on CDJ-3000; some AZ builds send milliseconds
 ABS_POS_PLAYHEAD = 0x28    # milliseconds
 ABS_POS_PITCH = 0x2C       # signed, pitch% × 100
 ABS_POS_BPM = 0x38         # effective BPM × 10

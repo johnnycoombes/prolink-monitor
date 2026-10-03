@@ -355,6 +355,20 @@ SMOOTHING = 0.2
 # Above this error it is not noise: it is a real jump (cue, scratch, seek).
 JUMP_MS = 400.0
 
+# Tracks longer than this (as seconds) are not plausible DJ tracks; Absolute
+# Position "seconds" fields that big are almost certainly already milliseconds
+# (seen on some XDJ-AZ firmwares) and must not be multiplied by 1000 again.
+_ABS_LENGTH_SECONDS_CAP = 12 * 3600
+
+
+def _abs_track_length_ms(raw: int) -> int:
+    """Normalize Absolute Position track-length field to milliseconds."""
+    if raw <= 0:
+        return 0
+    if raw > _ABS_LENGTH_SECONDS_CAP:
+        return int(raw)
+    return int(raw) * 1000
+
 
 @dataclass
 class Deck:
@@ -460,9 +474,14 @@ class Deck:
         self.position_source = "exact"
         self.last_seen = now
         if ap.track_length_s:
-            length_ms = ap.track_length_s * 1000
-            if length_ms > self.track_length_ms:
+            length_ms = _abs_track_length_ms(ap.track_length_s)
+            if self.track_length_ms <= 0:
                 self.track_length_ms = length_ms
+            elif length_ms <= max(self.track_length_ms * 2, self.track_length_ms + 2000):
+                # Agree with beat-grid / prior length — take the longer within reason.
+                # Ignore absurd AP values that would inflate remain time (seen when
+                # some firmwares put milliseconds in the "seconds" field).
+                self.track_length_ms = max(self.track_length_ms, length_ms)
         s = self.status
         # Prefer status for whether we are actually advancing; use the packet's
         # pitch slider when status says we are moving.

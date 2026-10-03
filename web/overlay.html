@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Engine Room — OBS Overlay</title>
+<title>Prolink Listener — OBS Overlay</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Archivo:wght@500;600;700&display=swap" rel="stylesheet">
@@ -236,6 +236,20 @@ function timeHtml(pos, dur){
   return `${mmss(pos)} / ${remainHtml(pos, dur)}`;
 }
 
+function overlayDuration(deck, pack){
+  const deckDur = +(deck && deck.duration_ms || 0);
+  const metaDur = +(pack && pack.meta && pack.meta.duration_ms || 0);
+  const sane = d => d > 1000 && d < 12 * 3600 * 1000;
+  if (sane(deckDur) && sane(metaDur)) {
+    if (deckDur > metaDur * 2) return metaDur;
+    if (metaDur > deckDur * 2) return deckDur;
+    return Math.max(deckDur, metaDur);
+  }
+  if (sane(metaDur)) return metaDur;
+  if (sane(deckDur)) return deckDur;
+  return metaDur || deckDur || 0;
+}
+
 const DECK_LAYOUT = {2: [1, 2], 4: [3, 1, 2, 4]};
 
 function visibleDecks(list){
@@ -373,10 +387,10 @@ function renderNow(deck, pos){
         <div class="readouts">
           <div class="bpm">${deck.bpm ? deck.bpm.toFixed(2) : '—'}<small>BPM</small></div>
           ${key ? `<div class="key">${escapeHtml(key)}</div>` : ''}
-          <div class="time" data-time>${timeHtml(pos, deck.duration_ms)}</div>
+          <div class="time" data-time>${timeHtml(pos, overlayDuration(deck, pack))}</div>
         </div>
         ${waveHtml(deck.track_id)}
-        <div class="progress"><i style="width:${progressPct(pos, deck.duration_ms)}%"></i></div>
+        <div class="progress"><i style="width:${progressPct(pos, overlayDuration(deck, pack))}%"></i></div>
       </div>
     </div>`;
 }
@@ -414,10 +428,10 @@ function renderDual(decks, positions){
         <div class="artist">${escapeHtml(artist)}</div>
         <div class="readouts">
           <div class="bpm">${d.bpm?d.bpm.toFixed(2):'—'}<small>BPM</small></div>
-          <div class="time" data-time>${timeHtml(positions[i], d.duration_ms)}</div>
+          <div class="time" data-time>${timeHtml(positions[i], overlayDuration(d, pack))}</div>
         </div>
         ${waveHtml(d.track_id)}
-        <div class="progress"><i style="width:${progressPct(positions[i], d.duration_ms)}%"></i></div>
+        <div class="progress"><i style="width:${progressPct(positions[i], overlayDuration(d, pack))}%"></i></div>
       </div>
     </div>`;
   }).join('')}</div>`;
@@ -461,8 +475,10 @@ function paint(){
   }
   idle.classList.remove('show');
   const positions = decks.map(d => {
+    const pack = tracks.get(d.track_id);
+    const dur = overlayDuration(d, pack);
     let pos = +(d.position_ms||0) + (d.playing ? dt*1000*(d.speed||1) : 0);
-    if (d.duration_ms) pos = Math.min(pos, d.duration_ms);
+    if (dur) pos = Math.min(pos, dur);
     return pos;
   });
   for (const d of decks) if (d.track_id) loadTrack(d.track_id);
@@ -485,12 +501,15 @@ function paint(){
     card.dataset.sig = sig;
   } else {
     card.querySelectorAll('.progress > i').forEach((el,i)=>{
-      el.style.width = progressPct(positions[i] ?? positions[0], decks[i]?.duration_ms || decks[0].duration_ms) + '%';
+      const d = decks[i] || decks[0];
+      const pack = tracks.get(d.track_id);
+      el.style.width = progressPct(positions[i] ?? positions[0], overlayDuration(d, pack)) + '%';
     });
     card.querySelectorAll('[data-time]').forEach((el,i)=>{
       const d = decks[i] || decks[0];
+      const pack = tracks.get(d.track_id);
       const pos = positions[i] ?? positions[0];
-      el.innerHTML = timeHtml(pos, d.duration_ms);
+      el.innerHTML = timeHtml(pos, overlayDuration(d, pack));
     });
     card.querySelectorAll('.bpm').forEach((el,i)=>{
       const d = decks[Math.min(i, decks.length-1)];

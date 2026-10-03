@@ -81,7 +81,7 @@ class MonitorPage(Page):
         zoom_lbl.setObjectName("SectionTitle")
         tools.addWidget(zoom_lbl)
         self._zoom_btns: dict[int, QPushButton] = {}
-        for s in (4, 8, 16, 32):
+        for s in (4, 8, 16, 32, 64):
             b = QPushButton(f"{s}s")
             b.setObjectName("Chip")
             b.setCursor(Qt.PointingHandCursor)
@@ -263,11 +263,14 @@ class MonitorPage(Page):
                 self.decks_layout.addWidget(card, 1)
 
             card = self._cards[n]
+            meta_dur = float((card._meta or {}).get("duration_ms") or 0)
+            from gui.widgets import sane_duration_ms
+            dur = sane_duration_ms(float(d.get("duration_ms") or 0), meta_dur)
             pos = float(d.get("position_ms") or 0)
             if d.get("playing"):
                 pos += dt * 1000.0 * float(d.get("speed") or 1.0)
-            if d.get("duration_ms"):
-                pos = min(pos, float(d["duration_ms"]))
+            if dur:
+                pos = min(pos, dur)
 
             tid = d.get("track_id") or 0
             if tid:
@@ -314,10 +317,12 @@ class MonitorPage(Page):
             card = self._cards.get(d["number"])
             if card is None:
                 continue
+            from gui.widgets import sane_duration_ms
+            meta_dur = float((card._meta or {}).get("duration_ms") or 0)
+            dur = sane_duration_ms(float(d.get("duration_ms") or 0), meta_dur)
             pos = float(d.get("position_ms") or 0)
             if d.get("playing"):
                 pos += dt * 1000.0 * float(d.get("speed") or 1.0)
-            dur = float(d.get("duration_ms") or 0)
             if dur:
                 pos = min(pos, dur)
             card.advance_playhead(
@@ -660,7 +665,7 @@ class SettingsPage(Page):
         for n in (2, 4):
             self.max_decks.addItem(str(n), n)
         self.zoom = QComboBox()
-        for s in (4, 8, 16, 32):
+        for s in (4, 8, 16, 32, 64):
             self.zoom.addItem(f"{s}s", s)
         self.wave_style = QComboBox()
         self.wave_style.addItem(i18n.t("wave_rgb"), "rgb")

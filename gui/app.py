@@ -23,7 +23,7 @@ def main() -> int:
     os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
 
     app = QApplication(sys.argv)
-    app.setApplicationName("Engine Room")
+    app.setApplicationName("Prolink Listener")
     app.setOrganizationName("prolink-monitor")
     app.setStyle("Fusion")
     app.setStyleSheet(STYLESHEET)
