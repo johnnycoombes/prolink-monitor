@@ -96,7 +96,7 @@ STRINGS = {
     "hide_sidebar": "Hide sidebar",
     "toggle_sidebar": "Sidebar",
     "nav_menu": "Navigate",
-    "poll_hz": "UI refresh rate (Hz)",
+    "poll_hz": "UI refresh rate (Hz, default 30)",
     "section_connection": "CONNECTION",
     "section_display": "DISPLAY",
     "section_deck_elements": "DECK ELEMENTS",

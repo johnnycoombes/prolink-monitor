@@ -735,7 +735,7 @@ class SettingsPage(Page):
         idx = self.wave_style.findData(data.get("waveform_style", "rgb"))
         self.wave_style.setCurrentIndex(max(0, idx))
         self.show_empty.setChecked(bool(data.get("show_empty_decks", True)))
-        self.poll_hz.setValue(int(data.get("poll_hz", 20)))
+        self.poll_hz.setValue(int(data.get("poll_hz", 30)))
         for key, cb in self.deck_checks.items():
             cb.setChecked(bool(data.get(key, True)))
         idx = self.overlay_layout.findData(data.get("overlay_layout", "nowplaying"))

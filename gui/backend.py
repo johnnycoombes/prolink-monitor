@@ -68,7 +68,7 @@ class Backend(QObject):
         self._set_status("connecting", "starting…")
         threading.Thread(target=self._boot, args=(dict(settings),), daemon=True).start()
 
-        hz = max(5, min(30, int(settings.get("poll_hz", 20))))
+        hz = max(5, min(30, int(settings.get("poll_hz", 30))))
         self._timer.start(int(1000 / hz))
 
     def stop(self) -> None:
