@@ -40,12 +40,14 @@ DEFAULTS: dict[str, Any] = {
     "deck_show_time": True,
     "deck_show_key": True,
     "deck_show_state": True,
-    "overlay_layout": "nowplaying",   # nowplaying | dual | minimal
+    "overlay_layout": "nowplaying",   # nowplaying | dual | minimal | setlist
     "overlay_corner": "bl",           # bl | br | tl | tr | center
     "overlay_playing_only": True,
     "overlay_mix": True,
     "overlay_decks": 1,
     "overlay_waveform_style": "rgb",  # rgb | 3band | blue — overlay mini-wave only
+    "session_autosave": False,
+    "session_autosave_dir": "",       # empty → ~/.prolink-monitor/sessions
 }
 
 # Keys that toggle individual pieces of each Monitor deck card.
@@ -76,6 +78,18 @@ def settings_path() -> str:
     if not base:
         base = os.path.join(os.path.expanduser("~"), ".prolink-monitor")
     return os.path.join(base, "settings.json")
+
+
+def sessions_dir(data: dict[str, Any] | None = None) -> str:
+    """Directory for auto-saved / exported session playlists."""
+    src = data or {}
+    custom = str(src.get("session_autosave_dir") or "").strip()
+    if custom:
+        return os.path.expanduser(custom)
+    base = os.environ.get("PROLINK_CONFIG_DIR")
+    if not base:
+        base = os.path.join(os.path.expanduser("~"), ".prolink-monitor")
+    return os.path.join(base, "sessions")
 
 
 def load_settings() -> dict[str, Any]:
@@ -161,7 +175,9 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     for key in DECK_ELEMENT_KEYS:
         out[key] = bool(data.get(key, True))
     layout = str(data.get("overlay_layout") or "nowplaying").lower()
-    out["overlay_layout"] = layout if layout in ("nowplaying", "dual", "minimal") else "nowplaying"
+    out["overlay_layout"] = (
+        layout if layout in ("nowplaying", "dual", "minimal", "setlist") else "nowplaying"
+    )
     corner = str(data.get("overlay_corner") or "bl").lower()
     out["overlay_corner"] = corner if corner in ("bl", "br", "tl", "tr", "center") else "bl"
     out["overlay_playing_only"] = bool(data.get("overlay_playing_only", True))
@@ -172,6 +188,8 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
         out["overlay_decks"] = 1
     owave = str(data.get("overlay_waveform_style") or "rgb").lower()
     out["overlay_waveform_style"] = owave if owave in ("rgb", "3band", "blue") else "rgb"
+    out["session_autosave"] = bool(data.get("session_autosave", False))
+    out["session_autosave_dir"] = str(data.get("session_autosave_dir") or "").strip()
     return out
 
 

@@ -27,8 +27,8 @@ Compared with the [original project](https://github.com/fidow/prolink-monitor):
 | Waveforms | Colour detail (RGB) with blue fallback | Switchable **RGB**, **3-Band** and **Blue**, parsed like [Beat Link `WaveformDetail`](https://deepsymmetry.org/beatlink/apidocs/org/deepsymmetry/beatlink/data/WaveformDetail.html); cards **fill the panel**; cue / hot-cue markers |
 | Zoom | Seconds | **4/4 bars** (1–16), BPM-aware window |
 | Deck cards | Fixed layout | Toggle artwork, BPM, tempo, time, key, tags, waveform and more |
-| Streaming | — | Transparent `/overlay` page for OBS (now playing / dual / minimal); SmartTiming setlist; overlay waveform colour |
-| Session | — | **Record** a chronological playlist timed from the first track at `00:00:00` |
+| Streaming | — | Transparent `/overlay` page for OBS (now playing / dual / minimal / **setlist**); SmartTiming setlist; overlay waveform colour |
+| Session | — | **Record** a chronological playlist with a **set clock** (pauses on dead air); export CSV / JSON / M3U |
 | Language | English / Spanish | English only |
 
 Everything else — Pro DJ Link engine, NFS library, console monitor, protocol probe —
@@ -128,9 +128,9 @@ The header (web) or Monitor toolbar (desktop) has switches for **waveform zoom i
 4/4 bars** (1 / 2 / 4 / 8 / 16, also `+` and `-` on the keyboard), how many **decks**
 to show (**2** or **4**), and the **waveform colour** (RGB / 3BAND / BLUE). Layout
 order is **1–2** in two-deck mode and **3–1–2–4** in four-deck mode. Those choices
-are remembered. A **Record session** button captures a chronological playlist with
-timestamps from the first track at `00:00:00` (also under **Session** in the desktop
-sidebar, and via `/api/session`).
+are remembered. A **Record session** button captures a chronological playlist with a
+**set clock** from the first track at `00:00:00` that pauses on dead air (also under
+**Session** in the desktop sidebar, and via `/api/session`).
 
 ---
 
@@ -180,10 +180,14 @@ in Settings, and on the web panel. **Cue markers** (memory cues and hot cues A�
 are drawn on both overview and detail strips in the desktop Monitor and web panel.
 
 **Session playlist.** Hit **Record session** on the Monitor toolbar (or open
-**Session**) to capture every newly played on-air track in order. The first track is
-`00:00:00`; later entries show elapsed `HH:MM:SS`. Stop keeps the list; Clear resets
-it. The web panel has the same Record control and a live strip; HTTP endpoints are
-`/api/session`, `/api/session/start`, `/api/session/stop`, `/api/session/clear`.
+**Session**) to capture every newly played on-air track in order. Timestamps use a
+**set clock**: the first track is `00:00:00`, and the clock **pauses whenever nothing
+is on-air** (true set length, not wall clock). Stop keeps the list; Clear resets it.
+Export the playlist as **CSV**, **JSON** or **M3U** from the Session page, or enable
+**Settings → Session → Auto-save** to write all three when you press Stop
+(`~/.prolink-monitor/sessions` by default). The web panel has the same Record control
+and a live strip; HTTP endpoints are `/api/session`, `/api/session/start`,
+`/api/session/stop`, `/api/session/clear`, and `/api/session/export?fmt=csv|json|m3u`.
 
 **Smooth playhead.** Prolink Listener paints the playhead/waveforms on a separate timer
 (default **60 Hz**, Settings → Playhead refresh rate) while metadata and library
@@ -211,7 +215,7 @@ The page background is transparent. Query parameters:
 
 | Param | Values | Default | Meaning |
 |---|---|---|---|
-| `layout` | `nowplaying` / `dual` / `minimal` | `nowplaying` | Card style |
+| `layout` | `nowplaying` / `dual` / `minimal` / `setlist` | `nowplaying` | Card style (`setlist` = now-playing + scrolling history) |
 | `corner` | `bl` / `br` / `tl` / `tr` / `center` | `bl` | Screen corner |
 | `decks` | `1`–`4` | `1` (`2` for dual) | How many decks to show |
 | `wave` | `rgb` / `3band` / `blue` | `rgb` | Mini-waveform colour style |
@@ -219,9 +223,11 @@ The page background is transparent. Query parameters:
 | `mix` | `1` / `0` | `1` | Use SmartTiming now-playing (single-deck layouts) |
 | `preview` | `1` / `0` | `0` | Dark preview background (local testing) |
 
-With `mix=1` (default), `nowplaying` / `minimal` follow the **audience** track —
+With `mix=1` (default), `nowplaying` / `minimal` / `setlist` follow the **audience** track —
 the deck that has been playing and on-air long enough (prolink-connect
-SmartTiming: 128 beats ≈ two phrases, brief drop-outs ignored). Dual layout still
+SmartTiming: 128 beats ≈ two phrases, brief drop-outs ignored). The **setlist** layout
+shows that track on top with a scrolling history of previously reported tracks underneath
+(ideal for Twitch/OBS). Dual layout still
 shows the selected decks side by side and **spans the full window width** (4 decks
 in one row when `decks=4`), with a mini overview waveform and
 **elapsed / −remaining** times on each card. Live JSON is also on `/api/setlist`.
@@ -231,6 +237,7 @@ Example:
 ```
 http://127.0.0.1:8777/overlay?layout=dual&corner=tl&decks=4&playing=0
 http://127.0.0.1:8777/overlay?layout=nowplaying&mix=1
+http://127.0.0.1:8777/overlay?layout=setlist&corner=bl&mix=1
 ```
 
 In the desktop app, open **Overlay**, pick layout/corner/**waveform colour**, then
@@ -443,10 +450,11 @@ prolink/
 | `/overlay` | transparent OBS overlay |
 | `/api/state` | full state as JSON (includes `now_playing` / `setlist` / `session`) |
 | `/api/setlist` | SmartTiming mix status and setlist only |
-| `/api/session` | session playlist recorder state |
+| `/api/session` | session playlist recorder state (set clock) |
 | `/api/session/start` | start recording (first track → `00:00:00`) |
 | `/api/session/stop` | stop recording (keep the list) |
 | `/api/session/clear` | clear the session playlist |
+| `/api/session/export?fmt=` | download playlist as `csv` / `json` / `m3u` |
 | `/api/events` | the same state over SSE, 60 times a second |
 | `/api/track/<id>` | metadata, beat grid, cues and phrases |
 | `/api/waveform/<id>` | waveforms in binary: detail and overview |

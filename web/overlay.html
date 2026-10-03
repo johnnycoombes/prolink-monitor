@@ -173,6 +173,54 @@ body.preview{
 .minimal .artist{font-size:12px;margin-top:2px}
 .minimal .bpm{margin-left:auto;font-family:var(--mono);font-size:18px;font-weight:700;white-space:nowrap}
 
+.setlist-layout{
+  display:flex;flex-direction:column;gap:10px;
+  min-width:min(480px,90vw);max-width:min(640px,96vw);
+}
+.setlist-layout .now{
+  padding:14px 16px;
+}
+.setlist-history{
+  display:flex;flex-direction:column;gap:0;
+  max-height:min(42vh,420px);
+  overflow:hidden;
+  border:1px solid var(--line);
+  border-radius:14px;
+  background:rgba(0,0,0,.28);
+  mask-image:linear-gradient(180deg,#000 70%,transparent 100%);
+  -webkit-mask-image:linear-gradient(180deg,#000 70%,transparent 100%);
+}
+.setlist-row{
+  display:grid;
+  grid-template-columns:54px 1fr auto;
+  gap:10px;align-items:center;
+  padding:8px 12px;
+  border-bottom:1px solid rgba(255,255,255,.06);
+  opacity:0;transform:translateY(8px);
+  animation:setlistIn .4s ease forwards;
+}
+.setlist-row:last-child{border-bottom:none}
+.setlist-row .art{
+  width:40px;height:40px;border-radius:8px;font-size:16px;
+  background:rgba(255,255,255,.06);border:1px solid var(--line);
+  display:flex;align-items:center;justify-content:center;color:var(--dimmest);
+  font-family:var(--mono);overflow:hidden;
+}
+.setlist-row .art img{width:100%;height:100%;object-fit:cover;border-radius:8px;display:block}
+.setlist-row .title{font-size:13px;font-weight:600;line-height:1.2;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.setlist-row .artist{font-size:11px;color:var(--dim);margin-top:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.setlist-row .meta{min-width:0}
+.setlist-row .when{
+  font-family:var(--mono);font-size:10px;letter-spacing:.06em;
+  color:var(--dimmest);white-space:nowrap;
+}
+@keyframes setlistIn{
+  from{opacity:0;transform:translateY(8px)}
+  to{opacity:1;transform:none}
+}
+
 #idle{
   display:none;
   font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
@@ -200,7 +248,7 @@ body.preview{
 <script>
 const DECK_COLORS = {1:'#ffb020',2:'#22d3ee',3:'#f472b6',4:'#4ade80',5:'#ffb020',6:'#22d3ee'};
 const params = new URLSearchParams(location.search);
-const layout = ['nowplaying','dual','minimal'].includes(params.get('layout'))
+const layout = ['nowplaying','dual','minimal','setlist'].includes(params.get('layout'))
   ? params.get('layout') : 'nowplaying';
 const corner = ['bl','br','tl','tr','center'].includes(params.get('corner'))
   ? params.get('corner') : 'bl';
@@ -211,6 +259,7 @@ const maxDecks = Math.min(4, Math.max(1, +(params.get('decks') || (layout === 'd
 const WAVE_STYLES = ['rgb', '3band', 'blue'];
 const waveStyle = WAVE_STYLES.includes(params.get('wave')) ? params.get('wave') : 'rgb';
 const spread = layout === 'dual';
+const SETLIST_MAX = 12;
 
 if (preview) document.body.classList.add('preview');
 const root = document.getElementById('root');
@@ -554,6 +603,53 @@ function renderMinimal(deck, pos){
     </div>`;
 }
 
+function setlistClock(startedAt){
+  if (!startedAt) return '';
+  const d = new Date(startedAt * 1000);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+}
+
+function renderSetlistHistory(entries, current){
+  const curId = current && current.track_id;
+  const curDeck = current && current.number;
+  // Newest first under now-playing; drop the live track so it isn't duplicated.
+  const hist = (entries || [])
+    .filter(e => !(e.track_id === curId && e.deck === curDeck))
+    .slice()
+    .reverse()
+    .slice(0, SETLIST_MAX);
+  if (!hist.length) {
+    return `<div class="setlist-history"><div class="setlist-row" style="animation-delay:0s;opacity:.55;grid-template-columns:1fr">
+      <div class="artist" style="margin:0">set history appears here</div>
+    </div></div>`;
+  }
+  return `<div class="setlist-history">${hist.map((e, i) => {
+    const pack = tracks.get(e.track_id);
+    const meta = pack && pack.meta;
+    const title = (meta && meta.title) || e.title || '—';
+    const artist = (meta && meta.artist) || e.artist || '';
+    const color = DECK_COLORS[e.deck] || '#22d3ee';
+    const when = setlistClock(e.reported_at || e.started_at);
+    if (e.track_id) loadTrack(e.track_id);
+    return `<div class="setlist-row" style="--deck:${color};animation-delay:${Math.min(i, 6) * 0.04}s">
+      ${artHtml(e.track_id, pack)}
+      <div class="meta">
+        <div class="title">${escapeHtml(title)}</div>
+        <div class="artist">${escapeHtml(artist)}${e.deck ? ` · D${e.deck}` : ''}</div>
+      </div>
+      <div class="when">${escapeHtml(when)}</div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function renderSetlist(deck, pos, setlist){
+  return `<div class="setlist-layout">
+    ${renderNow(deck, pos)}
+    ${renderSetlistHistory(setlist, deck)}
+  </div>`;
+}
+
 function renderDual(decks, positions){
   const cols = maxDecks >= 4 ? 4 : 2;
   return `<div class="dual decks-${cols}">${decks.map((d,i)=>{
@@ -628,15 +724,27 @@ function paint(){
   let html = '';
   if (layout === 'dual') html = renderDual(decks, positions);
   else if (layout === 'minimal') html = renderMinimal(decks[0], positions[0]);
+  else if (layout === 'setlist') html = renderSetlist(decks[0], positions[0], last.setlist || []);
   else html = renderNow(decks[0], positions[0]);
 
   const np = last.now_playing;
   const mixSig = useMix && np ? `:mix${np.number}:${np.track_id||0}` : '';
+  const setlistSig = layout === 'setlist'
+    ? ':sl' + (last.setlist || []).map(e => `${e.deck}:${e.track_id}`).join(',')
+    : '';
   const waveSig = decks.map(d => {
     const p = tracks.get(d.track_id);
     return `${d.number}:${d.track_id||0}:${!!(p&&p.meta)}:${!!(p&&p.overview)}:${d.state||''}`;
   }).join('|');
-  const sig = waveSig + '|' + layout + mixSig + `|d${maxDecks}`;
+  // Include whether history track packs loaded so art/titles refresh.
+  let histSig = '';
+  if (layout === 'setlist') {
+    histSig = (last.setlist || []).slice(-SETLIST_MAX).map(e => {
+      const p = tracks.get(e.track_id);
+      return `${e.track_id}:${!!(p&&p.meta)}`;
+    }).join(',');
+  }
+  const sig = waveSig + '|' + layout + mixSig + setlistSig + '|' + histSig + `|d${maxDecks}`;
   card.classList.toggle('spread', spread);
   if (card.dataset.sig !== sig){
     card.innerHTML = html;
@@ -654,6 +762,8 @@ function paint(){
       el.innerHTML = timeHtml(pos, overlayDuration(d, pack));
     });
     card.querySelectorAll('.bpm').forEach((el,i)=>{
+      // Setlist history has no BPM readouts; only update now/dual/minimal.
+      if (layout === 'setlist' && i > 0) return;
       const d = decks[Math.min(i, decks.length-1)];
       if (!d) return;
       if (layout === 'minimal')
@@ -662,7 +772,9 @@ function paint(){
         el.innerHTML = `${d.bpm ? d.bpm.toFixed(2) : '—'}<small>BPM</small>`;
     });
   }
-  paintWaves(decks, positions);
+  // Only paint the now-playing wave (first canvas) for setlist.
+  if (layout === 'setlist') paintWaves([decks[0]], [positions[0]]);
+  else paintWaves(decks, positions);
   card.classList.add('show');
 }
 
