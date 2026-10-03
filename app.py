@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from prolink import anlz, link, proto                     # noqa: E402
 from prolink.library import Library                       # noqa: E402
+from prolink import onelibrary                            # noqa: E402
 from prolink.mixstatus import MixStatus, MixStatusConfig  # noqa: E402
 from prolink.session import SessionRecorder               # noqa: E402
 
@@ -187,7 +188,8 @@ class Monitor:
             "cues": [{"hot": c.hot_cue, "type": c.type, "t": c.time,
                       "end": c.loop_time, "color": c.color, "text": c.comment}
                      for c in a.cues],
-            "phrases": [{"beat": p.beat, "text": p.label} for p in a.phrases],
+            "phrases": [{"beat": p.beat, "kind": p.kind, "text": p.label}
+                        for p in a.phrases],
             "detail_columns": len(heights),
             "overview_columns": len(ov_h),
         }
@@ -241,6 +243,98 @@ class Monitor:
     def artwork(self, track_id: int) -> bytes | None:
         _host, media = self._media_for(track_id)
         return media.artwork(track_id) if media else None
+
+    def browse_tracks(self, query: str = "", *, limit: int = 100,
+                      offset: int = 0) -> dict:
+        """Search classic export.pdb tracks across mounted media."""
+        limit = max(1, min(500, int(limit)))
+        offset = max(0, int(offset))
+        with self.library.lock:
+            media_list = list(self.library.media.items())
+        all_rows: list[dict] = []
+        hosts: list[str] = []
+        for host, media in media_list:
+            if media.db is None:
+                continue
+            hosts.append(host)
+            rows, _total = media.db.search(query, limit=10_000, offset=0)
+            for r in rows:
+                r = dict(r)
+                r["host"] = host
+                r["source"] = "pdb"
+                all_rows.append(r)
+        all_rows.sort(key=lambda r: ((r.get("title") or "").lower(), r.get("id") or 0))
+        total = len(all_rows)
+        return {
+            "tracks": all_rows[offset:offset + limit],
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "query": query or "",
+            "hosts": hosts,
+            "multi_player": len(hosts) > 1,
+        }
+
+    def browse_playlists(self) -> dict:
+        with self.library.lock:
+            media_list = list(self.library.media.items())
+        playlists: list[dict] = []
+        history: list[dict] = []
+        for host, media in media_list:
+            ol = getattr(media, "onelibrary_db", None)
+            if ol is None:
+                continue
+            for p in onelibrary.list_playlists(ol):
+                p = dict(p)
+                p["host"] = host
+                playlists.append(p)
+            for h in onelibrary.list_history(ol):
+                h = dict(h)
+                h["host"] = host
+                history.append(h)
+        return {
+            "playlists": playlists,
+            "history": history,
+            "readable": bool(playlists or history),
+        }
+
+    def browse_playlist_tracks(self, playlist_id: int, host: str | None = None,
+                               *, limit: int = 200) -> dict:
+        with self.library.lock:
+            media_list = list(self.library.media.items())
+        for h, media in media_list:
+            if host and h != host:
+                continue
+            ol = getattr(media, "onelibrary_db", None)
+            if ol is None:
+                continue
+            tracks = onelibrary.playlist_tracks(ol, playlist_id, limit=limit)
+            for t in tracks:
+                t["host"] = h
+            return {"id": playlist_id, "host": h, "tracks": tracks}
+        return {"id": playlist_id, "host": host, "tracks": []}
+
+    def loaded_tracks(self) -> list[dict]:
+        """Tracks currently loaded on decks (for artwork grid / quick filter)."""
+        rows = []
+        seen: set[int] = set()
+        for d in self.engine.active_decks():
+            s = d.status
+            if s is None or not s.track_id or s.track_id in seen:
+                continue
+            seen.add(s.track_id)
+            meta = self.meta(s.track_id) or {}
+            rows.append({
+                "id": s.track_id,
+                "deck": d.number,
+                "title": meta.get("title") or "",
+                "artist": meta.get("artist") or "",
+                "key": meta.get("key") or "",
+                "bpm": meta.get("track_bpm") or 0,
+                "has_artwork": bool(meta.get("has_artwork")),
+                "source": "deck",
+            })
+        return rows
 
     def _library_snapshot(self) -> tuple[dict | None, str | None, dict | None]:
         """Cached library totals / OneLibrary info for the hot state() path."""
@@ -377,6 +471,7 @@ class Monitor:
             "onelibrary": onelibrary_info,
             "mix": mix,
             "now_playing": mix.get("now_playing"),
+            "pending": mix.get("pending"),
             "setlist": mix.get("setlist") or [],
             "session": self.session.as_state(),
         }
@@ -478,6 +573,33 @@ class Handler(BaseHTTPRequestHandler):
                     200, body.encode("utf-8"), ctype,
                     headers={"Content-Disposition": f'attachment; filename="{name}"'},
                 )
+            if path == "/api/library/tracks":
+                from urllib.parse import parse_qs
+                qs = parse_qs(parsed.query)
+                q = (qs.get("q") or [""])[0]
+                try:
+                    limit = int((qs.get("limit") or ["100"])[0])
+                except ValueError:
+                    limit = 100
+                try:
+                    offset = int((qs.get("offset") or ["0"])[0])
+                except ValueError:
+                    offset = 0
+                return self._json(self.monitor.browse_tracks(q, limit=limit, offset=offset))
+            if path == "/api/library/playlists":
+                return self._json(self.monitor.browse_playlists())
+            if path.startswith("/api/library/playlist/"):
+                from urllib.parse import parse_qs
+                pid = int(path.rsplit("/", 1)[1])
+                qs = parse_qs(parsed.query)
+                host = (qs.get("host") or [None])[0] or None
+                try:
+                    limit = int((qs.get("limit") or ["200"])[0])
+                except ValueError:
+                    limit = 200
+                return self._json(self.monitor.browse_playlist_tracks(pid, host, limit=limit))
+            if path == "/api/library/loaded":
+                return self._json({"tracks": self.monitor.loaded_tracks()})
             if path == "/api/events":
                 return self._events()
             if path.startswith("/api/track/"):

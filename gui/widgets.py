@@ -5,8 +5,8 @@ from __future__ import annotations
 import struct
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal, QSize
-from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QFont
+from PySide6.QtCore import Qt, Signal, QSize, QPoint
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QFont, QMouseEvent
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
@@ -61,6 +61,61 @@ def _cue_color(cue: dict) -> QColor:
     if c and len(c) >= 3:
         return QColor(int(c[0]), int(c[1]), int(c[2]))
     return QColor("#ffd45e" if cue.get("hot") else "#ffffff")
+
+
+# Phrase colours by rough section role (PSSI intro / verse / drop≈chorus).
+_PHRASE_COLORS = {
+    "intro": QColor(120, 180, 255),
+    "verse": QColor(160, 220, 120),
+    "bridge": QColor(200, 160, 255),
+    "chorus": QColor(255, 120, 90),
+    "drop": QColor(255, 120, 90),
+    "up": QColor(255, 190, 80),
+    "down": QColor(140, 160, 200),
+    "outro": QColor(160, 160, 180),
+}
+
+
+def _phrase_color(phrase: dict) -> QColor:
+    text = str(phrase.get("text") or "").lower()
+    for key, color in _PHRASE_COLORS.items():
+        if text.startswith(key):
+            return color
+    return QColor(200, 200, 210)
+
+
+def phrase_time_ms(phrase: dict, meta: dict | None) -> float | None:
+    """Map a PSSI phrase beat index → milliseconds via the beat grid."""
+    beats = (meta or {}).get("beats") or []
+    if not beats:
+        return None
+    try:
+        beat = int(phrase.get("beat") or 0)
+    except (TypeError, ValueError):
+        return None
+    if beat < 1 or beat > len(beats):
+        return None
+    return float(beats[beat - 1][0])
+
+
+def _draw_phrase_marker(p: QPainter, x: int, y0: int, h: int, phrase: dict,
+                        *, labeled: bool = True) -> None:
+    color = _phrase_color(phrase)
+    # Dashed-feel: short ticks top + bottom with a thin centre line.
+    p.fillRect(x, y0, 1, h, QColor(color.red(), color.green(), color.blue(), 160))
+    p.fillRect(x - 1, y0, 3, 3, color)
+    p.fillRect(x - 1, y0 + h - 3, 3, 3, color)
+    if not labeled:
+        return
+    label = str(phrase.get("text") or "")
+    if not label:
+        return
+    font = QFont("DejaVu Sans Mono", 7)
+    font.setBold(True)
+    p.setFont(font)
+    p.setPen(color)
+    # Sit label near the bottom so it doesn't collide with hot-cue badges.
+    p.drawText(x + 3, y0 + h - 4, label)
 
 
 def _draw_cue_marker(p: QPainter, x: int, y0: int, h: int, cue: dict,
@@ -320,10 +375,14 @@ class WaveformView(QWidget):
     the overview cache is reused and only the playhead / unplayed shade redraw.
     """
 
+    hover_ms_changed = Signal(float)   # ms under cursor (-1 when left)
+    cue_ms_clicked = Signal(float)     # ms at click (display cue / readout)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumHeight(100)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMouseTracking(True)
         self._color = QColor(COLORS["accent"])
         self._detail = None
         self._overview = None
@@ -345,9 +404,60 @@ class WaveformView(QWidget):
         self._detail_start: float = 0.0
         self._last_paint_pos: float = -1.0
         self._last_paint_playing: bool | None = None
+        self._hover_x: int | None = None
+        self._hover_ms: float | None = None
+        self._overview_h = 36
 
     def _visible_seconds(self) -> float:
         return bars_to_seconds(self._zoom_bars, self._bpm)
+
+    def _duration_ms(self) -> float:
+        ov = self._overview
+        return float((self._meta or {}).get("duration_ms") or (ov or {}).get("dur") or 0)
+
+    def _ms_at(self, x: int, y: int) -> float | None:
+        """Map widget coordinates to track time (ms)."""
+        w = max(1, self.width())
+        overview_h = self._overview_h
+        dur = self._duration_ms()
+        if y <= overview_h:
+            if not dur:
+                return None
+            return max(0.0, min(dur, (x / w) * dur))
+        d = self._detail
+        if not d or not d["n"]:
+            if dur:
+                return max(0.0, min(dur, (x / w) * dur))
+            return None
+        visible_s = self._visible_seconds()
+        ms = self._pos_ms + ((x - w / 2) / w) * visible_s * 1000.0
+        if dur:
+            ms = max(0.0, min(dur, ms))
+        return max(0.0, ms)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        x, y = int(event.position().x()), int(event.position().y())
+        ms = self._ms_at(x, y)
+        self._hover_x = x
+        self._hover_ms = ms
+        self.hover_ms_changed.emit(ms if ms is not None else -1.0)
+        self.setToolTip(mmss(ms) if ms is not None else "")
+        self.update()
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._hover_x = None
+        self._hover_ms = None
+        self.hover_ms_changed.emit(-1.0)
+        self.setToolTip("")
+        self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton:
+            ms = self._ms_at(int(event.position().x()), int(event.position().y()))
+            if ms is not None:
+                self.cue_ms_clicked.emit(ms)
+        super().mousePressEvent(event)
 
     def set_deck_color(self, color: str) -> None:
         self._color = QColor(color)
@@ -435,6 +545,7 @@ class WaveformView(QWidget):
         p.setRenderHint(QPainter.Antialiasing, False)
         w, h = self.width(), self.height()
         overview_h = max(28, min(48, int(h * 0.14)))
+        self._overview_h = overview_h
         detail_h = max(1, h - overview_h - 1)
 
         p.fillRect(0, 0, w, overview_h, QColor("#0b0d10"))
@@ -444,6 +555,26 @@ class WaveformView(QWidget):
 
         self._blit_overview(p, 0, 0, w, overview_h)
         self._blit_detail(p, 0, overview_h + 1, w, detail_h)
+
+        # Hover scrub line + time badge.
+        if self._hover_x is not None and self._hover_ms is not None:
+            hx = max(0, min(w - 1, self._hover_x))
+            p.fillRect(hx, 0, 1, h, QColor(255, 255, 255, 140))
+            badge = mmss(self._hover_ms)
+            font = QFont("DejaVu Sans Mono", 9)
+            font.setBold(True)
+            p.setFont(font)
+            tw = p.fontMetrics().horizontalAdvance(badge) + 8
+            th = 14
+            bx = max(0, min(w - tw, hx - tw // 2))
+            by = 2 if self._hover_x is not None and self._hover_ms is not None else 2
+            # Prefer detail region for the badge when hovering there.
+            if self._hover_x is not None:
+                # y from last leave/move isn't stored; put badge on overview edge.
+                by = overview_h + 4 if overview_h + 4 + th < h else 2
+            p.fillRect(bx, by, tw, th, QColor(8, 10, 12, 210))
+            p.setPen(QColor("#f4f6fb"))
+            p.drawText(bx, by, tw, th, Qt.AlignCenter, badge)
         p.end()
 
     def _blit_overview(self, p: QPainter, x0, y0, w, h) -> None:
@@ -466,6 +597,7 @@ class WaveformView(QWidget):
             p.fillRect(x0 + max(lx0, lx1 - 2), y0, 2, h, QColor(46, 232, 154, 220))
         # Cue markers drawn live so they appear as soon as meta arrives.
         self._draw_overview_cues(p, x0, y0, w, h)
+        self._draw_overview_phrases(p, x0, y0, w, h)
         px = max(0, min(w, int((self._pos_ms / max(1, dur)) * w)))
         if px < w:
             p.fillRect(x0 + px, y0, w - px, h, QColor(8, 10, 12, 150))
@@ -493,6 +625,18 @@ class WaveformView(QWidget):
         for cue in (self._meta or {}).get("cues") or []:
             cx = x0 + int((cue.get("t", 0) / max(1, dur)) * w)
             _draw_cue_marker(p, cx, y0, h, cue, labeled=True)
+
+    def _draw_overview_phrases(self, p: QPainter, x0, y0, w, h) -> None:
+        ov = self._overview
+        if not ov or not ov["n"]:
+            return
+        dur = (self._meta or {}).get("duration_ms") or ov.get("dur") or 1
+        for phrase in (self._meta or {}).get("phrases") or []:
+            t = phrase_time_ms(phrase, self._meta)
+            if t is None:
+                continue
+            cx = x0 + int((t / max(1, dur)) * w)
+            _draw_phrase_marker(p, cx, y0, h, phrase, labeled=False)
 
     def _draw_overview_wave(self, p: QPainter, x0, y0, w, h) -> None:
         ov = self._overview
@@ -543,6 +687,14 @@ class WaveformView(QWidget):
                 if x < -20 or x > w + 20:
                     continue
                 _draw_cue_marker(p, x0 + x, y0, h, cue, labeled=True)
+            for phrase in (self._meta or {}).get("phrases") or []:
+                t = phrase_time_ms(phrase, self._meta)
+                if t is None:
+                    continue
+                x = int(((t / 1000.0) * cps - start) * px_per_col)
+                if x < -40 or x > w + 40:
+                    continue
+                _draw_phrase_marker(p, x0 + x, y0, h, phrase, labeled=True)
 
         # Fixed playhead at centre.
         cx = x0 + w // 2
@@ -663,6 +815,9 @@ class WaveformView(QWidget):
 
 
 class DeckCard(QFrame):
+    zoom_override_changed = Signal(int, int)  # deck number, bars
+    focused = Signal(int)                     # deck number
+
     def __init__(self, number: int, i18n, parent=None):
         super().__init__(parent)
         self.setObjectName("DeckCard")
@@ -678,7 +833,11 @@ class DeckCard(QFrame):
         self._last_offair: bool | None = None
         self._last_tags = ""
         self._elements = deck_elements_from()
+        self._zoom_bars = 4
+        self._zoom_override = False
+        self._cue_ms: float | None = None
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setCursor(Qt.PointingHandCursor)
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -746,9 +905,32 @@ class DeckCard(QFrame):
         body.addWidget(self.wrap_ident, 0)
 
         # waveform — takes all leftover horizontal (and vertical) space
+        wave_col = QVBoxLayout()
+        wave_col.setSpacing(2)
+        wave_tools = QHBoxLayout()
+        wave_tools.setSpacing(4)
+        self.cue_readout = QLabel("")
+        self.cue_readout.setObjectName("Mono")
+        self.cue_readout.setStyleSheet(
+            f"font-family:monospace; font-size:11px; color:{COLORS['dim']};"
+        )
+        wave_tools.addWidget(self.cue_readout)
+        wave_tools.addStretch(1)
+        self.zoom_btn = QPushButton(f"{self._zoom_bars}b")
+        self.zoom_btn.setObjectName("Chip")
+        self.zoom_btn.setCursor(Qt.PointingHandCursor)
+        self.zoom_btn.setToolTip("Per-deck zoom (cycles 1/2/4/8/16 bars). Right-click clears override.")
+        self.zoom_btn.clicked.connect(self._cycle_zoom)
+        self.zoom_btn.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.zoom_btn.customContextMenuRequested.connect(lambda *_: self.clear_zoom_override())
+        wave_tools.addWidget(self.zoom_btn)
+        wave_col.addLayout(wave_tools)
         self.wave = WaveformView()
         self.wave.set_deck_color(self._color)
-        body.addWidget(self.wave, 1)
+        self.wave.hover_ms_changed.connect(self._on_hover_ms)
+        self.wave.cue_ms_clicked.connect(self._on_cue_ms)
+        wave_col.addWidget(self.wave, 1)
+        body.addLayout(wave_col, 1)
 
         # readouts
         read = QVBoxLayout()
@@ -839,6 +1021,8 @@ class DeckCard(QFrame):
         self.meta_line.setVisible(e["deck_show_meta"])
         self.tags.setVisible(e["deck_show_tags"])
         self.wave.setVisible(e["deck_show_waveform"])
+        self.zoom_btn.setVisible(e["deck_show_waveform"])
+        self.cue_readout.setVisible(e["deck_show_waveform"])
         self.bpm.setVisible(e["deck_show_bpm"])
         self.pitch.setVisible(e["deck_show_tempo"])
         self.times_wrap.setVisible(e["deck_show_time"])
@@ -879,8 +1063,52 @@ class DeckCard(QFrame):
         # Cap max so equal stretch stays even when the host is viewport-sized.
         self.setMaximumHeight(max(floor, int(height)))
 
-    def set_zoom(self, bars: int) -> None:
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton:
+            self.focused.emit(self.number)
+        super().mousePressEvent(event)
+
+    def set_zoom(self, bars: int, *, override: bool | None = None) -> None:
+        bars = int(bars) if int(bars) in ZOOM_BARS else 4
+        if override is not None:
+            self._zoom_override = bool(override)
+        self._zoom_bars = bars
         self.wave.set_zoom(bars)
+        label = f"{bars}b"
+        if self._zoom_override:
+            label = f"{bars}b*"
+        self.zoom_btn.setText(label)
+        self.zoom_btn.setProperty("active", "true" if self._zoom_override else "false")
+        self.zoom_btn.style().unpolish(self.zoom_btn)
+        self.zoom_btn.style().polish(self.zoom_btn)
+
+    def clear_zoom_override(self) -> None:
+        if not self._zoom_override:
+            return
+        self._zoom_override = False
+        self.zoom_override_changed.emit(self.number, -1)  # -1 = clear
+
+    def _cycle_zoom(self) -> None:
+        idx = ZOOM_BARS.index(self._zoom_bars) if self._zoom_bars in ZOOM_BARS else 2
+        bars = ZOOM_BARS[(idx + 1) % len(ZOOM_BARS)]
+        self.set_zoom(bars, override=True)
+        self.zoom_override_changed.emit(self.number, bars)
+
+    def _on_hover_ms(self, ms: float) -> None:
+        if ms < 0:
+            if self._cue_ms is not None:
+                self.cue_readout.setText(f"cue {mmss(self._cue_ms)}")
+            else:
+                self.cue_readout.setText("")
+            return
+        self.cue_readout.setText(mmss(ms))
+
+    def _on_cue_ms(self, ms: float) -> None:
+        self._cue_ms = ms
+        self.cue_readout.setText(f"cue {mmss(ms)}")
+        self.cue_readout.setStyleSheet(
+            f"font-family:monospace; font-size:11px; color:{self._color};"
+        )
 
     def set_wave_style(self, style: str) -> None:
         self.wave.set_style(style)

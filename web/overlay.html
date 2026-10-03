@@ -15,6 +15,7 @@
   --line:rgba(255,255,255,.14);
   --panel:rgba(8,10,14,.78);
   --accent:#22d3ee;
+  --scale:1;
   --d1:#ffb020;
   --d2:#22d3ee;
   --d3:#f472b6;
@@ -39,6 +40,7 @@ body.preview{
   width:100%;height:100%;
   display:flex;align-items:flex-end;justify-content:flex-start;
   padding:3vh 2vw;
+  font-size:calc(16px * var(--scale));
 }
 #root.corner-tr{align-items:flex-start;justify-content:flex-end}
 #root.corner-tl{align-items:flex-start;justify-content:flex-start}
@@ -48,24 +50,33 @@ body.preview{
 #root.spread{justify-content:stretch;align-items:flex-start}
 #root.spread.corner-bl,#root.spread.corner-br{align-items:flex-end}
 #root.spread.corner-center{align-items:center}
+#stack{display:flex;flex-direction:column;gap:0;align-items:stretch;max-width:100%}
+#root.corner-br #stack,#root.corner-tr #stack{align-items:flex-end}
+#root.center #stack{align-items:center}
 
 .card{
   display:none;
-  min-width:min(520px,92vw);
-  max-width:min(760px,96vw);
+  min-width:min(calc(520px * var(--scale)),92vw);
+  max-width:min(calc(760px * var(--scale)),96vw);
   background:var(--panel);
   border:1px solid var(--line);
-  border-radius:16px;
+  border-radius:calc(16px * var(--scale));
   box-shadow:var(--shadow);
   backdrop-filter:blur(14px);
   -webkit-backdrop-filter:blur(14px);
   overflow:hidden;
   opacity:0;
-  transform:translateY(12px);
+  transform:translateY(12px) scale(var(--scale));
+  transform-origin:inherit;
   transition:opacity .35s ease, transform .35s ease;
 }
-.card.show{display:block;opacity:1;transform:none}
-.card.hide{opacity:0;transform:translateY(12px)}
+#root.corner-bl .card,#root.corner-br .card{transform-origin:bottom left}
+#root.corner-br .card{transform-origin:bottom right}
+#root.corner-tl .card{transform-origin:top left}
+#root.corner-tr .card{transform-origin:top right}
+#root.center .card{transform-origin:center}
+.card.show{display:block;opacity:1;transform:scale(var(--scale))}
+.card.hide{opacity:0;transform:translateY(12px) scale(var(--scale))}
 .card.spread{
   width:100%;
   max-width:none;
@@ -102,12 +113,14 @@ body.preview{
 .tag.loop{color:#2ee89a;background:rgba(46,232,154,.12);display:inline-flex;align-items:center;gap:4px}
 .tag.loop svg{width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:2;
   stroke-linecap:round;stroke-linejoin:round}
+.hide-tags .tags{display:none}
+.hide-bpm .bpm{display:none}
 .title{
-  font-size:clamp(20px,2.4vw,28px);font-weight:700;line-height:1.15;
+  font-size:clamp(calc(20px * var(--scale)),2.4vw,calc(28px * var(--scale)));font-weight:700;line-height:1.15;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .artist{
-  margin-top:4px;font-size:clamp(14px,1.5vw,17px);color:var(--dim);
+  margin-top:4px;font-size:clamp(calc(14px * var(--scale)),1.5vw,calc(17px * var(--scale)));color:var(--dim);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .readouts{
@@ -221,6 +234,33 @@ body.preview{
   to{opacity:1;transform:none}
 }
 
+.next-third{
+  display:none;
+  margin-top:10px;
+  padding:10px 14px;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:rgba(0,0,0,.35);
+  min-width:min(calc(420px * var(--scale)),90vw);
+  opacity:0;transform:translateY(8px);
+  transition:opacity .35s ease, transform .35s ease;
+}
+.next-third.show{display:block;opacity:1;transform:none}
+.next-third .eyebrow{
+  font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--accent);margin-bottom:4px;
+}
+.next-third .title{font-size:clamp(14px,1.6vw,18px)}
+.next-third .artist{font-size:12px}
+.next-third .bar{
+  margin-top:8px;height:3px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden;
+}
+.next-third .bar > i{
+  display:block;height:100%;width:0%;
+  background:linear-gradient(90deg,var(--accent),#fff);
+  transition:width .2s linear;
+}
+
 #idle{
   display:none;
   font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
@@ -241,8 +281,11 @@ body.preview{
 </head>
 <body>
 <div id="root">
-  <div id="idle">waiting for player</div>
-  <div id="card" class="card"></div>
+  <div id="stack">
+    <div id="idle">waiting for player</div>
+    <div id="card" class="card"></div>
+    <div id="next" class="next-third"></div>
+  </div>
 </div>
 
 <script>
@@ -260,11 +303,28 @@ const WAVE_STYLES = ['rgb', '3band', 'blue'];
 const waveStyle = WAVE_STYLES.includes(params.get('wave')) ? params.get('wave') : 'rgb';
 const spread = layout === 'dual';
 const SETLIST_MAX = 12;
+const showTags = params.get('tags') !== '0';
+const showBpm = params.get('bpm') !== '0';
+const showNext = params.get('next') !== '0';
+let scale = parseFloat(params.get('scale') || params.get('font') || '1');
+if (!Number.isFinite(scale)) scale = 1;
+scale = Math.max(0.5, Math.min(2.5, scale));
+const accentParam = (params.get('accent') || '').trim();
+const accent = /^#?[0-9a-fA-F]{6}$/.test(accentParam)
+  ? (accentParam.startsWith('#') ? accentParam : '#' + accentParam)
+  : '';
 
 if (preview) document.body.classList.add('preview');
 const root = document.getElementById('root');
 root.classList.add('corner-' + corner);
 if (spread) root.classList.add('spread');
+if (!showTags) root.classList.add('hide-tags');
+if (!showBpm) root.classList.add('hide-bpm');
+document.documentElement.style.setProperty('--scale', String(scale));
+if (accent) {
+  document.documentElement.style.setProperty('--accent', accent);
+  DECK_COLORS[1] = accent;
+}
 
 const tracks = new Map();   // id -> {meta, overview}
 const pending = new Set();
@@ -681,6 +741,30 @@ function escapeHtml(s){
   }[c]));
 }
 
+function renderNextThird(pending){
+  const el = document.getElementById('next');
+  if (!el) return;
+  if (!showNext || !pending || !pending.track_id) {
+    el.classList.remove('show');
+    el.innerHTML = '';
+    return;
+  }
+  if (pending.track_id) loadTrack(pending.track_id);
+  const pack = tracks.get(pending.track_id);
+  const meta = pack && pack.meta;
+  const title = (meta && meta.title) || pending.title || '—';
+  const artist = (meta && meta.artist) || pending.artist || '';
+  const pct = Math.max(0, Math.min(100, (pending.progress || 0) * 100));
+  const beats = pending.beats != null ? Math.round(pending.beats) : '';
+  const need = pending.need_beats || '';
+  el.innerHTML = `
+    <div class="eyebrow">next · deck ${pending.deck || '—'}${beats !== '' ? ` · ${beats}/${need} beats` : ''}</div>
+    <div class="title">${escapeHtml(title)}</div>
+    <div class="artist">${escapeHtml(artist)}</div>
+    <div class="bar"><i style="width:${pct}%"></i></div>`;
+  el.classList.add('show');
+}
+
 function paintWaves(decks, positions){
   const card = document.getElementById('card');
   card.querySelectorAll('canvas[data-wave]').forEach((cv, i) => {
@@ -702,6 +786,7 @@ function paint(){
   if (!last){
     card.classList.remove('show');
     idle.classList.add('show');
+    renderNextThird(null);
     return;
   }
   const dt = (performance.now() - receivedAt) / 1000;
@@ -709,6 +794,7 @@ function paint(){
   if (!decks.length || !decks.some(d => d.track_id)){
     card.classList.remove('show');
     idle.classList.add('show');
+    renderNextThird(null);
     return;
   }
   idle.classList.remove('show');
@@ -776,6 +862,8 @@ function paint(){
   if (layout === 'setlist') paintWaves([decks[0]], [positions[0]]);
   else paintWaves(decks, positions);
   card.classList.add('show');
+  const pending = (last.mix && last.mix.pending) || last.pending || null;
+  renderNextThird(pending);
 }
 
 function applyState(state){

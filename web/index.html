@@ -144,6 +144,13 @@ header{
   transition:opacity .25s,filter .25s}
 .overview{height:26%;min-height:26px;position:relative;border-bottom:1px solid var(--line);background:#0b0d10}
 .detail{flex:1;position:relative;background:#080a0c}
+.scrub{
+  position:absolute;left:8px;bottom:6px;z-index:2;pointer-events:none;
+  font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.04em;
+  color:var(--text);background:rgba(8,10,12,.85);padding:2px 7px;border-radius:4px;
+  opacity:0;transition:opacity .12s;
+}
+.scrub.on{opacity:1}
 canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .no-wave{
   position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
@@ -308,6 +315,26 @@ function migrateZoomBars(raw) {
 }
 
 let zoomBars = migrateZoomBars(localStorage.getItem('zoomBars'));
+const zoomByDeck = new Map(); // deck number → bars override
+try {
+  const raw = JSON.parse(localStorage.getItem('zoomBarsByDeck') || '{}');
+  if (raw && typeof raw === 'object') {
+    for (const [k, v] of Object.entries(raw)) {
+      const bars = migrateZoomBars(String(v));
+      if (ZOOM_BARS.includes(bars)) zoomByDeck.set(+k, bars);
+    }
+  }
+} catch (_) {}
+
+function deckZoom(n) {
+  return zoomByDeck.has(n) ? zoomByDeck.get(n) : zoomBars;
+}
+
+function persistDeckZoom() {
+  const obj = {};
+  for (const [k, v] of zoomByDeck) obj[k] = v;
+  localStorage.setItem('zoomBarsByDeck', JSON.stringify(obj));
+}
 let waveStyle = WAVE_STYLES.includes(localStorage.getItem('waveStyle'))
   ? localStorage.getItem('waveStyle') : 'rgb';
 
@@ -362,7 +389,32 @@ function setZoom(bars) {
   localStorage.setItem('zoomBars', bars);
   document.querySelectorAll('#zoom-switch button').forEach(
     b => b.classList.toggle('on', +b.dataset.b === bars));
+  // Global zoom applies to decks without a per-deck override.
   for (const d of decks.values()) {
+    if (zoomByDeck.has(d.n)) continue;
+    d.overviewId = null;
+    d.detailKey = null;
+    d.detailOff = null;
+  }
+}
+
+function setDeckZoom(n, bars) {
+  if (!ZOOM_BARS.includes(bars)) return;
+  zoomByDeck.set(n, bars);
+  persistDeckZoom();
+  const d = decks.get(n);
+  if (d) {
+    d.overviewId = null;
+    d.detailKey = null;
+    d.detailOff = null;
+  }
+}
+
+function clearDeckZoom(n) {
+  zoomByDeck.delete(n);
+  persistDeckZoom();
+  const d = decks.get(n);
+  if (d) {
     d.overviewId = null;
     d.detailKey = null;
     d.detailOff = null;
@@ -594,6 +646,7 @@ function createDeck(n) {
     <div class="canvases">
       <div class="overview"><canvas data-cv-overview></canvas></div>
       <div class="detail"><canvas data-cv-detail></canvas><div class="no-wave" data-nowave></div></div>
+      <div class="scrub" data-scrub></div>
     </div>
     <div class="readouts">
       <div class="bpm" data-bpm>—<small>BPM</small></div>
@@ -632,9 +685,66 @@ function createDeck(n) {
   };
   d.ctxOverview = d.cvOverview.getContext('2d');
   d.ctxDetail = d.cvDetail.getContext('2d');
+  d.scrub = q('[data-scrub]');
+  d.cueMs = null;
+  d.posMs = 0;
   d.elapsedLabel.textContent = T('elapsed');
   d.remainingLabel.textContent = T('remaining');
   d.noWave.textContent = T('noTrack');
+
+  function msAt(cv, ev, kind) {
+    const rect = cv.getBoundingClientRect();
+    const x = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
+    const track = tracks.get(d.trackId);
+    const dur = track && track.meta ? (track.meta.duration_ms || 0) : 0;
+    if (kind === 'overview') {
+      if (!dur) return null;
+      return (x / Math.max(1, rect.width)) * dur;
+    }
+    const bars = deckZoom(d.n);
+    const bpm = d.lastBpm || 120;
+    const visible = barsToSeconds(bars, bpm) * 1000;
+    let ms = d.posMs + ((x - rect.width / 2) / Math.max(1, rect.width)) * visible;
+    if (dur) ms = Math.max(0, Math.min(dur, ms));
+    return Math.max(0, ms);
+  }
+  function showScrub(ms) {
+    if (ms == null) {
+      d.scrub.classList.remove('on');
+      if (d.cueMs != null) {
+        d.scrub.textContent = 'cue ' + mmss(d.cueMs);
+        d.scrub.classList.add('on');
+      }
+      return;
+    }
+    d.scrub.textContent = mmss(ms);
+    d.scrub.classList.add('on');
+  }
+  for (const [cv, kind] of [[d.cvOverview, 'overview'], [d.cvDetail, 'detail']]) {
+    cv.addEventListener('mousemove', ev => showScrub(msAt(cv, ev, kind)));
+    cv.addEventListener('mouseleave', () => showScrub(null));
+    cv.addEventListener('click', ev => {
+      if (ev.altKey) {
+        const cur = deckZoom(d.n);
+        const i = ZOOM_BARS.indexOf(cur);
+        const next = ZOOM_BARS[(i + 1) % ZOOM_BARS.length];
+        setDeckZoom(d.n, next);
+        d.scrub.textContent = next + ' bars';
+        d.scrub.classList.add('on');
+        return;
+      }
+      const ms = msAt(cv, ev, kind);
+      if (ms == null) return;
+      d.cueMs = ms;
+      d.scrub.textContent = 'cue ' + mmss(ms);
+      d.scrub.classList.add('on');
+    });
+    cv.addEventListener('contextmenu', ev => {
+      ev.preventDefault();
+      clearDeckZoom(d.n);
+    });
+  }
+
   decks.set(n, d);
   return d;
 }
@@ -806,12 +916,13 @@ function drawDetail(d, track, pos, playing, looping) {
     ? (last.decks.find(x => x.number === d.n) || {}).track_bpm
       || (last.decks.find(x => x.number === d.n) || {}).bpm
     : 0) || DEFAULT_BPM;
-  const visibleSeconds = barsToSeconds(zoomBars, bpm);
+  d.lastBpm = bpm;
+  const visibleSeconds = barsToSeconds(deckZoom(d.n), bpm);
   const visibleCols = visibleSeconds * cps;
   const pxPerCol = cssW / visibleCols;
   const currentCol = (pos / 1000) * cps;
   const start = currentCol - visibleCols / 2;
-  const key = `${track.meta.id}|${waveStyle}|${zoomBars}|${Math.round(bpm)}|${cssW}|${H}`;
+  const key = `${track.meta.id}|${waveStyle}|${deckZoom(d.n)}|${Math.round(bpm)}|${cssW}|${H}`;
 
   function paintRange(o, rangeStart, xLo, xHi) {
     // Peak-pick CSS pixels [xLo, xHi) into offscreen context `o`.
@@ -911,6 +1022,36 @@ function drawDetail(d, track, pos, playing, looping) {
     drawLoopRegion(ctx, x0, 0, Math.max(1, x1 - x0), H, r);
   }
 
+  // Phrase markers (PSSI) — live overlay so they stay sharp while scrolling.
+  const phrases = (track.meta && track.meta.phrases) || [];
+  const beats = (track.meta && track.meta.beats) || [];
+  if (phrases.length && beats.length) {
+    for (const ph of phrases) {
+      const bi = (ph.beat | 0) - 1;
+      if (bi < 0 || bi >= beats.length) continue;
+      const t = beats[bi][0];
+      const x = ((t / 1000) * cps - start) * pxPerCol * r;
+      if (x < -40 * r || x > W + 40 * r) continue;
+      const label = (ph.text || '').toLowerCase();
+      let col = 'rgba(200,200,210,.85)';
+      if (label.startsWith('intro')) col = 'rgba(120,180,255,.9)';
+      else if (label.startsWith('verse')) col = 'rgba(160,220,120,.9)';
+      else if (label.startsWith('bridge')) col = 'rgba(200,160,255,.9)';
+      else if (label.startsWith('chorus') || label.startsWith('drop')) col = 'rgba(255,120,90,.9)';
+      else if (label.startsWith('up')) col = 'rgba(255,190,80,.9)';
+      else if (label.startsWith('outro')) col = 'rgba(160,160,180,.9)';
+      ctx.fillStyle = col;
+      ctx.fillRect(x, 0, Math.max(1, r), H);
+      ctx.fillRect(x - r, 0, 3 * r, 3 * r);
+      ctx.fillRect(x - r, H - 3 * r, 3 * r, 3 * r);
+      if (ph.text) {
+        ctx.font = `700 ${8 * r}px Chakra Petch, monospace`;
+        ctx.textAlign = 'left';
+        ctx.fillText(ph.text, x + 3 * r, H - 4 * r);
+      }
+    }
+  }
+
   // playhead, fixed in the middle
   ctx.fillStyle = getComputedStyle(d.el).getPropertyValue('--c').trim();
   ctx.globalAlpha = playing ? .18 : .07;
@@ -943,6 +1084,7 @@ function render() {
     drawInfo(d, s);
 
     d.elapsed.textContent = mmss(pos);
+    d.posMs = pos;
     const remaining = dur ? Math.max(0, dur - pos) : 0;
     d.remaining.textContent = dur ? ('-' + mmss(remaining)) : '—';
     d.remaining.parentElement.classList.toggle('low',

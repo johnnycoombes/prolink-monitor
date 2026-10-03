@@ -24,7 +24,8 @@ Compared with the [original project](https://github.com/fidow/prolink-monitor):
 | UI | Browser panel (`python app.py`) | Same web panel **plus** a native **Prolink Listener** desktop app (`python desktop.py`) |
 | Navigation | Single live panel | Sidebar: Monitor, Devices, Library, **Session**, Overlay, Settings, About — **hideable** (`Ctrl+B`) |
 | Settings | Zoom / decks remembered in the browser | Connection, display, **per-deck element**, overlay and session settings under `~/.prolink-monitor/` |
-| Waveforms | Colour detail (RGB) with blue fallback | Switchable **RGB**, **3-Band** and **Blue**, parsed like [Beat Link `WaveformDetail`](https://deepsymmetry.org/beatlink/apidocs/org/deepsymmetry/beatlink/data/WaveformDetail.html); cards **fill the panel**; cue / hot-cue markers |
+| Waveforms | Colour detail (RGB) with blue fallback | Switchable **RGB**, **3-Band** and **Blue**; cue / hot-cue / **phrase** markers; hover time + click cue readout; **per-deck zoom** |
+| Library | Counts only | Search USB tracks; OneLibrary **playlists / history** browse; on-deck artwork grid |
 | Zoom | Seconds | **4/4 bars** (1–16), BPM-aware window |
 | Deck cards | Fixed layout | Toggle artwork, BPM, tempo, time, key, tags, waveform and more |
 | Streaming | — | Transparent `/overlay` page for OBS (now playing / dual / minimal / **setlist**); SmartTiming setlist; overlay waveform colour |
@@ -65,7 +66,10 @@ Hide the sidebar with **☰**, **Hide sidebar**, or **Ctrl+B** for a wider Monit
 ### Desktop — Settings, Library, Devices
 
 Connection, display, deck elements and behaviour live under **Settings**.
-**Library** shows NFS media stats; **Devices** lists players and mixers on the link.
+**Library** browses `export.pdb` tracks (search/filter), OneLibrary playlists and
+history when readable, and an artwork strip for tracks currently on decks.
+**Devices** lists players and mixers on the link. Multi-player (separate CDJs) browse
+aggregates all mounted hosts — still worth validating on a multi-CDJ booth.
 
 ![Settings](doc/desktop-settings.png)
 
@@ -177,7 +181,10 @@ for the waveform. The identity column is wide enough for the full `ON AIR` chip.
 and deck count. Colour follows the player: **RGB**, **3BAND** (stacked blue / amber /
 white the way a CDJ draws it) or **BLUE**. The same switch is on the Monitor page,
 in Settings, and on the web panel. **Cue markers** (memory cues and hot cues A–H)
-are drawn on both overview and detail strips in the desktop Monitor and web panel.
+and **phrase markers** (PSSI intro / verse / chorus / …) are drawn on overview and
+detail strips. Hover the wave for a time readout; click to pin a cue time. Each deck
+has its own zoom chip (`Nb*`); toolbar **All** clears overrides. On the web panel,
+Alt-click a wave to cycle that deck’s zoom; right-click clears it.
 
 **Session playlist.** Hit **Record session** on the Monitor toolbar (or open
 **Session**) to capture every newly played on-air track in order. Timestamps use a
@@ -219,6 +226,11 @@ The page background is transparent. Query parameters:
 | `corner` | `bl` / `br` / `tl` / `tr` / `center` | `bl` | Screen corner |
 | `decks` | `1`–`4` | `1` (`2` for dual) | How many decks to show |
 | `wave` | `rgb` / `3band` / `blue` | `rgb` | Mini-waveform colour style |
+| `scale` / `font` | `0.5`–`2.5` | `1` | Overall overlay scale for different canvases |
+| `accent` | 6-digit hex | — | Custom accent colour (e.g. `accent=ff6b61`) |
+| `tags` | `1` / `0` | `1` | Show MASTER / SYNC / ON AIR tags |
+| `bpm` | `1` / `0` | `1` | Show BPM readout |
+| `next` | `1` / `0` | `1` | Show lower-third when MixStatus is about to promote |
 | `playing` | `1` / `0` | `1` | Only decks that have a track |
 | `mix` | `1` / `0` | `1` | Use SmartTiming now-playing (single-deck layouts) |
 | `preview` | `1` / `0` | `0` | Dark preview background (local testing) |
@@ -238,7 +250,12 @@ Example:
 http://127.0.0.1:8777/overlay?layout=dual&corner=tl&decks=4&playing=0
 http://127.0.0.1:8777/overlay?layout=nowplaying&mix=1
 http://127.0.0.1:8777/overlay?layout=setlist&corner=bl&mix=1
+http://127.0.0.1:8777/overlay?layout=nowplaying&scale=1.25&accent=ff6b61&tags=0&bpm=0
 ```
+
+With `mix=1`, a **next-track** lower third appears when another on-air deck has
+accumulated enough SmartTiming beats to be about to take over (`pending` on
+`/api/state` / `/api/setlist`).
 
 In the desktop app, open **Overlay**, pick layout/corner/**waveform colour**, then
 **Copy URL** into OBS. Set the Browser source size to your canvas (e.g. 1920×1080).
@@ -362,6 +379,8 @@ these come from:
       pip install "pyrekordbox @ git+https://github.com/dylanljones/pyrekordbox.git@master"
 
   The Library page then shows playlist / history counts when the file is present
+  and lets you browse playlists / history / USB tracks when `pyrekordbox` can
+  open the DB. Classic `export.pdb` search works without that dependency.
   and readable.
 - `PIONEER/USBANLZ/.../ANLZ0000.DAT` / `.EXT` / `.2EX` — per-track analysis: beat
   grid, cues, phrases and the waveforms.
@@ -454,7 +473,10 @@ prolink/
 | `/api/session/start` | start recording (first track → `00:00:00`) |
 | `/api/session/stop` | stop recording (keep the list) |
 | `/api/session/clear` | clear the session playlist |
-| `/api/session/export?fmt=` | download playlist as `csv` / `json` / `m3u` |
+| `/api/library/tracks?q=` | search/filter `export.pdb` tracks |
+| `/api/library/playlists` | OneLibrary playlists + history lists |
+| `/api/library/playlist/<id>` | tracks in a OneLibrary playlist/history |
+| `/api/library/loaded` | tracks currently on decks |
 | `/api/events` | the same state over SSE, 60 times a second |
 | `/api/track/<id>` | metadata, beat grid, cues and phrases |
 | `/api/waveform/<id>` | waveforms in binary: detail and overview |

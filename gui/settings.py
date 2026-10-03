@@ -19,6 +19,7 @@ DEFAULTS: dict[str, Any] = {
     "cache": "",
     "max_decks": 4,
     "zoom_bars": 4,                # 4/4 bars shown in the detail waveform
+    "zoom_bars_by_deck": {},        # optional per-deck overrides { "1": 8, ... }
     "waveform_style": "rgb",       # rgb | 3band | blue
     "auto_connect": True,
     "start_web_server": True,
@@ -46,6 +47,11 @@ DEFAULTS: dict[str, Any] = {
     "overlay_mix": True,
     "overlay_decks": 1,
     "overlay_waveform_style": "rgb",  # rgb | 3band | blue — overlay mini-wave only
+    "overlay_scale": "1",
+    "overlay_accent": "",
+    "overlay_show_tags": True,
+    "overlay_show_bpm": True,
+    "overlay_show_next": True,
     "session_autosave": False,
     "session_autosave_dir": "",       # empty → ~/.prolink-monitor/sessions
 }
@@ -153,6 +159,17 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
         out["zoom_bars"] = zoom if zoom in (1, 2, 4, 8, 16) else 4
     except (TypeError, ValueError):
         out["zoom_bars"] = 4
+    by_deck = data.get("zoom_bars_by_deck") or {}
+    clean_deck: dict[str, int] = {}
+    if isinstance(by_deck, dict):
+        for k, v in by_deck.items():
+            try:
+                bars = int(v)
+            except (TypeError, ValueError):
+                continue
+            if bars in (1, 2, 4, 8, 16):
+                clean_deck[str(int(k))] = bars
+    out["zoom_bars_by_deck"] = clean_deck
     style = str(data.get("waveform_style") or "rgb").lower()
     out["waveform_style"] = style if style in ("rgb", "3band", "blue") else "rgb"
     out["auto_connect"] = bool(data.get("auto_connect", True))
@@ -188,6 +205,19 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
         out["overlay_decks"] = 1
     owave = str(data.get("overlay_waveform_style") or "rgb").lower()
     out["overlay_waveform_style"] = owave if owave in ("rgb", "3band", "blue") else "rgb"
+    scale = str(data.get("overlay_scale") or "1").strip()
+    try:
+        s = float(scale)
+        out["overlay_scale"] = scale if 0.5 <= s <= 2.5 else "1"
+    except (TypeError, ValueError):
+        out["overlay_scale"] = "1"
+    accent = str(data.get("overlay_accent") or "").strip().lstrip("#")
+    out["overlay_accent"] = accent if len(accent) == 6 and all(
+        c in "0123456789abcdefABCDEF" for c in accent
+    ) else ""
+    out["overlay_show_tags"] = bool(data.get("overlay_show_tags", True))
+    out["overlay_show_bpm"] = bool(data.get("overlay_show_bpm", True))
+    out["overlay_show_next"] = bool(data.get("overlay_show_next", True))
     out["session_autosave"] = bool(data.get("session_autosave", False))
     out["session_autosave_dir"] = str(data.get("session_autosave_dir") or "").strip()
     return out

@@ -111,7 +111,7 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.page_monitor = MonitorPage(self.i18n, self.backend)
         self.page_devices = DevicesPage(self.i18n)
-        self.page_library = LibraryPage(self.i18n)
+        self.page_library = LibraryPage(self.i18n, self.backend)
         self.page_session = SessionPage(self.i18n, self.backend)
         self.page_overlay = OverlayPage(self.i18n, self.backend)
         self.page_settings = SettingsPage(self.i18n)

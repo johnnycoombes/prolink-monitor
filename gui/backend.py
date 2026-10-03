@@ -149,6 +149,36 @@ class Backend(QObject):
                 self._art_cache[track_id] = data
         return data
 
+    def browse_tracks(self, query: str = "", *, limit: int = 100,
+                      offset: int = 0) -> dict:
+        with self._lock:
+            mon = self._monitor
+        if mon is None:
+            return {"tracks": [], "total": 0, "offset": 0, "limit": limit,
+                    "query": query, "hosts": [], "multi_player": False}
+        return mon.browse_tracks(query, limit=limit, offset=offset)
+
+    def browse_playlists(self) -> dict:
+        with self._lock:
+            mon = self._monitor
+        if mon is None:
+            return {"playlists": [], "history": [], "readable": False}
+        return mon.browse_playlists()
+
+    def browse_playlist_tracks(self, playlist_id: int, host: str | None = None) -> dict:
+        with self._lock:
+            mon = self._monitor
+        if mon is None:
+            return {"id": playlist_id, "host": host, "tracks": []}
+        return mon.browse_playlist_tracks(playlist_id, host)
+
+    def loaded_tracks(self) -> list:
+        with self._lock:
+            mon = self._monitor
+        if mon is None:
+            return []
+        return mon.loaded_tracks()
+
     def start_session(self) -> None:
         with self._lock:
             mon = self._monitor
