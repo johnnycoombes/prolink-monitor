@@ -638,73 +638,116 @@ function drawOverview(d, track, pos) {
 
 function drawDetail(d, track, pos, playing) {
   const cv = d.cvDetail, ctx = d.ctxDetail;
-  fitCanvas(cv);
+  const resized = fitCanvas(cv);
   const W = cv.width, H = cv.height, r = window.devicePixelRatio || 1;
   const cssW = Math.max(1, Math.round(cv.clientWidth));
   const colW = Math.max(1, Math.round(r));
   ctx.imageSmoothingEnabled = false;
-  ctx.clearRect(0, 0, W, H);
-  if (!track || !track.detail || !track.detail.n) return;
+  if (!track || !track.detail || !track.detail.n) {
+    ctx.clearRect(0, 0, W, H);
+    d.detailOff = null;
+    d.detailStart = null;
+    d.detailKey = null;
+    return;
+  }
 
   const {n, cps, h} = track.detail;
   const mid = H / 2;
   const span = mid * 0.98;
   const visibleCols = visibleSeconds * cps;
-  // Peak-pick per CSS pixel (same density as the desktop Qt painter).
   const pxPerCol = cssW / visibleCols;
   const currentCol = (pos / 1000) * cps;
   const start = currentCol - visibleCols / 2;
+  const key = `${track.meta.id}|${waveStyle}|${visibleSeconds}|${cssW}|${H}`;
 
-  // bar grid behind the waveform
-  const meta = track.meta;
-  if (meta.beats && meta.beats.length) {
-    const t0 = (start / cps) * 1000, t1 = ((start + visibleCols) / cps) * 1000;
-    ctx.lineWidth = Math.max(1, r * 0.5);
-    for (const [t, number] of meta.beats) {
-      if (t < t0 - 500) continue;
-      if (t > t1 + 500) break;
-      const x = ((t / 1000) * cps - start) * pxPerCol * r;
-      ctx.strokeStyle = number === 1 ? 'rgba(255,255,255,.20)' : 'rgba(255,255,255,.06)';
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  function paintRange(o, rangeStart, xLo, xHi) {
+    // Peak-pick CSS pixels [xLo, xHi) into offscreen context `o`.
+    const meta = track.meta;
+    if (meta.beats && meta.beats.length) {
+      const t0 = ((rangeStart + xLo / pxPerCol) / cps) * 1000;
+      const t1 = ((rangeStart + xHi / pxPerCol) / cps) * 1000;
+      o.lineWidth = Math.max(1, r * 0.5);
+      for (const [t, number] of meta.beats) {
+        if (t < t0 - 500) continue;
+        if (t > t1 + 500) break;
+        const x = ((t / 1000) * cps - rangeStart) * pxPerCol;
+        if (x < xLo - 1 || x > xHi) continue;
+        o.strokeStyle = number === 1 ? 'rgba(255,255,255,.20)' : 'rgba(255,255,255,.06)';
+        o.beginPath(); o.moveTo(Math.round(x * r), 0); o.lineTo(Math.round(x * r), H); o.stroke();
+      }
     }
-  }
-
-  // The waveform. Every column falling inside a CSS pixel is inspected and the
-  // peak wins: at 150 columns per second there are often more columns than
-  // pixels, so sampling just one of them would quietly drop the transients.
-  for (let x = 0; x < cssW; x++) {
-    let lo = Math.floor(start + x / pxPerCol);
-    let hi = Math.ceil(start + (x + 1) / pxPerCol);
-    if (hi <= lo) hi = lo + 1;
-    if (hi <= 0 || lo >= n) continue;
-    if (lo < 0) lo = 0;
-    if (hi > n) hi = n;
-    let tall = 0, src = lo;
-    for (let i = lo; i < hi; i++) if (h[i] > tall) { tall = h[i]; src = i; }
-    fillWave(ctx, Math.round(x * r), mid, (tall / 31) * span, src, track.detail, span, colW);
-  }
-
-  // cues in view
-  for (const c of meta.cues) {
-    const x = ((c.t / 1000) * cps - start) * pxPerCol * r;
-    if (x < -20 * r || x > W + 20 * r) continue;
-    ctx.fillStyle = c.color ? `rgb(${c.color[0]},${c.color[1]},${c.color[2]})`
+    for (let x = xLo; x < xHi; x++) {
+      let lo = Math.floor(rangeStart + x / pxPerCol);
+      let hi = Math.ceil(rangeStart + (x + 1) / pxPerCol);
+      if (hi <= lo) hi = lo + 1;
+      if (hi <= 0 || lo >= n) continue;
+      if (lo < 0) lo = 0;
+      if (hi > n) hi = n;
+      let tall = 0, src = lo;
+      for (let i = lo; i < hi; i++) if (h[i] > tall) { tall = h[i]; src = i; }
+      fillWave(o, Math.round(x * r), mid, (tall / 31) * span, src, track.detail, span, colW);
+    }
+    for (const c of meta.cues) {
+      const x = ((c.t / 1000) * cps - rangeStart) * pxPerCol;
+      if (x < xLo - 20 || x > xHi + 20) continue;
+      o.fillStyle = c.color ? `rgb(${c.color[0]},${c.color[1]},${c.color[2]})`
                             : (c.hot ? '#ffd45e' : '#ffffff');
-    ctx.fillRect(x - r, 0, Math.max(2, Math.round(2 * r)), H);
-    if (c.hot) {
-      ctx.fillRect(x - 6 * r, 0, 12 * r, 9 * r);
-      ctx.fillStyle = '#000'; ctx.font = `600 ${8*r}px Chakra Petch, monospace`;
-      ctx.textAlign = 'center';
-      ctx.fillText(String.fromCharCode(64 + c.hot), x, 7 * r);
+      o.fillRect(Math.round(x * r) - r, 0, Math.max(2, Math.round(2 * r)), H);
+      if (c.hot) {
+        o.fillRect(Math.round(x * r) - 6 * r, 0, 12 * r, 9 * r);
+        o.fillStyle = '#000'; o.font = `600 ${8*r}px Chakra Petch, monospace`;
+        o.textAlign = 'center';
+        o.fillText(String.fromCharCode(64 + c.hot), Math.round(x * r), 7 * r);
+      }
     }
   }
+
+  if (resized || d.detailKey !== key || !d.detailOff) {
+    const off = document.createElement('canvas');
+    off.width = W; off.height = H;
+    const o = off.getContext('2d');
+    o.imageSmoothingEnabled = false;
+    o.clearRect(0, 0, W, H);
+    paintRange(o, start, 0, cssW);
+    d.detailOff = off;
+    d.detailStart = start;
+    d.detailKey = key;
+  } else {
+    const shiftF = (d.detailStart - start) * pxPerCol;
+    const shift = shiftF | 0; // toward zero
+    if (Math.abs(shift) >= cssW) {
+      const o = d.detailOff.getContext('2d');
+      o.clearRect(0, 0, W, H);
+      paintRange(o, start, 0, cssW);
+      d.detailStart = start;
+    } else if (shift !== 0) {
+      const off = document.createElement('canvas');
+      off.width = W; off.height = H;
+      const o = off.getContext('2d');
+      o.imageSmoothingEnabled = false;
+      o.clearRect(0, 0, W, H);
+      if (shift > 0) {
+        o.drawImage(d.detailOff, Math.round(shift * r), 0);
+        paintRange(o, start, 0, shift);
+      } else {
+        const sh = -shift;
+        o.drawImage(d.detailOff, Math.round(-sh * r), 0);
+        paintRange(o, start, cssW - sh, cssW);
+      }
+      d.detailOff = off;
+      d.detailStart -= shift / pxPerCol;
+    }
+  }
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.drawImage(d.detailOff, 0, 0);
 
   // playhead, fixed in the middle
   ctx.fillStyle = getComputedStyle(d.el).getPropertyValue('--c').trim();
-  ctx.fillRect(W / 2 - r, 0, Math.max(2, Math.round(2 * r)), H);
   ctx.globalAlpha = playing ? .18 : .07;
   ctx.fillRect(W / 2 - 9 * r, 0, 18 * r, H);
   ctx.globalAlpha = 1;
+  ctx.fillRect(W / 2 - r, 0, Math.max(2, Math.round(2 * r)), H);
 }
 
 /* --------------------------------------------------------------------- loop */

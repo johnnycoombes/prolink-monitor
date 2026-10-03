@@ -145,9 +145,14 @@ class MainWindow(QMainWindow):
         self.page_overlay.set_web_ready(False)
 
         self.backend.state_changed.connect(self._on_state)
+        self.backend.paint_tick.connect(self._on_paint_tick)
         self.backend.status_changed.connect(self._on_status)
-        self.backend.track_ready.connect(lambda _tid: None)
+        self.backend.track_ready.connect(self._on_track_ready)
         self.backend.port_changed.connect(self._on_port_changed)
+
+        self._devices_sig: tuple | None = None
+        self._library_sig: tuple | None = None
+        self._footer_sig: tuple | None = None
 
         QShortcut(QKeySequence("+"), self, activated=lambda: self._nudge_zoom(-1))
         QShortcut(QKeySequence("="), self, activated=lambda: self._nudge_zoom(-1))
@@ -239,15 +244,47 @@ class MainWindow(QMainWindow):
 
     def _on_state(self, state: dict) -> None:
         self.page_monitor.update_state(state)
-        self.page_devices.update_state(state)
-        self.page_library.update_state(state)
-        packets = state.get("packets") or 0
-        devices = len(state.get("devices") or [])
-        mode = state.get("mode") or state.get("mode_kind") or "—"
-        self.footer.setText(
-            f"{mode}   ·   {devices} {self.i18n.t('nav_devices').lower()}   ·   "
-            f"{packets} {self.i18n.t('packets')}"
+
+        devices = state.get("devices") or []
+        devices_sig = tuple(
+            (d.get("number"), d.get("name"), d.get("kind"), d.get("ip"))
+            for d in devices
         )
+        if devices_sig != self._devices_sig:
+            self._devices_sig = devices_sig
+            self.page_devices.update_state(state)
+
+        lib = state.get("library")
+        ol = state.get("onelibrary")
+        library_sig = (
+            None if lib is None else tuple(sorted((str(k), str(v)) for k, v in lib.items())),
+            None if ol is None else (
+                ol.get("present"), ol.get("readable"), ol.get("tracks"),
+                ol.get("playlists"), ol.get("history"), ol.get("detail"), ol.get("error"),
+            ),
+            state.get("library_error"),
+            state.get("host") or "",
+        )
+        if library_sig != self._library_sig:
+            self._library_sig = library_sig
+            self.page_library.update_state(state)
+
+        packets = state.get("packets") or 0
+        mode = state.get("mode") or state.get("mode_kind") or "—"
+        footer_sig = (mode, len(devices), packets)
+        if footer_sig != self._footer_sig:
+            self._footer_sig = footer_sig
+            self.footer.setText(
+                f"{mode}   ·   {len(devices)} {self.i18n.t('nav_devices').lower()}   ·   "
+                f"{packets} {self.i18n.t('packets')}"
+            )
+
+    def _on_paint_tick(self) -> None:
+        self.page_monitor.advance_playheads()
+
+    def _on_track_ready(self, _tid: int) -> None:
+        # Next state tick will attach meta/waveform; nudge playheads now.
+        self.page_monitor.advance_playheads()
 
     def _on_settings_saved(self, data: dict, reconnect: bool) -> None:
         # preserve window size

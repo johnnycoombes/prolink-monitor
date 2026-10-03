@@ -172,6 +172,11 @@ and deck count. Colour follows the player: **RGB**, **3BAND** (stacked blue / am
 white the way a CDJ draws it) or **BLUE**. The same switch is on the Monitor page,
 in Settings, and on the web panel.
 
+**Smooth playhead.** Engine Room paints the playhead/waveforms on a separate timer
+(default **60 Hz**, Settings → Playhead refresh rate) while metadata and library
+stats refresh at ~20 Hz. Waveform strips are cached and scrolled instead of being
+fully redrawn every frame; the web panel uses the same scroll-cache idea.
+
 The monitor core itself still needs no packages; PySide6 is only for the desktop
 shell. The optional local web server can be started from Settings and opened with
 **Open web panel**. The **Overlay** page builds a transparent OBS Browser Source

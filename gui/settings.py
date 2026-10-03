@@ -26,7 +26,7 @@ DEFAULTS: dict[str, Any] = {
     "window_height": 860,
     "sidebar_compact": False,
     "sidebar_visible": True,
-    "poll_hz": 30,
+    "poll_hz": 60,
     "show_empty_decks": True,
     # Deck card elements (Monitor page)
     "deck_show_artwork": True,
@@ -144,9 +144,9 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     out["sidebar_compact"] = bool(data.get("sidebar_compact", False))
     out["sidebar_visible"] = bool(data.get("sidebar_visible", True))
     try:
-        out["poll_hz"] = max(5, min(30, int(data.get("poll_hz", 30))))
+        out["poll_hz"] = max(5, min(60, int(data.get("poll_hz", 60))))
     except (TypeError, ValueError):
-        out["poll_hz"] = 30
+        out["poll_hz"] = 60
     out["show_empty_decks"] = bool(data.get("show_empty_decks", True))
     for key in DECK_ELEMENT_KEYS:
         out[key] = bool(data.get(key, True))
