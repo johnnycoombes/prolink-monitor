@@ -116,8 +116,9 @@ The panel pulses on the downbeat of every deck that is playing.
 
 The header (web) or Monitor toolbar (desktop) has switches for **waveform zoom**
 (4 / 8 / 16 / 32 seconds, also `+` and `-` on the keyboard), how many **decks** to
-show (2, 3 or 4), and the **waveform colour** (RGB / 3BAND / BLUE). Decks holding a
-track are shown first. Those choices are remembered.
+show (**2** or **4**), and the **waveform colour** (RGB / 3BAND / BLUE). Layout
+order is **1–2** in two-deck mode and **3–1–2–4** in four-deck mode. Those choices
+are remembered.
 
 ---
 

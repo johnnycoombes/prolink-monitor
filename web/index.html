@@ -206,7 +206,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
     </div>
     <span class="switch-label" data-i18n="decks">decks</span>
     <div class="switch" id="deck-switch">
-      <button data-n="2">2</button><button data-n="3">3</button><button data-n="4">4</button>
+      <button data-n="2">2</button><button data-n="4">4</button>
     </div>
     <div class="pill" id="p-dev"></div>
     <div class="led" id="led"></div>
@@ -275,15 +275,20 @@ const decks = new Map();          // number -> deck view
 const tracks = new Map();         // id -> {meta, detail, overview}
 const pending = new Set();
 let last = null, receivedAt = 0;
-let maxDecks = Math.min(4, Math.max(2, +localStorage.getItem('maxDecks') || 4));
+let maxDecks = (+localStorage.getItem('maxDecks') || 4) >= 4 ? 4 : 2;
 
-/* Visible decks: the ones holding a track first, then by number. Ask for 2 and
-   you see the two that are loaded even if they are decks 3 and 4. */
+/* Display order: 2-deck = 1-2, 4-deck = 3-1-2-4 (Pioneer-style layout). */
+const DECK_LAYOUT = {2: [1, 2], 4: [3, 1, 2, 4]};
+
 function visible(list) {
-  return [...list]
-    .sort((a, b) => (a.track_id ? 0 : 1) - (b.track_id ? 0 : 1) || a.number - b.number)
-    .slice(0, maxDecks)
-    .sort((a, b) => a.number - b.number);
+  const byNum = new Map(list.map(d => [d.number, d]));
+  const order = DECK_LAYOUT[maxDecks] || DECK_LAYOUT[2];
+  const out = [];
+  for (const n of order) {
+    const d = byNum.get(n);
+    if (d) out.push(d);
+  }
+  return out;
 }
 
 function prune(list) {
@@ -315,11 +320,14 @@ function stepZoom(direction) {
 }
 
 function setDeckCount(n) {
-  maxDecks = n;
-  localStorage.setItem('maxDecks', n);
+  maxDecks = (+n || 4) >= 4 ? 4 : 2;
+  localStorage.setItem('maxDecks', maxDecks);
   document.querySelectorAll('#deck-switch button').forEach(
-    b => b.classList.toggle('on', +b.dataset.n === n));
-  if (last) prune(visible(last.decks));
+    b => b.classList.toggle('on', +b.dataset.n === maxDecks));
+  if (last) {
+    prune(visible(last.decks));
+    sortDecks();
+  }
 }
 
 /* --------------------------------------------------------------- utilities */
@@ -516,7 +524,11 @@ function createDeck(n) {
 
 function sortDecks() {
   const box = document.getElementById('decks');
-  [...decks.values()].sort((a, b) => a.n - b.n).forEach(d => box.appendChild(d.el));
+  const order = DECK_LAYOUT[maxDecks] || DECK_LAYOUT[2];
+  const rank = new Map(order.map((n, i) => [n, i]));
+  [...decks.values()]
+    .sort((a, b) => (rank.get(a.n) ?? a.n) - (rank.get(b.n) ?? b.n))
+    .forEach(d => box.appendChild(d.el));
 }
 
 /* --------------------------------------------------------------------- info */
