@@ -41,13 +41,18 @@ class Monitor:
         self.engine = link.ProLink(source)
         self.library = Library(cache_dir)
         self.engine.on_track_change = self._on_track_change
-        self._waveforms: dict[int, bytes] = {}
-        self._meta: dict[int, dict] = {}
+        # Keyed by (host, export, pdb fingerprint, track_id) so a stick swap
+        # that reuses player track IDs cannot serve the previous USB's waves.
+        self._waveforms: dict[tuple, bytes] = {}
+        self._meta: dict[tuple, dict] = {}
         # which player each track was read from: with separate CDJs the track
         # loaded on one deck often lives on another deck's USB drive
         self._track_host: dict[int, str] = {}
         self._lock = threading.RLock()
 
+    def _cache_key(self, host: str, media, track_id: int) -> tuple:
+        fp = getattr(media, "_pdb_fingerprint", None) or (0, 0)
+        return (host, getattr(media, "export", "") or "", fp, track_id)
     def start(self) -> None:
         self.engine.start()
         threading.Thread(target=self._preload, daemon=True).start()
@@ -69,10 +74,12 @@ class Monitor:
             time.sleep(0.5)
         if not self.host:
             return
-        try:
-            self.library.get(self.host)
-        except Exception:
-            pass
+        # USB may not be mounted yet — retry rather than stick on the first miss.
+        for _ in range(12):
+            if self.library.get(self.host) is not None:
+                return
+            self.library.retry(self.host)
+            time.sleep(2.0)
 
     # -- tracks -------------------------------------------------------------
     def _host_for(self, status) -> str | None:
@@ -100,6 +107,9 @@ class Monitor:
             return
         media = self.library.get(host)
         if media is None:
+            self.library.retry(host)
+            media = self.library.get(host)
+        if media is None:
             return
         with self._lock:
             self._track_host[track_id] = host
@@ -109,15 +119,22 @@ class Monitor:
             return
         if a is None:
             return
+        # Fast loads can finish after the deck already moved on — never attach
+        # another track's grid to the current one.
+        current = deck.status
+        if current is None or current.track_id != track_id:
+            self._build(host, media, track_id, a, media.track(track_id))
+            return
         t = media.track(track_id)
         length = a.duration_ms or ((t.duration * 1000) if t else 0)
         deck.set_beat_grid([b.time for b in a.beats], length)
-        self._build(track_id, a, t)
+        self._build(host, media, track_id, a, t)
 
-    def _build(self, track_id: int, a: anlz.Analysis, t) -> None:
+    def _build(self, host: str, media, track_id: int, a: anlz.Analysis, t) -> None:
         """Prepare and cache the binary waveform and metadata of a track."""
+        key = self._cache_key(host, media, track_id)
         with self._lock:
-            if track_id in self._waveforms:
+            if key in self._waveforms:
                 return
 
         heights, rgb, lows, mids, highs, blue_h, blue_rgb = anlz.waveform_levels(a)
@@ -168,8 +185,8 @@ class Monitor:
             "overview_columns": len(ov_h),
         }
         with self._lock:
-            self._waveforms[track_id] = payload
-            self._meta[track_id] = meta
+            self._waveforms[key] = payload
+            self._meta[key] = meta
             while len(self._waveforms) > 12:
                 oldest = next(iter(self._waveforms))
                 self._waveforms.pop(oldest, None)
@@ -179,34 +196,42 @@ class Monitor:
         """The medium a track lives on, from whichever player supplied it."""
         with self._lock:
             host = self._track_host.get(track_id) or self.host
-        return self.library.get(host) if host else None
+        return (host, self.library.get(host)) if host else (None, None)
 
     def ensure(self, track_id: int) -> None:
         """Load a track on demand when it has not been prepared yet."""
-        with self._lock:
-            if track_id in self._meta:
-                return
-        media = self._media_for(track_id)
-        if media is None:
+        host, media = self._media_for(track_id)
+        if not host or media is None:
             return
+        key = self._cache_key(host, media, track_id)
+        with self._lock:
+            if key in self._meta:
+                return
         a = media.analysis(track_id)
         if a is not None:
-            self._build(track_id, a, media.track(track_id))
+            self._build(host, media, track_id, a, media.track(track_id))
 
     def waveform(self, track_id: int) -> bytes | None:
         self.ensure(track_id)
+        host, media = self._media_for(track_id)
+        if not host or media is None:
+            return None
+        key = self._cache_key(host, media, track_id)
         with self._lock:
-            return self._waveforms.get(track_id)
+            return self._waveforms.get(key)
 
     def meta(self, track_id: int) -> dict | None:
         self.ensure(track_id)
+        host, media = self._media_for(track_id)
+        if not host or media is None:
+            return None
+        key = self._cache_key(host, media, track_id)
         with self._lock:
-            return self._meta.get(track_id)
+            return self._meta.get(key)
 
     def artwork(self, track_id: int) -> bytes | None:
-        media = self._media_for(track_id)
+        _host, media = self._media_for(track_id)
         return media.artwork(track_id) if media else None
-
     # -- state --------------------------------------------------------------
     def state(self) -> dict:
         decks = []
