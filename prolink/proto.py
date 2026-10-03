@@ -31,6 +31,15 @@ TYPE_CDJ_STATUS = 0x0A
 TYPE_DJM_STATUS = 0x29
 TYPE_MIXER_CLOCK = 0x20
 
+# Absolute / Precise Position packets (CDJ-3000 and newer, port 50001).
+# Layout from Deep Symmetry / Beat Link ``PrecisePosition``.
+ABS_POS_MIN_LEN = 0x3C
+ABS_POS_DEVICE = 0x21
+ABS_POS_TRACK_LEN = 0x24   # seconds, floored
+ABS_POS_PLAYHEAD = 0x28    # milliseconds
+ABS_POS_PITCH = 0x2C       # signed, pitch% × 100
+ABS_POS_BPM = 0x38         # effective BPM × 10
+
 # These are stable keys, not user-facing text: they travel through the API as-is
 # and each interface translates them (see web/index.html).
 SLOTS = {0: "empty", 1: "cd", 2: "sd", 3: "usb", 4: "rekordbox"}
@@ -98,6 +107,26 @@ class Beat:
 
 
 @dataclass
+class AbsolutePosition:
+    """Precise playhead from a CDJ-3000-class player (~every 30 ms on port 50001).
+
+    XDJ-AZ support is unconfirmed — counters in the live state show whether any
+    arrived. When present, these replace beat-grid interpolation for position.
+    """
+    device_number: int
+    name: str
+    track_length_s: int    # whole seconds
+    position_ms: int       # absolute playhead
+    pitch_percent: float   # tempo fader as shown on the player (±%)
+    effective_bpm: float   # on-screen BPM (track × pitch)
+
+    @property
+    def speed(self) -> float:
+        """Playback rate multiplier implied by the pitch slider."""
+        return 1.0 + self.pitch_percent / 100.0
+
+
+@dataclass
 class Status:
     """Full player status (port 50002)."""
     device_number: int = 0
@@ -148,7 +177,7 @@ class Status:
         return self.track_id != 0
 
 
-def parse(data: bytes) -> Announce | Beat | Status | None:
+def parse(data: bytes) -> Announce | Beat | AbsolutePosition | Status | None:
     """Decode any Pro DJ Link packet; returns None if it is not one."""
     if len(data) < 0x24 or not data.startswith(MAGIC):
         return None
@@ -157,6 +186,8 @@ def parse(data: bytes) -> Announce | Beat | Status | None:
         return _parse_announce(data)
     if packet_type == TYPE_BEAT:
         return _parse_beat(data)
+    if packet_type == TYPE_ABSOLUTE_POSITION:
+        return _parse_absolute_position(data)
     if packet_type == TYPE_CDJ_STATUS:
         return _parse_status(data)
     return None
@@ -188,6 +219,24 @@ def _parse_beat(data: bytes) -> Beat | None:
         pitch=_pitch(pitch),
         bpm=bpm / 100.0 if bpm != 0xFFFF else 0.0,
         beat_in_bar=data[0x5C],
+    )
+
+
+def _parse_absolute_position(data: bytes) -> AbsolutePosition | None:
+    """CDJ-3000-class Precise Position (type 0x0b), ~30 Hz on port 50001."""
+    if len(data) < ABS_POS_MIN_LEN:
+        return None
+    track_len = struct.unpack_from(">I", data, ABS_POS_TRACK_LEN)[0]
+    playhead = struct.unpack_from(">I", data, ABS_POS_PLAYHEAD)[0]
+    raw_pitch = struct.unpack_from(">i", data, ABS_POS_PITCH)[0]
+    raw_bpm = struct.unpack_from(">I", data, ABS_POS_BPM)[0]
+    return AbsolutePosition(
+        device_number=data[ABS_POS_DEVICE],
+        name=_name(data, 0x0B),
+        track_length_s=track_len,
+        position_ms=playhead,
+        pitch_percent=raw_pitch / 100.0,
+        effective_bpm=(raw_bpm / 10.0) if raw_bpm != 0xFFFFFFFF else 0.0,
     )
 
 

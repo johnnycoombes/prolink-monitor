@@ -258,6 +258,8 @@ class Monitor:
                 "beat": s.beat_count,
                 "bar": s.beat_in_bar,
                 "beat_packets": d.beat_packets,
+                "absolute_packets": d.absolute_packets,
+                "position_source": d.position_source,
                 "cue_in": s.cue_distance if s.cue_distance != 0x1FF else None,
                 "master": s.master,
                 "sync": s.sync,

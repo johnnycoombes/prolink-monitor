@@ -60,6 +60,15 @@ FIELDS = {
         (0x34, 4, "ms to the 2nd bar"), (0x38, 4, "ms to the 8th beat"),
         (0x54, 4, "PITCH"), (0x5A, 2, "BPM"), (0x5C, 1, "beat in bar"),
     ],
+    # Absolute / Precise Position (CDJ-3000 class, ~30 ms). Watch this type on an
+    # XDJ-AZ capture to confirm whether the unit sends it.
+    0x0B: [
+        (0x21, 1, "device number"),
+        (0x24, 4, "track length (seconds)"),
+        (0x28, 4, "PLAYHEAD: absolute position (ms)"),
+        (0x2C, 4, "pitch % × 100 (signed)"),
+        (0x38, 4, "effective BPM × 10"),
+    ],
     0x20: [(0x24, 4, "mixer counter")],
     0x06: [(0x24, 1, "device number"), (0x26, 6, "MAC"), (0x2C, 4, "IP")],
 }
