@@ -15,6 +15,9 @@ from gui.theme import COLORS, DECK_COLORS
 from gui.settings import deck_elements_from
 from prolink.session import ZOOM_BARS, bars_to_seconds
 
+# Left identity column: room for artwork + MASTER / SYNC / ON AIR chips.
+IDENT_WIDTH = 300
+
 
 def mmss(ms: float) -> str:
     ms = max(0.0, float(ms or 0))
@@ -51,6 +54,35 @@ BAND_MID = (242, 170, 60)         # mids, when they stick out past the lows
 BAND_OVERLAP = (169, 107, 39)     # where low and mid overlap
 BAND_HIGH = (255, 255, 255)       # highs, drawn last
 BLUE_SHADE = (0, 168, 232)        # COLOR_MAP[2], used when PWV3 is absent
+
+
+def _cue_color(cue: dict) -> QColor:
+    c = cue.get("color")
+    if c and len(c) >= 3:
+        return QColor(int(c[0]), int(c[1]), int(c[2]))
+    return QColor("#ffd45e" if cue.get("hot") else "#ffffff")
+
+
+def _draw_cue_marker(p: QPainter, x: int, y0: int, h: int, cue: dict,
+                     *, labeled: bool = True) -> None:
+    """Hot-cue / memory-cue marker: vertical line + optional A–H badge."""
+    if cue.get("type") == "loop":
+        return
+    color = _cue_color(cue)
+    p.fillRect(x - 1, y0, 2, h, color)
+    hot = int(cue.get("hot") or 0)
+    if not labeled or hot <= 0:
+        # Memory cue: small triangle at the top.
+        p.fillRect(x - 3, y0, 6, 4, color)
+        return
+    # Hot cue A–H badge (same idea as the web panel).
+    bw, bh = 12, 11
+    p.fillRect(x - bw // 2, y0, bw, bh, color)
+    p.setPen(QColor("#000000"))
+    font = QFont("DejaVu Sans Mono", 8)
+    font.setBold(True)
+    p.setFont(font)
+    p.drawText(x - bw // 2, y0, bw, bh, Qt.AlignCenter, chr(64 + hot))
 
 
 def parse_waveform(data: bytes) -> tuple[dict | None, dict | None]:
@@ -418,6 +450,8 @@ class WaveformView(QWidget):
             p.fillRect(x0 + lx0, y0, max(1, lx1 - lx0), h, QColor(46, 232, 154, 72))
             p.fillRect(x0 + lx0, y0, 2, h, QColor(46, 232, 154, 220))
             p.fillRect(x0 + max(lx0, lx1 - 2), y0, 2, h, QColor(46, 232, 154, 220))
+        # Cue markers drawn live so they appear as soon as meta arrives.
+        self._draw_overview_cues(p, x0, y0, w, h)
         px = max(0, min(w, int((self._pos_ms / max(1, dur)) * w)))
         if px < w:
             p.fillRect(x0 + px, y0, w - px, h, QColor(8, 10, 12, 150))
@@ -433,17 +467,18 @@ class WaveformView(QWidget):
         if ov and ov["n"]:
             qp = QPainter(pm)
             self._draw_overview_wave(qp, 0, 0, w, h)
-            # Static cue markers live in the cache; playhead is drawn live.
-            dur = (self._meta or {}).get("duration_ms") or ov.get("dur") or 1
-            for cue in (self._meta or {}).get("cues") or []:
-                cx = int((cue.get("t", 0) / max(1, dur)) * w)
-                c = cue.get("color")
-                color = QColor(*c) if c else QColor(
-                    "#ffd45e" if cue.get("hot") else "#ffffff")
-                qp.fillRect(cx, 0, 1, h, color)
             qp.end()
         self._overview_pm = pm
         self._overview_key = key
+
+    def _draw_overview_cues(self, p: QPainter, x0, y0, w, h) -> None:
+        ov = self._overview
+        if not ov or not ov["n"]:
+            return
+        dur = (self._meta or {}).get("duration_ms") or ov.get("dur") or 1
+        for cue in (self._meta or {}).get("cues") or []:
+            cx = x0 + int((cue.get("t", 0) / max(1, dur)) * w)
+            _draw_cue_marker(p, cx, y0, h, cue, labeled=True)
 
     def _draw_overview_wave(self, p: QPainter, x0, y0, w, h) -> None:
         ov = self._overview
@@ -481,6 +516,19 @@ class WaveformView(QWidget):
                 p.fillRect(x0 + left, y0, right - left, h, QColor(46, 232, 154, 70))
                 p.fillRect(x0 + left, y0, 2, h, QColor(46, 232, 154, 220))
                 p.fillRect(x0 + max(left, right - 2), y0, 2, h, QColor(46, 232, 154, 220))
+
+        # Cue markers on the scrolling detail strip (live, not only in the cache).
+        if d and d["n"]:
+            cps = d["cps"] or 150.0
+            visible = max(1.0, self._visible_seconds() * cps)
+            px_per_col = w / visible
+            current = (self._pos_ms / 1000.0) * cps
+            start = current - visible / 2
+            for cue in (self._meta or {}).get("cues") or []:
+                x = int(((cue.get("t", 0) / 1000.0) * cps - start) * px_per_col)
+                if x < -20 or x > w + 20:
+                    continue
+                _draw_cue_marker(p, x0 + x, y0, h, cue, labeled=True)
 
         # Fixed playhead at centre.
         cx = x0 + w // 2
@@ -592,13 +640,7 @@ class WaveformView(QWidget):
             amp = (tall / 31.0) * span
             _paint_column(p, x0 + px, mid, amp, self._style, src, d, span)
 
-        for cue in (self._meta or {}).get("cues") or []:
-            x = int(((cue.get("t", 0) / 1000.0) * cps - start) * px_per_col)
-            if x < x_lo - 20 or x > x_hi + 20:
-                continue
-            c = cue.get("color")
-            color = QColor(*c) if c else QColor("#ffd45e" if cue.get("hot") else "#ffffff")
-            p.fillRect(x0 + x - 1, y0, 2, h, color)
+        # Cues are drawn live in _blit_detail so they stay sharp while scrolling.
 
 
 class DeckCard(QFrame):
@@ -654,10 +696,8 @@ class DeckCard(QFrame):
         self.num.setStyleSheet(
             f"font-family:monospace; font-size:18px; font-weight:700; color:{self._color};"
         )
-        self.tags = QLabel("")
-        self.tags.setObjectName("Mono")
         row.addWidget(self.num)
-        row.addWidget(self.tags, 1)
+        row.addStretch(1)
         who.addLayout(row)
         self.title = QLabel("—")
         self.title.setWordWrap(True)
@@ -675,8 +715,14 @@ class DeckCard(QFrame):
         who.addStretch(1)
         top.addLayout(who, 1)
         ident.addLayout(top)
+        # Tags on their own full-width row so MASTER / SYNC / ON AIR never clip.
+        self.tags = QLabel("")
+        self.tags.setObjectName("Mono")
+        self.tags.setWordWrap(True)
+        self.tags.setStyleSheet("font-size:10px;")
+        ident.addWidget(self.tags)
         self.wrap_ident = QWidget()
-        self.wrap_ident.setFixedWidth(220)
+        self.wrap_ident.setFixedWidth(IDENT_WIDTH)
         self.wrap_ident.setLayout(ident)
         body.addWidget(self.wrap_ident, 0)
 
@@ -788,7 +834,7 @@ class DeckCard(QFrame):
             or e["deck_show_meta"] or e["deck_show_tags"]
         )
         self.wrap_ident.setVisible(True)  # deck number always present
-        self.wrap_ident.setFixedWidth(220 if left_bits else 44)
+        self.wrap_ident.setFixedWidth(IDENT_WIDTH if left_bits else 44)
 
         right_bits = (
             e["deck_show_bpm"] or e["deck_show_tempo"] or e["deck_show_time"]

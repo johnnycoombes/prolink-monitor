@@ -43,6 +43,7 @@ STRINGS = {
     "overlay_playing": "Only decks with a track",
     "overlay_mix": "SmartTiming now-playing (audience track)",
     "overlay_decks": "Decks shown",
+    "overlay_wave": "Overlay waveform colour",
     "overlay_preview": "Preview background",
     "overlay_layout_now": "Now playing",
     "overlay_layout_dual": "Dual decks",

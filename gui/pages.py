@@ -658,11 +658,16 @@ class OverlayPage(Page):
         self.playing_only = QCheckBox(i18n.t("overlay_playing"))
         self.use_mix = QCheckBox(i18n.t("overlay_mix"))
         self.use_mix.setChecked(True)
+        self.wave_box = QComboBox()
+        self.wave_box.addItem(i18n.t("wave_rgb"), "rgb")
+        self.wave_box.addItem(i18n.t("wave_3band"), "3band")
+        self.wave_box.addItem(i18n.t("wave_blue"), "blue")
         self.preview = QCheckBox(i18n.t("overlay_preview"))
 
         form.addRow(i18n.t("overlay_layout"), self.layout_box)
         form.addRow(i18n.t("overlay_corner"), self.corner_box)
         form.addRow(i18n.t("overlay_decks"), self.decks_box)
+        form.addRow(i18n.t("overlay_wave"), self.wave_box)
         form.addRow("", self.playing_only)
         form.addRow("", self.use_mix)
         form.addRow("", self.preview)
@@ -700,7 +705,7 @@ class OverlayPage(Page):
         self.layout_root.addWidget(url_box)
         self.layout_root.addStretch(1)
 
-        for w in (self.layout_box, self.corner_box, self.decks_box):
+        for w in (self.layout_box, self.corner_box, self.decks_box, self.wave_box):
             w.currentIndexChanged.connect(self._on_change)
         self.playing_only.toggled.connect(self._on_change)
         self.use_mix.toggled.connect(self._on_change)
@@ -721,6 +726,8 @@ class OverlayPage(Page):
         self.decks_box.setCurrentIndex(max(0, idx))
         self.playing_only.setChecked(bool(data.get("overlay_playing_only", True)))
         self.use_mix.setChecked(bool(data.get("overlay_mix", True)))
+        idx = self.wave_box.findData(data.get("overlay_waveform_style", "rgb"))
+        self.wave_box.setCurrentIndex(max(0, idx))
         self.preview.setChecked(False)
         self._refresh_url()
 
@@ -731,6 +738,7 @@ class OverlayPage(Page):
             "overlay_decks": self.decks_box.currentData(),
             "overlay_playing_only": self.playing_only.isChecked(),
             "overlay_mix": self.use_mix.isChecked(),
+            "overlay_waveform_style": self.wave_box.currentData(),
         }
 
     def set_port(self, port: int) -> None:
@@ -750,6 +758,7 @@ class OverlayPage(Page):
             f"layout={self.layout_box.currentData()}",
             f"corner={self.corner_box.currentData()}",
             f"decks={self.decks_box.currentData()}",
+            f"wave={self.wave_box.currentData()}",
         ]
         if not self.playing_only.isChecked():
             qs.append("playing=0")
@@ -901,9 +910,14 @@ class SettingsPage(Page):
             self.overlay_decks.addItem(str(n), n)
         self.overlay_playing = QCheckBox(i18n.t("overlay_playing"))
         self.overlay_mix = QCheckBox(i18n.t("overlay_mix"))
+        self.overlay_wave = QComboBox()
+        self.overlay_wave.addItem(i18n.t("wave_rgb"), "rgb")
+        self.overlay_wave.addItem(i18n.t("wave_3band"), "3band")
+        self.overlay_wave.addItem(i18n.t("wave_blue"), "blue")
         ov.addRow(i18n.t("overlay_layout"), self.overlay_layout)
         ov.addRow(i18n.t("overlay_corner"), self.overlay_corner)
         ov.addRow(i18n.t("overlay_decks"), self.overlay_decks)
+        ov.addRow(i18n.t("overlay_wave"), self.overlay_wave)
         ov.addRow("", self.overlay_playing)
         ov.addRow("", self.overlay_mix)
 
@@ -965,6 +979,8 @@ class SettingsPage(Page):
         self.overlay_decks.setCurrentIndex(max(0, idx))
         self.overlay_playing.setChecked(bool(data.get("overlay_playing_only", True)))
         self.overlay_mix.setChecked(bool(data.get("overlay_mix", True)))
+        idx = self.overlay_wave.findData(data.get("overlay_waveform_style", "rgb"))
+        self.overlay_wave.setCurrentIndex(max(0, idx))
         self.auto_connect.setChecked(bool(data.get("auto_connect", True)))
         self.start_web.setChecked(bool(data.get("start_web_server", True)))
         self.show_sidebar.setChecked(bool(data.get("sidebar_visible", True)))
@@ -989,6 +1005,7 @@ class SettingsPage(Page):
             "overlay_decks": self.overlay_decks.currentData(),
             "overlay_playing_only": self.overlay_playing.isChecked(),
             "overlay_mix": self.overlay_mix.isChecked(),
+            "overlay_waveform_style": self.overlay_wave.currentData(),
             "auto_connect": self.auto_connect.isChecked(),
             "start_web_server": self.start_web.isChecked(),
             "sidebar_visible": self.show_sidebar.isChecked(),

@@ -45,6 +45,7 @@ DEFAULTS: dict[str, Any] = {
     "overlay_playing_only": True,
     "overlay_mix": True,
     "overlay_decks": 1,
+    "overlay_waveform_style": "rgb",  # rgb | 3band | blue — overlay mini-wave only
 }
 
 # Keys that toggle individual pieces of each Monitor deck card.
@@ -169,6 +170,8 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
         out["overlay_decks"] = max(1, min(4, int(data.get("overlay_decks", 1))))
     except (TypeError, ValueError):
         out["overlay_decks"] = 1
+    owave = str(data.get("overlay_waveform_style") or "rgb").lower()
+    out["overlay_waveform_style"] = owave if owave in ("rgb", "3band", "blue") else "rgb"
     return out
 
 
