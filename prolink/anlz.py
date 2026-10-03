@@ -181,28 +181,95 @@ def _cues_extended(a: Analysis, body: bytes) -> None:
         a.cues = keep + new
 
 
-_PHRASE_LABELS = {
-    1: {1: "Intro", 2: "Verse 1", 3: "Verse 1", 4: "Verse 1", 5: "Verse 2",
-        6: "Verse 2", 7: "Verse 2", 8: "Bridge", 9: "Chorus", 10: "Outro"},
-    2: {1: "Intro", 2: "Verse 1", 3: "Verse 2", 4: "Verse 3", 5: "Verse 4",
-        6: "Verse 5", 7: "Verse 6", 8: "Bridge", 9: "Chorus", 10: "Outro"},
-    3: {1: "Intro 1", 2: "Intro 2", 3: "Up 1", 4: "Up 2", 5: "Up 3", 6: "Down",
-        7: "Chorus 1", 8: "Chorus 2", 9: "Outro 1", 10: "Outro 2"},
+# Phrase labels by mood (Deep Symmetry Song Structure / Beat Link).
+# mood 1 = high, 2 = mid, 3 = low. High mood variants use the k1/k2/k3 flags.
+_PHRASE_LOW = {
+    1: "Intro", 2: "Verse 1", 3: "Verse 1", 4: "Verse 1",
+    5: "Verse 2", 6: "Verse 2", 7: "Verse 2", 8: "Bridge",
+    9: "Chorus", 10: "Outro",
 }
+_PHRASE_MID = {
+    1: "Intro", 2: "Verse 1", 3: "Verse 2", 4: "Verse 3",
+    5: "Verse 4", 6: "Verse 5", 7: "Verse 6", 8: "Bridge",
+    9: "Chorus", 10: "Outro",
+}
+
+# rekordbox 6+ XOR mask for PSSI bytes after len_entries (Deep Symmetry).
+_PSSI_MASK = bytes((
+    0xCB, 0xE1, 0xEE, 0xFA, 0xE5, 0xEE, 0xAD, 0xEE, 0xE9, 0xD2,
+    0xE9, 0xEB, 0xE1, 0xE9, 0xF3, 0xE8, 0xE9, 0xF4, 0xE1,
+))
+
+
+def _high_phrase_label(kind: int, k1: int, k2: int, k3: int) -> str:
+    if kind == 1:
+        return "Intro 1" if k1 == 1 else "Intro 2"
+    if kind == 2:
+        if k2 == 0 and k3 == 0:
+            return "Up 1"
+        if k2 == 0 and k3 == 1:
+            return "Up 2"
+        if k2 == 1 and k3 == 0:
+            return "Up 3"
+        return "Up"
+    if kind == 3:
+        return "Down"
+    if kind == 5:
+        return "Chorus 1" if k1 == 1 else "Chorus 2"
+    if kind == 6:
+        return "Outro 1" if k1 == 1 else "Outro 2"
+    return f"Phrase {kind}"
+
+
+def _unmask_pssi(body: bytes, len_entries: int) -> bytes:
+    """XOR-unmask PSSI bytes after len_entries (RB6+ export obfuscation)."""
+    out = bytearray(body)
+    add = len_entries & 0xFF
+    for i in range(6, len(out)):
+        out[i] ^= (_PSSI_MASK[(i - 6) % len(_PSSI_MASK)] + add) & 0xFF
+    return bytes(out)
 
 
 def _phrases(a: Analysis, body: bytes) -> None:
-    mood = _u4(body, 4)
-    count = struct.unpack_from(">H", body, 8)[0]
-    labels = _PHRASE_LABELS.get(mood, {})
-    pos = 16
-    for _ in range(count):
-        if pos + 4 > len(body):
-            break
-        beat, kind = struct.unpack_from(">HH", body, pos)
-        a.phrases.append(Phrase(beat, kind, labels.get(kind, f"Phrase {kind}")))
-        pos += 0x10
+    """Parse a PSSI song-structure tag (crate-digger / Deep Symmetry layout).
 
+    ``body`` starts at tag+12: ``len_entry_bytes``, ``len_entries``, then
+    (for rekordbox 6+) XOR-masked mood / bank / entries. Entry size is 24.
+    """
+    if len(body) < 20:
+        return
+    entry_bytes = _u4(body, 0)
+    len_entries = struct.unpack_from(">H", body, 4)[0]
+    if entry_bytes < 6 or len_entries <= 0:
+        return
+
+    # RB5 writes the tag in the clear; RB6+ XOR-masks everything after len_entries.
+    mood = struct.unpack_from(">H", body, 6)[0]
+    clear = body
+    if mood not in (1, 2, 3):
+        clear = _unmask_pssi(body, len_entries)
+        mood = struct.unpack_from(">H", clear, 6)[0]
+    if mood not in (1, 2, 3):
+        return
+
+    labels = _PHRASE_MID if mood == 2 else _PHRASE_LOW
+    # Entries begin at absolute tag offset 0x20 → body offset 0x14.
+    pos = 0x14
+    a.phrases.clear()
+    for _ in range(len_entries):
+        if pos + entry_bytes > len(clear):
+            break
+        # index (unused), beat, kind — then k1 @ +7, k2 @ +9, k3 @ +19
+        _index, beat, kind = struct.unpack_from(">HHH", clear, pos)
+        if mood == 1:
+            k1 = clear[pos + 7]
+            k2 = clear[pos + 9]
+            k3 = clear[pos + 19] if entry_bytes > 19 else 0
+            label = _high_phrase_label(kind, k1, k2, k3)
+        else:
+            label = labels.get(kind, f"Phrase {kind}")
+        a.phrases.append(Phrase(beat, kind, label))
+        pos += entry_bytes
 
 # ------------------------------------------------------------------- decoding
 
