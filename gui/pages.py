@@ -1231,6 +1231,9 @@ class SettingsPage(Page):
         self.name = QLineEdit()
         self.port = QSpinBox()
         self.port.setRange(1, 65535)
+        self.http_bind = QCheckBox(i18n.t("http_bind"))
+        self.http_bind.setToolTip(i18n.t("http_bind_tip"))
+        self.http_bind.setChecked(True)
         self.iface = QLineEdit()
         self.tshark = QLineEdit()
         self.cache = QLineEdit()
@@ -1239,6 +1242,7 @@ class SettingsPage(Page):
         conn.addRow(i18n.t("device_number"), self.number)
         conn.addRow(i18n.t("device_name"), self.name)
         conn.addRow(i18n.t("port"), self.port)
+        conn.addRow("", self.http_bind)
         conn.addRow(i18n.t("iface"), self.iface)
         conn.addRow(i18n.t("tshark"), self.tshark)
         conn.addRow(i18n.t("cache"), self.cache)
@@ -1365,6 +1369,7 @@ class SettingsPage(Page):
         self.number.setValue(int(data.get("number", 5)))
         self.name.setText(data.get("name") or "monitor")
         self.port.setValue(int(data.get("port", 8777)))
+        self.http_bind.setChecked(str(data.get("http_bind") or "0.0.0.0") != "127.0.0.1")
         self.iface.setText(data.get("iface") or "")
         self.tshark.setText(data.get("tshark") or "")
         self.cache.setText(data.get("cache") or "")
@@ -1401,6 +1406,7 @@ class SettingsPage(Page):
             "number": self.number.value(),
             "name": self.name.text().strip() or "monitor",
             "port": self.port.value(),
+            "http_bind": "0.0.0.0" if self.http_bind.isChecked() else "127.0.0.1",
             "iface": self.iface.text().strip(),
             "tshark": self.tshark.text().strip(),
             "cache": self.cache.text().strip(),

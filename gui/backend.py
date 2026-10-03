@@ -257,7 +257,9 @@ class Backend(QObject):
             bound_port = int(args.port)
             if settings.get("start_web_server", True):
                 Handler.monitor = monitor
-                server, bound_port = open_http_server(args.port, Handler)
+                server, bound_port = open_http_server(
+                    args.port, Handler, host=getattr(args, "http_host", "0.0.0.0") or "0.0.0.0",
+                )
                 thread = threading.Thread(target=server.serve_forever, daemon=True)
                 thread.start()
                 self._server_thread = thread

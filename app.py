@@ -693,10 +693,11 @@ class QuietServer(ThreadingHTTPServer):
 _HTTP_PORT_FALLBACKS = (8787, 8877, 9777, 18777, 0)
 
 
-def open_http_server(port: int, handler=None, host: str = "127.0.0.1"):
+def open_http_server(port: int, handler=None, host: str = "0.0.0.0"):
     """Bind the panel HTTP server, trying alternate ports if ``port`` is blocked.
 
-    Returns ``(server, actual_port)``. Raises ``OSError`` if nothing will bind.
+    Default ``host`` is ``0.0.0.0`` so phones on the same LAN can open the panel.
+    Pass ``127.0.0.1`` to keep it local-only. Returns ``(server, actual_port)``.
     Port ``0`` asks the OS for any free port.
     """
     handler = handler or Handler
@@ -726,6 +727,15 @@ def open_http_server(port: int, handler=None, host: str = "127.0.0.1"):
         f"could not bind HTTP port (tried {tried}). "
         f"Pass --port with a free number. Last errors: {detail}"
     ) from primary
+
+
+def lan_urls(port: int, local_ip: str | None = None) -> list[str]:
+    """Useful URLs for opening the panel from this machine or a phone on the LAN."""
+    urls = [f"http://127.0.0.1:{port}/"]
+    ip = (local_ip or "").strip()
+    if ip and not ip.startswith("127.") and ip != "0.0.0.0":
+        urls.append(f"http://{ip}:{port}/")
+    return urls
 
 
 # -------------------------------------------------------------------- start-up
@@ -760,6 +770,8 @@ def main() -> int:
                         "(auto-detected from the network when omitted)")
     p.add_argument("--mode", choices=["auto", "vcdj", "sniffer"], default="auto")
     p.add_argument("--port", type=int, default=8777, help="web server port")
+    p.add_argument("--http-host", default="0.0.0.0",
+                   help="HTTP bind address (0.0.0.0 = LAN; 127.0.0.1 = local only)")
     p.add_argument("--number", type=int, default=5,
                    help="virtual device number (1-6, avoid the ones in use)")
     p.add_argument("--name", default="monitor", help="name to announce ourselves with")
@@ -811,7 +823,7 @@ def main() -> int:
     print(f"  mode: {source.description}")
 
     try:
-        server, bound_port = open_http_server(args.port, Handler)
+        server, bound_port = open_http_server(args.port, Handler, host=args.http_host)
     except OSError as e:
         print(f"\nERROR: {e}")
         print("  On Windows, WinError 10013 usually means the port is reserved\n"
@@ -821,9 +833,16 @@ def main() -> int:
     if bound_port != args.port:
         print(f"  ! port {args.port} was blocked; using {bound_port} instead "
               f"(pass --port to pick one)")
-    url = f"http://127.0.0.1:{bound_port}/"
+    urls = lan_urls(bound_port, net.ip)
+    url = urls[0]
     print(f"  panel: {url}")
-    print(f"  overlay: http://127.0.0.1:{bound_port}/overlay\n")
+    if len(urls) > 1:
+        print(f"  phone / LAN: {urls[1]}   (same Wi‑Fi; optional ?readonly=1)")
+    print(f"  overlay: http://127.0.0.1:{bound_port}/overlay")
+    if len(urls) > 1:
+        print(f"           {urls[1].rstrip('/')}/overlay\n")
+    else:
+        print()
 
     if monitor.engine.wait_for_devices(6.0):
         for d in monitor.engine.active_decks():

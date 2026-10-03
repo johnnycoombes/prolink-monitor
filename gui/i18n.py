@@ -125,6 +125,8 @@ STRINGS = {
     "device_number": "Virtual device number",
     "device_name": "Announce name",
     "port": "Web server port",
+    "http_bind": "Allow phones on the same Wi‑Fi (LAN)",
+    "http_bind_tip": "When on, the panel listens on 0.0.0.0 so Android/iPhone can open http://<this-PC-IP>:port/. Turn off to keep localhost-only.",
     "iface": "Capture interface",
     "tshark": "tshark path",
     "cache": "Cache folder",
