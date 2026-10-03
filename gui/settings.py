@@ -12,6 +12,7 @@ DEFAULTS: dict[str, Any] = {
     "host": "",
     "mode": "auto",                 # auto | vcdj | sniffer
     "port": 8777,
+    "http_bind": "0.0.0.0",        # 0.0.0.0 = reachable on LAN (phone); 127.0.0.1 = local only
     "number": 5,
     "name": "monitor",
     "iface": "",
@@ -137,6 +138,8 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
         out["port"] = max(1, min(65535, int(data.get("port", 8777))))
     except (TypeError, ValueError):
         out["port"] = 8777
+    bind = str(data.get("http_bind") or "0.0.0.0").strip() or "0.0.0.0"
+    out["http_bind"] = "127.0.0.1" if bind in ("127.0.0.1", "localhost") else "0.0.0.0"
     try:
         out["number"] = max(1, min(6, int(data.get("number", 5))))
     except (TypeError, ValueError):
@@ -230,6 +233,7 @@ def as_namespace(data: dict[str, Any]):
         host=data["host"] or None,
         mode=data["mode"],
         port=data["port"],
+        http_host=data.get("http_bind") or "0.0.0.0",
         number=data["number"],
         name=data["name"],
         tshark=data["tshark"] or None,

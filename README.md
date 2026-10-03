@@ -268,7 +268,8 @@ python app.py
 ```
 
 It finds the player, picks a mode, starts the server and opens
-<http://127.0.0.1:8777/>.
+<http://127.0.0.1:8777/>. The HTTP server listens on **all interfaces** by default
+(`0.0.0.0`), so a phone on the same Wi‑Fi can open the panel too.
 
 | Option | What it does |
 |---|---|
@@ -277,8 +278,28 @@ It finds the player, picks a mode, starts the server and opens
 | `--mode sniffer` | force passive capture |
 | `--number 5` | device number to announce as (1-6) |
 | `--port 8777` | web server port |
+| `--http-host 0.0.0.0` | bind address (`127.0.0.1` = this PC only) |
 | `--iface` | capture interface for sniffer mode (see `tshark -D`) |
 | `--no-open` | do not open a browser |
+
+#### Connect from Android (same Wi‑Fi)
+
+1. Start Prolink Listener on the laptop/PC that is on the DJ network  
+   (`python app.py` or the desktop app with **Start local web server** on).
+2. Confirm **Settings → Allow phones on the same Wi‑Fi (LAN)** is checked  
+   (or leave the default `--http-host 0.0.0.0`).
+3. Note the **phone / LAN** URL printed in the console, e.g.  
+   `http://192.168.1.42:8777/` — that is this PC’s LAN IP, not `127.0.0.1`.
+4. On the phone, join the **same Wi‑Fi** as the PC (not mobile data / guest VLAN).
+5. Open Chrome (or any browser) and paste that URL.  
+   For a read-only view (hides **Record**):  
+   `http://192.168.1.42:8777/?readonly=1`
+6. If it does not load: allow port **8777** (or your chosen port) through the PC
+   firewall for private networks; on Windows, when prompted accept “Private”
+   network access for Python / Prolink Listener.
+
+The panel is already usable on a phone (stacked deck cards, sticky header). Use
+`?readonly=1` when you only want to watch, not arm session recording.
 
 There is a console monitor too, no browser involved:
 

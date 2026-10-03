@@ -222,6 +222,39 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   padding:2px 0;color:var(--dim)}
 #session .row .t{color:var(--d2);font-weight:700}
 #session .row .title{color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---- mobile / phone (read-only friendly) ---- */
+body.readonly #rec-btn{display:none}
+body.readonly #session .head::after{content:' · read-only'; color:var(--dimmest)}
+@media (max-width:900px){
+  body{overflow:auto;font-size:13px}
+  header{
+    flex-wrap:wrap;gap:8px;height:auto;min-height:46px;padding:8px 10px;
+    position:sticky;top:0;z-index:5;
+  }
+  header .brand{font-size:12px}
+  header .right{flex-wrap:wrap;gap:6px;width:100%;justify-content:flex-start}
+  header .switch-label{display:none}
+  #decks{padding:8px;gap:8px}
+  .deck{
+    grid-template-columns:1fr !important;
+    grid-template-rows:auto auto auto;
+    min-height:0;
+  }
+  .identity{padding:10px}
+  .canvases{min-height:140px}
+  .readouts{padding:10px 12px;flex-direction:row;flex-wrap:wrap;align-items:center;gap:10px}
+  .bpm{font-size:24px}
+  .times{margin-top:0}
+  #session{margin:0 8px 12px;font-size:11px}
+  #session .row{grid-template-columns:56px 28px 1fr;gap:6px}
+  #session .row span:nth-child(4),
+  #session .row span:nth-child(5){display:none}
+}
+@media (max-width:520px){
+  .art{width:56px;height:56px}
+  header .pill#p-lib,header .pill#p-dev{display:none}
+}
 </style>
 </head>
 <body>
@@ -260,6 +293,10 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 
 <script>
 /* ------------------------------------------------------------------- strings */
+const params = new URLSearchParams(location.search);
+const READONLY = params.get('readonly') === '1' || params.get('ro') === '1';
+if (READONLY) document.body.classList.add('readonly');
+
 const STRINGS = {
   brand: 'Prolink Listener <span>// pro dj link</span>',
   starting: 'starting…',
@@ -1199,6 +1236,7 @@ function escapeHtml(s) {
 }
 
 async function toggleSession() {
+  if (READONLY) return;
   const recording = document.getElementById('rec-btn').classList.contains('on');
   const path = recording ? '/api/session/stop' : '/api/session/start';
   try {
