@@ -11,7 +11,7 @@ packages**. This fork adds a PySide6 **Engine Room** desktop app, player-style
 waveform colours, configurable deck cards, a hideable sidebar, and a transparent
 **OBS Browser Source** overlay.
 
-![Engine Room — 2 decks](doc/desktop-monitor.png)
+![Engine Room — 4 decks RGB](doc/desktop-4deck-rgb.png)
 
 ---
 
@@ -38,31 +38,37 @@ comes from the original and is still the same idea.
 
 ### Desktop — Monitor
 
-Waveforms fill the available height. Switch **2 / 3 / 4** visible decks, zoom and
-waveform colour from the toolbar.
+Waveforms fill the available height. Switch **2** or **4** visible decks, zoom and
+waveform colour (**RGB** / **3BAND** / **BLUE**) from the toolbar. Layout order is
+**1–2** in two-deck mode and **3–1–2–4** in four-deck mode.
 
-![2-deck Monitor](doc/desktop-monitor.png)
+![4 decks RGB](doc/desktop-4deck-rgb.png)
 
-![4-deck Monitor](doc/desktop-monitor-4deck.png)
+![2 decks RGB](doc/desktop-2deck-rgb.png)
 
-Hide the sidebar with **☰** or **Ctrl+B** for a wider Monitor; a **Navigate** menu
-stays in the top bar.
+![4 decks 3BAND](doc/desktop-4deck-3band.png)
 
-![Sidebar hidden](doc/desktop-sidebar-hidden.png)
+![4 decks BLUE](doc/desktop-4deck-blue.png)
 
-### Desktop — Deck elements
+![2 decks BLUE](doc/desktop-2deck-blue.png)
 
-In **Settings → Deck elements**, choose which pieces each Monitor card shows.
-Hidden columns free space for the waveform.
+### Desktop — Sidebar
 
-![Deck elements settings](doc/settings-deck-elements.png)
+Hide the sidebar with **☰**, **Hide sidebar**, or **Ctrl+B** for a wider Monitor; a
+**Navigate** menu stays in the top bar. Preference is remembered.
 
-### Desktop — OBS Overlay builder
+![Sidebar](doc/desktop-sidebar.png)
 
-The **Overlay** page builds a Browser Source URL (layout, corner, decks) and can
-copy it to the clipboard.
+### Desktop — Settings, Library, Devices
 
-![Overlay page](doc/desktop-overlay.png)
+Connection, display, deck elements and behaviour live under **Settings**.
+**Library** shows NFS media stats; **Devices** lists players and mixers on the link.
+
+![Settings](doc/desktop-settings.png)
+
+![Library stats](doc/desktop-library.png)
+
+![Devices](doc/desktop-devices.png)
 
 ### OBS overlay
 
@@ -70,13 +76,13 @@ Transparent HTML served at `/overlay`, driven by the same SSE API as the web pan
 
 ![Now playing overlay](doc/overlay-nowplaying.png)
 
-![Dual decks overlay](doc/overlay-dual.png)
+![All decks overlay](doc/overlay-all-decks.png)
 
 ### Web panel
 
 The original browser panel is still available via `python app.py`.
 
-![Web panel](doc/panel.png)
+![Web panel](doc/web-panel.png)
 
 ---
 
