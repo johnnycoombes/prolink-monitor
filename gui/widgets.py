@@ -125,6 +125,25 @@ def _fill_mirrored(p: QPainter, x: int, mid: float, px: float, color: QColor) ->
     p.fillRect(x, int(mid - px), 1, max(1, int(px * 2)), color)
 
 
+def _band_heights_at(wave: dict, src: int) -> tuple[int, int, int, int] | None:
+    """Return (low, mid, high, peak) for 3BAND, synthesizing from RGB when needed."""
+    lows = wave.get("low")
+    if lows is not None and src < len(lows):
+        low = lows[src]
+        md = wave["mid"][src]
+        hi = wave["high"][src]
+        if low or md or hi:
+            return low, md, hi, int(wave.get("band_peak") or 1)
+    rgb = wave.get("rgb")
+    if rgb is not None and src < wave["n"]:
+        r = rgb[src * 3]
+        g = rgb[src * 3 + 1]
+        b = rgb[src * 3 + 2]
+        peak = max(1, r, g, b)
+        return b, g, r, peak
+    return None
+
+
 def _paint_column(p: QPainter, x: int, mid: float, amp: float, style: str,
                   src: int, wave: dict, span: float) -> None:
     """One waveform column, mirrored around the centre line.
@@ -132,14 +151,12 @@ def _paint_column(p: QPainter, x: int, mid: float, amp: float, style: str,
     3-Band follows ``WaveformDetailComponent``: the taller of low and mid is
     drawn in that band's colour, the overlap in brown, then highs in white.
     Heights are Beat Link's scaled pixel values, normalised to this view.
+    When PWV7 is missing, RGB colour-waveform channels stand in for the bands.
     """
-    lows = wave.get("low")
-    if style == "3band" and lows and src < len(lows):
-        low = lows[src]
-        md = wave["mid"][src]
-        hi = wave["high"][src]
-        if low or md or hi:
-            peak = wave.get("band_peak") or 1
+    if style == "3band":
+        bands = _band_heights_at(wave, src)
+        if bands is not None:
+            low, md, hi, peak = bands
             low_px = low / peak * span
             mid_px = md / peak * span
             high_px = hi / peak * span
@@ -154,7 +171,7 @@ def _paint_column(p: QPainter, x: int, mid: float, amp: float, style: str,
             return
     if amp < 0.5:
         return
-    if style in ("blue", "3band"):
+    if style == "blue":
         blue_h = wave.get("blue_h")
         if blue_h and len(blue_h) == wave["n"]:
             amp = (blue_h[src] / 31.0) * span
@@ -256,6 +273,9 @@ class WaveformView(QWidget):
         self._zoom = 8
         self._offair = False
         self._style = "rgb"
+        self._loop_start_ms: float | None = None
+        self._loop_end_ms: float | None = None
+        self._loop_active = False
         self._overview_pm: QPixmap | None = None
         self._overview_key: tuple | None = None
         self._detail_pm: QPixmap | None = None
@@ -301,6 +321,19 @@ class WaveformView(QWidget):
         self._playing = playing
         self.update()
 
+    def set_loop_region(self, start_ms: float | None, end_ms: float | None,
+                        active: bool = False) -> None:
+        start = float(start_ms) if start_ms is not None else None
+        end = float(end_ms) if end_ms is not None else None
+        active = bool(active and start is not None and end is not None and end > start)
+        if (start == self._loop_start_ms and end == self._loop_end_ms
+                and active == self._loop_active):
+            return
+        self._loop_start_ms = start
+        self._loop_end_ms = end
+        self._loop_active = active
+        self.update()
+
     def _invalidate_all(self) -> None:
         self._overview_pm = None
         self._overview_key = None
@@ -338,6 +371,12 @@ class WaveformView(QWidget):
         if not ov or not ov["n"]:
             return
         dur = (self._meta or {}).get("duration_ms") or ov.get("dur") or 1
+        if self._loop_active and self._loop_start_ms is not None and self._loop_end_ms is not None:
+            lx0 = int((self._loop_start_ms / max(1, dur)) * w)
+            lx1 = int((self._loop_end_ms / max(1, dur)) * w)
+            p.fillRect(x0 + lx0, y0, max(1, lx1 - lx0), h, QColor(46, 232, 154, 72))
+            p.fillRect(x0 + lx0, y0, 2, h, QColor(46, 232, 154, 220))
+            p.fillRect(x0 + max(lx0, lx1 - 2), y0, 2, h, QColor(46, 232, 154, 220))
         px = max(0, min(w, int((self._pos_ms / max(1, dur)) * w)))
         if px < w:
             p.fillRect(x0 + px, y0, w - px, h, QColor(8, 10, 12, 150))
@@ -385,6 +424,22 @@ class WaveformView(QWidget):
             p.setOpacity(alpha)
             p.drawPixmap(x0, y0, self._detail_pm)
             p.setOpacity(1.0)
+
+        d = self._detail
+        if d and d["n"] and self._loop_active and self._loop_start_ms is not None:
+            cps = d["cps"] or 150.0
+            visible = max(1.0, self._zoom * cps)
+            px_per_col = w / visible
+            current = (self._pos_ms / 1000.0) * cps
+            start = current - visible / 2
+            lx0 = int(((self._loop_start_ms / 1000.0) * cps - start) * px_per_col)
+            lx1 = int(((self._loop_end_ms / 1000.0) * cps - start) * px_per_col)
+            left = max(0, min(w, lx0))
+            right = max(0, min(w, lx1))
+            if right > left:
+                p.fillRect(x0 + left, y0, right - left, h, QColor(46, 232, 154, 70))
+                p.fillRect(x0 + left, y0, 2, h, QColor(46, 232, 154, 220))
+                p.fillRect(x0 + max(left, right - 2), y0, 2, h, QColor(46, 232, 154, 220))
 
         # Fixed playhead at centre.
         cx = x0 + w // 2
@@ -620,6 +675,22 @@ class DeckCard(QFrame):
         self.key.setStyleSheet(
             f"font-family:monospace; font-size:12px; font-weight:700; color:{self._color};"
         )
+        self.phase = QWidget()
+        self.phase.setFixedHeight(10)
+        phase_row = QHBoxLayout(self.phase)
+        phase_row.setContentsMargins(0, 0, 0, 0)
+        phase_row.setSpacing(3)
+        self._phase_dots: list[QFrame] = []
+        for _ in range(4):
+            dot = QFrame()
+            dot.setFixedSize(12, 4)
+            dot.setStyleSheet(
+                f"background:{COLORS['line']}; border:none; border-radius:1px;"
+            )
+            phase_row.addWidget(dot)
+            self._phase_dots.append(dot)
+        phase_row.addStretch(1)
+        self._phase_beat = 0
         self.state_wrap = QWidget()
         state_row = QHBoxLayout(self.state_wrap)
         state_row.setContentsMargins(0, 0, 0, 0)
@@ -629,6 +700,7 @@ class DeckCard(QFrame):
         read.addWidget(self.pitch)
         read.addSpacing(4)
         read.addWidget(self.times_wrap)
+        read.addWidget(self.phase)
         read.addWidget(self.state_wrap)
         read.addStretch(1)
         self.wrap_read = QWidget()
@@ -655,6 +727,7 @@ class DeckCard(QFrame):
         self.times_wrap.setVisible(e["deck_show_time"])
         self.key.setVisible(e["deck_show_key"])
         self.state.setVisible(e["deck_show_state"])
+        self.phase.setVisible(e["deck_show_state"] or e["deck_show_bpm"])
         self.state_wrap.setVisible(e["deck_show_key"] or e["deck_show_state"])
 
         # Left column stays if any identity piece (or always the deck number) shows.
@@ -723,8 +796,9 @@ class DeckCard(QFrame):
             self._wave_track_id != track_id or self._detail is None
         )
 
-    def advance_playhead(self, pos_ms: float, playing: bool, duration_ms: float = 0) -> None:
-        """Lightweight per-frame update: times + waveform position only."""
+    def advance_playhead(self, pos_ms: float, playing: bool, duration_ms: float = 0,
+                         *, bar: int = 0, looping: bool = False) -> None:
+        """Lightweight per-frame update: times + waveform position + phase."""
         self.elapsed.setText(mmss(pos_ms))
         remain = (duration_ms or 0) - pos_ms
         self.remaining.setText("-" + mmss(remain))
@@ -733,7 +807,38 @@ class DeckCard(QFrame):
             "font-family:monospace; font-size:15px; font-weight:700; color:"
             + (COLORS["danger"] if low else COLORS["dim"]) + ";"
         )
+        self._set_phase(bar)
+        self._apply_loop_region(pos_ms, looping)
         self.wave.set_position(pos_ms, playing)
+
+    def _set_phase(self, bar: int) -> None:
+        bar = int(bar or 0)
+        if bar == self._phase_beat:
+            return
+        self._phase_beat = bar
+        for i, dot in enumerate(self._phase_dots):
+            on = bar == i + 1
+            if on:
+                dot.setStyleSheet(
+                    f"background:{self._color}; border:none; border-radius:1px;"
+                )
+            else:
+                dot.setStyleSheet(
+                    f"background:{COLORS['line']}; border:none; border-radius:1px;"
+                )
+
+    def _apply_loop_region(self, pos_ms: float, looping: bool) -> None:
+        start = end = None
+        cues = (self._meta or {}).get("cues") or []
+        loops = [c for c in cues
+                 if c.get("type") == "loop" and (c.get("end") or 0) > (c.get("t") or 0)]
+        if loops:
+            inside = next(
+                (c for c in loops if c["t"] <= pos_ms <= c["end"]), None)
+            pick = inside or (loops[0] if looping else None)
+            if pick is not None:
+                start, end = float(pick["t"]), float(pick["end"])
+        self.wave.set_loop_region(start, end, active=bool(looping and start is not None))
 
     def update_deck(self, deck: dict, pos_ms: float) -> None:
         tid = deck.get("track_id") or 0
@@ -773,6 +878,8 @@ class DeckCard(QFrame):
             tags.append(self._chip(self._i18n.t("on_air"), COLORS["danger"]))
         elif tid:
             tags.append(self._chip(self._i18n.t("channel_closed"), COLORS["dim"]))
+        if deck.get("state") == "looping":
+            tags.append(self._chip(self._i18n.t("looping"), "#2ee89a"))
         tags_html = " ".join(tags)
         if tags_html != self._last_tags:
             self._last_tags = tags_html
@@ -802,8 +909,13 @@ class DeckCard(QFrame):
         elif tid and not self._meta:
             self.title.setText(self._i18n.t("loading"))
 
-        self.advance_playhead(pos_ms, bool(deck.get("playing")),
-                              float(deck.get("duration_ms") or 0))
+        self.advance_playhead(
+            pos_ms,
+            bool(deck.get("playing")),
+            float(deck.get("duration_ms") or 0),
+            bar=int(deck.get("bar") or 0),
+            looping=(deck.get("state") == "looping"),
+        )
 
     @staticmethod
     def _chip(text: str, color: str) -> str:

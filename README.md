@@ -205,12 +205,14 @@ The page background is transparent. Query parameters:
 With `mix=1` (default), `nowplaying` / `minimal` follow the **audience** track —
 the deck that has been playing and on-air long enough (prolink-connect
 SmartTiming: 128 beats ≈ two phrases, brief drop-outs ignored). Dual layout still
-shows the selected decks side by side. Live JSON is also on `/api/setlist`.
+shows the selected decks side by side and **spans the full window width** (4 decks
+in one row when `decks=4`), with a mini overview waveform and
+**elapsed / −remaining** times on each card. Live JSON is also on `/api/setlist`.
 
 Example:
 
 ```
-http://127.0.0.1:8777/overlay?layout=dual&corner=br&decks=2
+http://127.0.0.1:8777/overlay?layout=dual&corner=tl&decks=4&playing=0
 http://127.0.0.1:8777/overlay?layout=nowplaying&mix=1
 ```
 

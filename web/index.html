@@ -303,7 +303,12 @@ function setWaveStyle(style) {
   localStorage.setItem('waveStyle', style);
   document.querySelectorAll('#wave-switch button').forEach(
     b => b.classList.toggle('on', b.dataset.w === style));
-  for (const d of decks.values()) d.overviewId = null;
+  // Force overview + detail caches to rebuild in the new style.
+  for (const d of decks.values()) {
+    d.overviewId = null;
+    d.detailKey = null;
+    d.detailOff = null;
+  }
 }
 
 function setZoom(seconds) {
@@ -311,7 +316,11 @@ function setZoom(seconds) {
   localStorage.setItem('zoom', seconds);
   document.querySelectorAll('#zoom-switch button').forEach(
     b => b.classList.toggle('on', +b.dataset.s === seconds));
-  for (const d of decks.values()) d.overviewId = null;   // force a redraw
+  for (const d of decks.values()) {
+    d.overviewId = null;
+    d.detailKey = null;
+    d.detailOff = null;
+  }
 }
 
 function stepZoom(direction) {
@@ -409,13 +418,28 @@ function fillMirrored(ctx, x, mid, px, colW) {
   ctx.fillRect(x, top, colW, h);
 }
 
+function bandHeightsAt(wave, src) {
+  /** Return [low, mid, high, peak] for 3BAND, synthesizing from RGB when PWV7 is absent. */
+  if (wave.low && src < wave.low.length) {
+    const low = wave.low[src], md = wave.mid[src], hi = wave.high[src];
+    if (low || md || hi) return [low, md, hi, wave.bandPeak || 1];
+  }
+  // Colour waveform RGB ≈ high / mid / low energy (Pioneer colour map).
+  if (wave.rgb && src < wave.n) {
+    const r = wave.rgb[src * 3], g = wave.rgb[src * 3 + 1], b = wave.rgb[src * 3 + 2];
+    const peak = Math.max(1, r, g, b);
+    return [b, g, r, peak];
+  }
+  return null;
+}
+
 function fillWave(ctx, x, mid, amp, src, wave, span, colW) {
   span = span || amp;
   colW = colW || 1;
-  if (waveStyle === '3band' && wave.low && src < wave.low.length) {
-    const low = wave.low[src], md = wave.mid[src], hi = wave.high[src];
-    if (low || md || hi) {
-      const peak = wave.bandPeak || 1;
+  if (waveStyle === '3band') {
+    const bands = bandHeightsAt(wave, src);
+    if (bands) {
+      const [low, md, hi, peak] = bands;
       const lowPx = low / peak * span, midPx = md / peak * span, highPx = hi / peak * span;
       if (lowPx > midPx) {
         ctx.fillStyle = 'rgb(32,83,217)';
@@ -436,7 +460,7 @@ function fillWave(ctx, x, mid, amp, src, wave, span, colW) {
     }
   }
   let drawAmp = amp;
-  if (waveStyle === 'blue' || waveStyle === '3band') {
+  if (waveStyle === 'blue') {
     if (wave.blueH && wave.blueH.length === wave.n) drawAmp = (wave.blueH[src] / 31) * span;
     if (wave.blueRgb && wave.blueRgb.length === wave.n * 3) {
       const b = wave.blueRgb;
@@ -594,7 +618,25 @@ function fitCanvas(cv) {
   return false;
 }
 
-function drawOverview(d, track, pos) {
+function activeLoop(meta, pos, looping) {
+  /** Loop cue containing playhead, or null. Prefer when deck reports looping. */
+  if (!meta || !meta.cues) return null;
+  const loops = meta.cues.filter(c => c.type === 'loop' && c.end > c.t);
+  if (!loops.length) return null;
+  const inside = loops.find(c => pos >= c.t && pos <= c.end);
+  if (inside) return inside;
+  return looping ? loops[0] : null;
+}
+
+function drawLoopRegion(ctx, x0, y0, w, h, r) {
+  ctx.fillStyle = 'rgba(46, 232, 154, 0.28)';
+  ctx.fillRect(x0, y0, Math.max(1, w), h);
+  ctx.fillStyle = 'rgba(46, 232, 154, 0.85)';
+  ctx.fillRect(x0, y0, Math.max(1, Math.round(r)), h);
+  ctx.fillRect(x0 + w - Math.max(1, Math.round(r)), y0, Math.max(1, Math.round(r)), h);
+}
+
+function drawOverview(d, track, pos, looping) {
   const cv = d.cvOverview, ctx = d.ctxOverview;
   const resized = fitCanvas(cv);
   const r = window.devicePixelRatio || 1;
@@ -602,8 +644,8 @@ function drawOverview(d, track, pos) {
   const cssW = Math.max(1, Math.round(cv.clientWidth));
   if (!track || !track.overview || !track.overview.n) { ctx.clearRect(0, 0, W, H); return; }
 
-  if (resized || d.overviewId !== track.meta.id) {          // drawn once per track
-    d.overviewId = track.meta.id;
+  if (resized || d.overviewId !== `${track.meta.id}|${waveStyle}`) {
+    d.overviewId = `${track.meta.id}|${waveStyle}`;
     const off = document.createElement('canvas');
     off.width = W; off.height = H;
     const o = off.getContext('2d');
@@ -626,6 +668,13 @@ function drawOverview(d, track, pos) {
   ctx.drawImage(d.overviewOff, 0, 0);
   ctx.restore();
 
+  const loop = activeLoop(track.meta, pos, looping);
+  if (loop) {
+    const x0 = (loop.t / dur) * W;
+    const x1 = (loop.end / dur) * W;
+    drawLoopRegion(ctx, x0, 0, Math.max(1, x1 - x0), H, r);
+  }
+
   for (const c of track.meta.cues) {            // cue markers
     const cx = (c.t / dur) * W;
     ctx.fillStyle = c.color ? `rgb(${c.color[0]},${c.color[1]},${c.color[2]})`
@@ -636,7 +685,7 @@ function drawOverview(d, track, pos) {
   ctx.fillRect(px - r, 0, Math.max(2, Math.round(2 * r)), H);
 }
 
-function drawDetail(d, track, pos, playing) {
+function drawDetail(d, track, pos, playing, looping) {
   const cv = d.cvDetail, ctx = d.ctxDetail;
   const resized = fitCanvas(cv);
   const W = cv.width, H = cv.height, r = window.devicePixelRatio || 1;
@@ -742,6 +791,13 @@ function drawDetail(d, track, pos, playing) {
   ctx.clearRect(0, 0, W, H);
   ctx.drawImage(d.detailOff, 0, 0);
 
+  const loop = activeLoop(track.meta, pos, looping);
+  if (loop) {
+    const x0 = ((loop.t / 1000) * cps - start) * pxPerCol * r;
+    const x1 = ((loop.end / 1000) * cps - start) * pxPerCol * r;
+    drawLoopRegion(ctx, x0, 0, Math.max(1, x1 - x0), H, r);
+  }
+
   // playhead, fixed in the middle
   ctx.fillStyle = getComputedStyle(d.el).getPropertyValue('--c').trim();
   ctx.globalAlpha = playing ? .18 : .07;
@@ -785,8 +841,8 @@ function render() {
     }
     d.lastBar = s.bar;
 
-    drawOverview(d, track, pos);
-    drawDetail(d, track, pos, s.playing);
+    drawOverview(d, track, pos, s.state === 'looping');
+    drawDetail(d, track, pos, s.playing, s.state === 'looping');
   }
 }
 
