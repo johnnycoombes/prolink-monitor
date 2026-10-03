@@ -320,7 +320,13 @@ class MonitorPage(Page):
             dur = float(d.get("duration_ms") or 0)
             if dur:
                 pos = min(pos, dur)
-            card.advance_playhead(pos, bool(d.get("playing")), dur)
+            card.advance_playhead(
+                pos,
+                bool(d.get("playing")),
+                dur,
+                bar=int(d.get("bar") or 0),
+                looping=(d.get("state") == "looping"),
+            )
 
     def _visible(self, decks: list[dict]) -> list[dict]:
         """Pick decks for the current layout and return them in display order."""

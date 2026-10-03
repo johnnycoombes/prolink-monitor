@@ -38,13 +38,16 @@ body.preview{
 #root{
   width:100%;height:100%;
   display:flex;align-items:flex-end;justify-content:flex-start;
-  padding:4vh 3.5vw;
+  padding:3vh 2vw;
 }
 #root.corner-tr{align-items:flex-start;justify-content:flex-end}
 #root.corner-tl{align-items:flex-start;justify-content:flex-start}
 #root.corner-br{align-items:flex-end;justify-content:flex-end}
 #root.corner-bl{align-items:flex-end;justify-content:flex-start}
 #root.center{align-items:center;justify-content:center}
+#root.spread{justify-content:stretch;align-items:flex-start}
+#root.spread.corner-bl,#root.spread.corner-br{align-items:flex-end}
+#root.spread.corner-center{align-items:center}
 
 .card{
   display:none;
@@ -63,6 +66,11 @@ body.preview{
 }
 .card.show{display:block;opacity:1;transform:none}
 .card.hide{opacity:0;transform:translateY(12px)}
+.card.spread{
+  width:100%;
+  max-width:none;
+  min-width:0;
+}
 
 .now{
   display:grid;
@@ -91,6 +99,7 @@ body.preview{
 .tag.master{color:#ffd45e}
 .tag.sync{color:var(--dim)}
 .tag.onair{color:#ff6b61;background:rgba(255,107,97,.12)}
+.tag.loop{color:#2ee89a;background:rgba(46,232,154,.12)}
 .title{
   font-size:clamp(20px,2.4vw,28px);font-weight:700;line-height:1.15;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
@@ -107,29 +116,49 @@ body.preview{
 .bpm small{font-size:11px;letter-spacing:.12em;color:var(--dimmest);margin-left:4px}
 .key{font-size:15px;font-weight:700;color:var(--deck,#22d3ee)}
 .time{font-size:13px;color:var(--dim)}
+.time .remain{color:var(--dimmest)}
+.time .remain.low{color:#ff6b61}
 .progress{
-  margin-top:12px;height:4px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden;
+  margin-top:10px;height:4px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden;
 }
 .progress > i{
   display:block;height:100%;width:0%;
   background:linear-gradient(90deg,var(--deck,#22d3ee),#fff);
   transition:width .08s linear;
 }
+.wave{
+  margin-top:10px;height:36px;width:100%;
+  border-radius:6px;background:rgba(0,0,0,.35);
+  border:1px solid var(--line);overflow:hidden;
+}
+.wave canvas{display:block;width:100%;height:100%}
 
 .dual{
-  display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px;
-  min-width:min(860px,96vw);max-width:1200px;
+  display:grid;gap:12px;padding:14px;
+  width:100%;
+  max-width:none;
+  min-width:0;
 }
+.dual.decks-2{grid-template-columns:1fr 1fr}
+.dual.decks-4{grid-template-columns:repeat(4,minmax(0,1fr))}
 .dual .slot{
-  display:grid;grid-template-columns:72px 1fr;gap:12px;align-items:center;
+  display:grid;grid-template-columns:64px 1fr;gap:12px;align-items:start;
   padding:12px;border:1px solid var(--line);border-radius:14px;background:rgba(0,0,0,.22);
+  min-width:0;
 }
-.dual .art{width:72px;height:72px;font-size:24px;border-radius:10px}
-.dual .art img{border-radius:10px}
-.dual .title{font-size:16px}
-.dual .artist{font-size:13px}
-.dual .bpm{font-size:18px}
+.dual .art{
+  width:64px;height:64px;font-size:22px;border-radius:10px;
+  background:rgba(255,255,255,.06);border:1px solid var(--line);
+  display:flex;align-items:center;justify-content:center;color:var(--dimmest);
+  font-family:var(--mono);overflow:hidden;
+}
+.dual .art img{width:100%;height:100%;object-fit:cover;border-radius:10px;display:block}
+.dual .title{font-size:15px}
+.dual .artist{font-size:12px}
+.dual .bpm{font-size:16px}
+.dual .readouts{margin-top:8px;gap:10px}
 .dual .progress{margin-top:8px}
+.dual .wave{height:28px;margin-top:8px}
 
 .minimal{
   display:flex;align-items:center;gap:12px;
@@ -150,8 +179,11 @@ body.preview{
 }
 #idle.show{display:inline-block}
 
+@media (max-width:1100px){
+  .dual.decks-4{grid-template-columns:1fr 1fr}
+}
 @media (max-width:720px){
-  .dual{grid-template-columns:1fr}
+  .dual.decks-2,.dual.decks-4{grid-template-columns:1fr}
   .now{grid-template-columns:84px 1fr}
   .now .art{width:84px;height:84px}
 }
@@ -172,18 +204,19 @@ const corner = ['bl','br','tl','tr','center'].includes(params.get('corner'))
   ? params.get('corner') : 'bl';
 const onlyPlaying = params.get('playing') !== '0';
 const preview = params.get('preview') === '1';
-/* SmartTiming now-playing (prolink-connect style). Default on for single-deck layouts. */
 const useMix = params.get('mix') !== '0';
 const maxDecks = Math.min(4, Math.max(1, +(params.get('decks') || (layout === 'dual' ? 2 : 1))));
+const spread = layout === 'dual';
 
 if (preview) document.body.classList.add('preview');
-document.getElementById('root').classList.add('corner-' + corner);
+const root = document.getElementById('root');
+root.classList.add('corner-' + corner);
+if (spread) root.classList.add('spread');
 
-const tracks = new Map();
+const tracks = new Map();   // id -> {meta, overview}
 const pending = new Set();
 let last = null;
 let receivedAt = 0;
-let artIds = new Set();
 
 function mmss(ms){
   ms = Math.max(0, ms|0);
@@ -191,7 +224,18 @@ function mmss(ms){
   return `${String(Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`;
 }
 
-/* Same stack order as the Monitor / web panel: 2→1-2, 4→3-1-2-4. */
+function remainHtml(pos, dur){
+  if (!dur) return '';
+  const rem = Math.max(0, dur - pos);
+  const low = rem < 30000 ? ' low' : '';
+  return `<span class="remain${low}">-${mmss(rem)}</span>`;
+}
+
+function timeHtml(pos, dur){
+  if (!dur) return mmss(pos);
+  return `${mmss(pos)} / ${remainHtml(pos, dur)}`;
+}
+
 const DECK_LAYOUT = {2: [1, 2], 4: [3, 1, 2, 4]};
 
 function visibleDecks(list){
@@ -207,32 +251,48 @@ function visibleDecks(list){
   return rows.slice(0, maxDecks);
 }
 
-/** Prefer MixStatus now_playing when mix=1 (default for nowplaying/minimal). */
 function pickDecks(state){
   const list = state.decks || [];
   if (layout === 'dual' || !useMix) return visibleDecks(list);
   const np = state.now_playing;
   if (np && np.number) {
     const live = list.find(d => d.number === np.number);
-    // Prefer live deck status (position/bpm) with mix metadata for title tags.
-    const deck = live
-      ? Object.assign({}, np, live)
-      : np;
+    const deck = live ? Object.assign({}, np, live) : np;
     if (deck.track_id || deck.playing) return [deck];
   }
   return visibleDecks(list);
+}
+
+function readWaveform(buf, off){
+  const dv = new DataView(buf);
+  const n = dv.getUint32(off + 8, true);
+  const cps = dv.getFloat32(off + 12, true);
+  const dur = dv.getUint32(off + 16, true);
+  const h = new Uint8Array(buf, off + 24, n);
+  const rgb = new Uint8Array(buf, off + 24 + n, n * 3);
+  return {n, cps, dur, h, rgb, end: off + 24 + n * 4};
 }
 
 async function loadTrack(id){
   if (!id || tracks.has(id) || pending.has(id)) return;
   pending.add(id);
   try{
-    const meta = await fetch(`/api/track/${id}`).then(r => r.ok ? r.json() : null);
-    if (meta) tracks.set(id, meta);
+    const [meta, buf] = await Promise.all([
+      fetch(`/api/track/${id}`).then(r => r.ok ? r.json() : null),
+      fetch(`/api/waveform/${id}`).then(r => r.ok ? r.arrayBuffer() : null),
+    ]);
+    if (!meta) return;
+    let overview = null;
+    if (buf) {
+      const detail = readWaveform(buf, 0);
+      overview = readWaveform(buf, detail.end);
+    }
+    tracks.set(id, {meta, overview});
   } finally { pending.delete(id); }
 }
 
-function artHtml(trackId, meta){
+function artHtml(trackId, pack){
+  const meta = pack && pack.meta;
   if (trackId && meta && meta.has_artwork)
     return `<div class="art"><img alt="" src="/api/artwork/${trackId}"></div>`;
   return `<div class="art">♪</div>`;
@@ -243,6 +303,7 @@ function tagsHtml(deck){
   if (deck.master) bits.push('<span class="tag master">MASTER</span>');
   if (deck.sync) bits.push('<span class="tag sync">SYNC</span>');
   if (deck.on_air) bits.push('<span class="tag onair">ON AIR</span>');
+  if (deck.state === 'looping') bits.push('<span class="tag loop">LOOP</span>');
   return `<div class="tags">${bits.join('')}</div>`;
 }
 
@@ -251,15 +312,60 @@ function progressPct(pos, dur){
   return Math.max(0, Math.min(100, (pos/dur)*100));
 }
 
+function waveHtml(trackId){
+  return `<div class="wave"><canvas data-wave="${trackId||0}"></canvas></div>`;
+}
+
+function paintWaveCanvas(cv, pack, pos, color, looping){
+  if (!cv) return;
+  const r = window.devicePixelRatio || 1;
+  const cssW = Math.max(1, Math.round(cv.clientWidth || cv.parentElement.clientWidth || 120));
+  const cssH = Math.max(1, Math.round(cv.clientHeight || 28));
+  const W = Math.round(cssW * r), H = Math.round(cssH * r);
+  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+  const ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(0,0,0,.25)';
+  ctx.fillRect(0, 0, W, H);
+  const ov = pack && pack.overview;
+  if (!ov || !ov.n) return;
+  const mid = H / 2, span = mid * 0.9;
+  for (let x = 0; x < cssW; x++) {
+    const i = Math.min(ov.n - 1, Math.floor(x * ov.n / cssW));
+    const amp = (ov.h[i] / 31) * span;
+    if (amp < 0.5) continue;
+    const rgb = ov.rgb;
+    ctx.fillStyle = `rgb(${rgb[i*3]},${rgb[i*3+1]},${rgb[i*3+2]})`;
+    const top = Math.round(mid - amp);
+    ctx.fillRect(Math.round(x * r), top, Math.max(1, Math.round(r)), Math.max(1, Math.round(amp * 2)));
+  }
+  const dur = (pack.meta && pack.meta.duration_ms) || ov.dur || 1;
+  const px = Math.max(0, Math.min(W, (pos / dur) * W));
+  if (looping && pack.meta && pack.meta.cues) {
+    const loop = pack.meta.cues.find(c => c.type === 'loop' && c.end > c.t && pos >= c.t && pos <= c.end)
+      || pack.meta.cues.find(c => c.type === 'loop' && c.end > c.t);
+    if (loop) {
+      const x0 = (loop.t / dur) * W, x1 = (loop.end / dur) * W;
+      ctx.fillStyle = 'rgba(46,232,154,.30)';
+      ctx.fillRect(x0, 0, Math.max(1, x1 - x0), H);
+    }
+  }
+  ctx.fillStyle = 'rgba(8,10,12,.55)';
+  ctx.fillRect(px, 0, W - px, H);
+  ctx.fillStyle = color || '#22d3ee';
+  ctx.fillRect(px - r, 0, Math.max(2, Math.round(2 * r)), H);
+}
+
 function renderNow(deck, pos){
-  const meta = tracks.get(deck.track_id);
+  const pack = tracks.get(deck.track_id);
+  const meta = pack && pack.meta;
   const title = meta ? (meta.title || '—') : (deck.track_id ? 'loading…' : 'no track');
   const artist = meta ? (meta.artist || '') : '';
   const key = meta ? (meta.key || '') : '';
   const color = DECK_COLORS[deck.number] || '#22d3ee';
   return `
     <div class="now" style="--deck:${color}">
-      ${artHtml(deck.track_id, meta)}
+      ${artHtml(deck.track_id, pack)}
       <div class="meta">
         ${tagsHtml(deck)}
         <div class="title">${escapeHtml(title)}</div>
@@ -267,21 +373,23 @@ function renderNow(deck, pos){
         <div class="readouts">
           <div class="bpm">${deck.bpm ? deck.bpm.toFixed(2) : '—'}<small>BPM</small></div>
           ${key ? `<div class="key">${escapeHtml(key)}</div>` : ''}
-          <div class="time">${mmss(pos)}${deck.duration_ms ? ' / '+mmss(deck.duration_ms) : ''}</div>
+          <div class="time" data-time>${timeHtml(pos, deck.duration_ms)}</div>
         </div>
+        ${waveHtml(deck.track_id)}
         <div class="progress"><i style="width:${progressPct(pos, deck.duration_ms)}%"></i></div>
       </div>
     </div>`;
 }
 
 function renderMinimal(deck, pos){
-  const meta = tracks.get(deck.track_id);
+  const pack = tracks.get(deck.track_id);
+  const meta = pack && pack.meta;
   const title = meta ? (meta.title || '—') : (deck.track_id ? 'loading…' : 'no track');
   const artist = meta ? (meta.artist || '') : '';
   const color = DECK_COLORS[deck.number] || '#22d3ee';
   return `
     <div class="minimal" style="--deck:${color}">
-      ${artHtml(deck.track_id, meta)}
+      ${artHtml(deck.track_id, pack)}
       <div class="meta" style="min-width:0">
         <div class="title">${escapeHtml(title)}</div>
         <div class="artist">${escapeHtml(artist)}</div>
@@ -291,26 +399,49 @@ function renderMinimal(deck, pos){
 }
 
 function renderDual(decks, positions){
-  return `<div class="dual">${decks.map((d,i)=>`
+  const cols = maxDecks >= 4 ? 4 : 2;
+  return `<div class="dual decks-${cols}">${decks.map((d,i)=>{
+    const pack = tracks.get(d.track_id);
+    const meta = pack && pack.meta;
+    const title = meta ? (meta.title || '—') : (d.track_id ? 'loading…' : 'no track');
+    const artist = meta ? (meta.artist || '') : '';
+    return `
     <div class="slot" style="--deck:${DECK_COLORS[d.number]||'#22d3ee'}">
-      ${artHtml(d.track_id, tracks.get(d.track_id))}
+      ${artHtml(d.track_id, pack)}
       <div class="meta">
         ${tagsHtml(d)}
-        <div class="title">${escapeHtml((tracks.get(d.track_id)||{}).title || (d.track_id?'loading…':'no track'))}</div>
-        <div class="artist">${escapeHtml((tracks.get(d.track_id)||{}).artist || '')}</div>
+        <div class="title">${escapeHtml(title)}</div>
+        <div class="artist">${escapeHtml(artist)}</div>
         <div class="readouts">
           <div class="bpm">${d.bpm?d.bpm.toFixed(2):'—'}<small>BPM</small></div>
-          <div class="time">${mmss(positions[i])}</div>
+          <div class="time" data-time>${timeHtml(positions[i], d.duration_ms)}</div>
         </div>
+        ${waveHtml(d.track_id)}
         <div class="progress"><i style="width:${progressPct(positions[i], d.duration_ms)}%"></i></div>
       </div>
-    </div>`).join('')}</div>`;
+    </div>`;
+  }).join('')}</div>`;
 }
 
 function escapeHtml(s){
   return String(s||'').replace(/[&<>"']/g, c => ({
     '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
   }[c]));
+}
+
+function paintWaves(decks, positions){
+  const card = document.getElementById('card');
+  card.querySelectorAll('canvas[data-wave]').forEach((cv, i) => {
+    const d = decks[i] || decks[0];
+    if (!d) return;
+    paintWaveCanvas(
+      cv,
+      tracks.get(d.track_id),
+      positions[i] ?? positions[0],
+      DECK_COLORS[d.number],
+      d.state === 'looping'
+    );
+  });
 }
 
 function paint(){
@@ -341,26 +472,25 @@ function paint(){
   else if (layout === 'minimal') html = renderMinimal(decks[0], positions[0]);
   else html = renderNow(decks[0], positions[0]);
 
-  // Avoid wiping artwork flashes: only replace when structure changes.
   const np = last.now_playing;
   const mixSig = useMix && np ? `:mix${np.number}:${np.track_id||0}` : '';
-  const sig = decks.map(d => `${d.number}:${d.track_id||0}:${!!tracks.get(d.track_id)}`).join('|')
-    + '|' + layout + mixSig;
+  const waveSig = decks.map(d => {
+    const p = tracks.get(d.track_id);
+    return `${d.number}:${d.track_id||0}:${!!(p&&p.meta)}:${!!(p&&p.overview)}:${d.state||''}`;
+  }).join('|');
+  const sig = waveSig + '|' + layout + mixSig + `|d${maxDecks}`;
+  card.classList.toggle('spread', spread);
   if (card.dataset.sig !== sig){
     card.innerHTML = html;
     card.dataset.sig = sig;
   } else {
-    // update live bits in place
     card.querySelectorAll('.progress > i').forEach((el,i)=>{
       el.style.width = progressPct(positions[i] ?? positions[0], decks[i]?.duration_ms || decks[0].duration_ms) + '%';
     });
-    card.querySelectorAll('.time').forEach((el,i)=>{
+    card.querySelectorAll('[data-time]').forEach((el,i)=>{
       const d = decks[i] || decks[0];
       const pos = positions[i] ?? positions[0];
-      if (layout === 'nowplaying')
-        el.textContent = `${mmss(pos)}${d.duration_ms ? ' / '+mmss(d.duration_ms) : ''}`;
-      else
-        el.textContent = mmss(pos);
+      el.innerHTML = timeHtml(pos, d.duration_ms);
     });
     card.querySelectorAll('.bpm').forEach((el,i)=>{
       const d = decks[Math.min(i, decks.length-1)];
@@ -371,6 +501,7 @@ function paint(){
         el.innerHTML = `${d.bpm ? d.bpm.toFixed(2) : '—'}<small>BPM</small>`;
     });
   }
+  paintWaves(decks, positions);
   card.classList.add('show');
 }
 
