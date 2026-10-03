@@ -359,6 +359,9 @@ class LibraryPage(Page):
         self.host_label = QLabel("")
         self.host_label.setObjectName("Dim")
         wrap_l.addWidget(self.host_label)
+        self.onelibrary_label = QLabel("")
+        self.onelibrary_label.setObjectName("Dim")
+        wrap_l.addWidget(self.onelibrary_label)
         self.error_label = QLabel("")
         self.error_label.setStyleSheet(f"color:{COLORS['danger']};")
         wrap_l.addWidget(self.error_label)
@@ -383,6 +386,16 @@ class LibraryPage(Page):
             label.setText(str(lib.get(key, "—")) if lib else "—")
         host = state.get("host") or ""
         self.host_label.setText(host)
+        ol = state.get("onelibrary")
+        if ol and ol.get("present"):
+            if ol.get("readable"):
+                self.onelibrary_label.setText(
+                    f"OneLibrary · {ol.get('detail') or 'readable'}")
+            else:
+                detail = ol.get("detail") or ol.get("error") or "present"
+                self.onelibrary_label.setText(f"OneLibrary · {detail}")
+        else:
+            self.onelibrary_label.setText("")
         err = state.get("library_error") or ""
         self.error_label.setText(err if not lib else "")
 

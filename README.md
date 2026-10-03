@@ -291,25 +291,29 @@ Uses the virtual device when port 50002 is free, passive capture when it is not.
 | Port | Contents |
 |---|---|
 | 50000 | keep-alive: who is on the network (broadcast) |
-| 50001 | beats: arrives exactly on the beat, with tempo and position in the bar |
+| 50001 | beats: arrives exactly on the beat, with tempo and position in the bar; **Absolute Position** (type `0x0b`) on CDJ-3000-class players ~every 30 ms |
 | 50002 | detailed status of each player (unicast) |
 | 50004 | mixer packet, type 0x20: 44 bytes at ~140 Hz, and only a counter inside |
 
 The XDJ-AZ status packet is 292 bytes. Field offsets are verified against real
-captures from the unit.
+captures from the unit. Whether the AZ also emits Absolute Position packets is
+**unconfirmed** — each deck's live state exposes `absolute_packets` and
+`position_source` (`exact` vs `beat_grid`) so a capture or a running session
+shows it immediately. `python probe.py` also names type `0x0b` fields.
 
 #### The playhead
 
-Position is a continuous model (base position, base time, speed), corrected by
-20 % of the error per observation and re-placed outright only past 400 ms, the
-threshold for a cue or a seek rather than noise.
+Position is a continuous model (base position, base time, speed). When Absolute
+Position packets arrive they become the source of truth (~30 Hz playhead in ms).
+Otherwise the model is corrected from the beat grid: 20 % of the error per
+observation, re-placed outright only past 400 ms (cue / seek rather than noise).
 
 Each beat's instant comes from the **beat packet**, which arrives on the beat; the
 status packet lags it by a variable 2-50 ms. In passive mode the timestamp is
 `frame.time_epoch`, tshark's capture time, since tshark delivers its output in
 batches and read time says nothing about arrival time.
 
-Measured on the real stream: ±1.3 ms.
+Measured on the real stream (beat-grid path): ±1.3 ms.
 
 ### Metadata and waveforms — NFS
 
@@ -318,6 +322,15 @@ these come from:
 
 - `PIONEER/rekordbox/export.pdb` — the rekordbox database: tracks, artists, albums,
   genres, keys, labels and artwork paths.
+- `PIONEER/rekordbox/exportLibrary.db` — optional **OneLibrary / Device Library
+  Plus** (XDJ-AZ and friends). Encrypted SQLCipher; playlists and history created
+  on the player itself only live here. Classic `export.pdb` is still written by
+  rekordbox and remains the default for live deck metadata. To read OneLibrary::
+
+      pip install "pyrekordbox @ git+https://github.com/dylanljones/pyrekordbox.git@master"
+
+  The Library page then shows playlist / history counts when the file is present
+  and readable.
 - `PIONEER/USBANLZ/.../ANLZ0000.DAT` / `.EXT` / `.2EX` — per-track analysis: beat
   grid, cues, phrases and the waveforms.
 - `PIONEER/Artwork/...` — the artwork itself.
