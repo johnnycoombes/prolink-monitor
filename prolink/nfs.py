@@ -15,6 +15,7 @@ import random
 import socket
 import struct
 import threading
+import time
 from dataclasses import dataclass
 
 PROG_PORTMAP = 100000
@@ -162,6 +163,16 @@ class RpcClient:
         # Some players only answer requests coming from a privileged port.
         self._bind_reserved()
         self._machine = _xdr_str(socket.gethostname()[:32])
+        # Round-trip timing for the Health panel (UDP RPC latency).
+        self.last_rtt_ms: float | None = None
+        self._rtt_ewma_ms: float | None = None
+        self.call_count: int = 0
+        self.timeout_count: int = 0
+
+    @property
+    def rtt_ms(self) -> float | None:
+        """Smoothed RTT in milliseconds, or None before the first success."""
+        return self._rtt_ewma_ms
 
     def _bind_reserved(self) -> None:
         for port in range(1010, 1024):
@@ -176,6 +187,14 @@ class RpcClient:
         body = struct.pack(">I", 0) + self._machine + struct.pack(">III", 0, 0, 0)
         return struct.pack(">II", 1, len(body)) + body      # AUTH_UNIX
 
+    def _record_rtt(self, started: float) -> None:
+        rtt = (time.monotonic() - started) * 1000.0
+        self.last_rtt_ms = rtt
+        if self._rtt_ewma_ms is None:
+            self._rtt_ewma_ms = rtt
+        else:
+            self._rtt_ewma_ms = 0.3 * rtt + 0.7 * self._rtt_ewma_ms
+
     def call(self, proc: int, args: bytes = b"") -> _Unpacker:
         with self._lock:
             last: Exception | None = None
@@ -183,6 +202,7 @@ class RpcClient:
                 xid = random.getrandbits(32)
                 msg = (struct.pack(">IIIIII", xid, 0, 2, self.prog, self.vers, proc)
                        + self._cred() + struct.pack(">II", 0, 0) + args)
+                started = time.monotonic()
                 try:
                     self._sock.sendto(msg, (self.host, self.port))
                     while True:
@@ -190,8 +210,11 @@ class RpcClient:
                         if len(data) >= 4 and struct.unpack_from(">I", data, 0)[0] == xid:
                             break
                 except socket.timeout as e:
+                    self.timeout_count += 1
                     last = e
                     continue
+                self._record_rtt(started)
+                self.call_count += 1
                 u = _Unpacker(data)
                 u.skip(4)                       # xid
                 if u.uint() != 1:
@@ -252,6 +275,18 @@ class NfsClient:
         self.utf16 = True          # detected from the first names the player sends
         self._mount = RpcClient(host, mount_port, PROG_MOUNT, 1, timeout)
         self._nfs = RpcClient(host, nfs_port, PROG_NFS, 2, timeout)
+
+    def latency_info(self) -> dict:
+        """NFS / mount RPC latency snapshot for the connection Health panel."""
+        return {
+            "nfs_rtt_ms": self._nfs.rtt_ms,
+            "nfs_last_rtt_ms": self._nfs.last_rtt_ms,
+            "mount_rtt_ms": self._mount.rtt_ms,
+            "nfs_calls": self._nfs.call_count,
+            "nfs_timeouts": self._nfs.timeout_count,
+            "mount_calls": self._mount.call_count,
+            "mount_timeouts": self._mount.timeout_count,
+        }
 
     # -- mounting -----------------------------------------------------------
     def exports(self) -> list[str]:

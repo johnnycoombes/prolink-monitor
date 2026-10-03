@@ -312,7 +312,9 @@ class Sidebar(QFrame):
         self._i18n = i18n
         self._buttons: dict[str, QPushButton] = {}
         self._active = "monitor"
-        self._nav_keys = ("monitor", "devices", "library", "session", "overlay", "settings", "about")
+        self._nav_keys = (
+            "monitor", "devices", "health", "library", "session", "overlay", "settings", "about",
+        )
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 18, 14, 18)

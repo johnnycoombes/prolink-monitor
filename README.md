@@ -22,8 +22,8 @@ Compared with the [original project](https://github.com/fidow/prolink-monitor):
 | | Original | This fork |
 |---|---|---|
 | UI | Browser panel (`python app.py`) | Same web panel **plus** a native **Prolink Listener** desktop app (`python desktop.py`) |
-| Navigation | Single live panel | Sidebar: Monitor, Devices, Library, **Session**, Overlay, Settings, About — **hideable** (`Ctrl+B`) |
-| Settings | Zoom / decks remembered in the browser | Connection, display, **per-deck element**, overlay and session settings under `~/.prolink-monitor/` |
+| Navigation | Single live panel | Sidebar: Monitor, Devices, **Health**, Library, **Session**, Overlay, Settings, About — **hideable** (`Ctrl+B`) |
+| Settings | Zoom / decks remembered in the browser | Connection, display, **per-deck element**, overlay, session and **desktop tray** settings under `~/.prolink-monitor/` |
 | Waveforms | Colour detail (RGB) with blue fallback | Switchable **RGB**, **3-Band** and **Blue**; cue / hot-cue / **phrase** markers; hover time + click cue readout; **per-deck zoom** |
 | Library | Counts only | Search USB tracks; OneLibrary **playlists / history** browse; on-deck artwork grid |
 | Zoom | Seconds | **4/4 bars** (1–16), BPM-aware window |
@@ -164,13 +164,34 @@ python desktop.py
 ```
 
 Or `python -m gui`. The window has a sidebar for **Monitor**, **Devices**,
-**Library**, **Session**, **Overlay**, **Settings** and **About**. Connection mode,
+**Health**, **Library**, **Session**, **Overlay**, **Settings** and **About**. Connection mode,
 player address, device number, zoom (4/4 bars), visible decks, waveform style and
 more live under Settings and are saved to `~/.prolink-monitor/settings.json`.
 
 **Sidebar.** Hide it with the **☰** button, **Hide sidebar** at the bottom of the
 panel, or **Ctrl+B**. While hidden, a **Navigate** menu appears in the top bar.
 Preference is remembered (also under Settings → Behaviour → Show sidebar).
+
+**System tray.** While connected, minimizing (or closing, if enabled) can send the
+app to the system tray so the link stays up without a taskbar window. Tray menu:
+Show, Record session, Open overlay, Connect / Disconnect, Quit. Toggle under
+**Settings → Desktop**.
+
+**Hotkeys** (while the app is focused):
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+R` | Start / stop session Record |
+| `+` / `=` / `Ctrl+=` | Zoom in (fewer bars) |
+| `-` / `Ctrl+-` | Zoom out (more bars) |
+| `Ctrl+B` | Toggle sidebar |
+| `Ctrl+O` | Open OBS overlay URL |
+
+When minimized to the tray, use the tray menu for Record / Overlay / Quit.
+
+**Connection health.** The **Health** page shows overall status-packet rate, per-deck
+**beat** vs **Absolute Position (AP)** packet rates and which position source each
+deck is using, plus NFS UDP RTT for mounted media (library / waveform reads).
 
 **Deck elements.** Under Settings you can turn individual Monitor card pieces on or
 off — artwork, title, artist, album/genre/label, MASTER/SYNC/ON AIR tags, waveform,

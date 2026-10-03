@@ -456,6 +456,22 @@ class Monitor:
                                        key=lambda x: x.device_number)]
         totals, library_error, onelibrary_info = self._library_snapshot()
         mix = self.mixstatus.as_state()
+        nfs_health: list[dict] = []
+        with self.library.lock:
+            for host, media in self.library.media.items():
+                try:
+                    info = media.nfs.latency_info()
+                except Exception:
+                    info = {}
+                nfs_health.append({
+                    "host": host,
+                    "export": getattr(media, "export", "") or "",
+                    "rtt_ms": info.get("nfs_rtt_ms"),
+                    "last_rtt_ms": info.get("nfs_last_rtt_ms"),
+                    "mount_rtt_ms": info.get("mount_rtt_ms"),
+                    "calls": int(info.get("nfs_calls") or 0),
+                    "timeouts": int(info.get("nfs_timeouts") or 0),
+                })
         return {
             "t": time.time(),
             "paint": False,
@@ -469,6 +485,7 @@ class Monitor:
             "library": totals,
             "library_error": library_error,
             "onelibrary": onelibrary_info,
+            "nfs": nfs_health,
             "mix": mix,
             "now_playing": mix.get("now_playing"),
             "pending": mix.get("pending"),
