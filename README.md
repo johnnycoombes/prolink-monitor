@@ -22,11 +22,13 @@ Compared with the [original project](https://github.com/fidow/prolink-monitor):
 | | Original | This fork |
 |---|---|---|
 | UI | Browser panel (`python app.py`) | Same web panel **plus** a native **Prolink Listener** desktop app (`python desktop.py`) |
-| Navigation | Single live panel | Sidebar: Monitor, Devices, Library, Overlay, Settings, About — **hideable** (`Ctrl+B`) |
-| Settings | Zoom / decks remembered in the browser | Connection, display and **per-deck element** settings under `~/.prolink-monitor/` |
-| Waveforms | Colour detail (RGB) with blue fallback | Switchable **RGB**, **3-Band** and **Blue**, parsed like [Beat Link `WaveformDetail`](https://deepsymmetry.org/beatlink/apidocs/org/deepsymmetry/beatlink/data/WaveformDetail.html); cards **fill the panel** |
+| Navigation | Single live panel | Sidebar: Monitor, Devices, Library, **Session**, Overlay, Settings, About — **hideable** (`Ctrl+B`) |
+| Settings | Zoom / decks remembered in the browser | Connection, display, **per-deck element**, overlay and session settings under `~/.prolink-monitor/` |
+| Waveforms | Colour detail (RGB) with blue fallback | Switchable **RGB**, **3-Band** and **Blue**, parsed like [Beat Link `WaveformDetail`](https://deepsymmetry.org/beatlink/apidocs/org/deepsymmetry/beatlink/data/WaveformDetail.html); cards **fill the panel**; cue / hot-cue markers |
+| Zoom | Seconds | **4/4 bars** (1–16), BPM-aware window |
 | Deck cards | Fixed layout | Toggle artwork, BPM, tempo, time, key, tags, waveform and more |
-| Streaming | — | Transparent `/overlay` page for OBS (now playing / dual / minimal); SmartTiming setlist |
+| Streaming | — | Transparent `/overlay` page for OBS (now playing / dual / minimal); SmartTiming setlist; overlay waveform colour |
+| Session | — | **Record** a chronological playlist timed from the first track at `00:00:00` |
 | Language | English / Spanish | English only |
 
 Everything else — Pro DJ Link engine, NFS library, console monitor, protocol probe —
@@ -38,9 +40,10 @@ comes from the original and is still the same idea.
 
 ### Desktop — Monitor
 
-Waveforms fill the available height. Switch **2** or **4** visible decks, zoom and
-waveform colour (**RGB** / **3BAND** / **BLUE**) from the toolbar. Layout order is
-**1–2** in two-deck mode and **3–1–2–4** in four-deck mode.
+Waveforms fill the available height. Switch **2** or **4** visible decks, zoom in
+**4/4 bars** (1–16) and waveform colour (**RGB** / **3BAND** / **BLUE**) from the
+toolbar. Layout order is **1–2** in two-deck mode and **3–1–2–4** in four-deck mode.
+Hot cues show as lettered markers (A–H) on the overview and detail waveforms.
 
 ![4 decks RGB](doc/desktop-4deck-rgb.png)
 
@@ -116,15 +119,18 @@ Per deck:
 - **State**: playing / cued / paused / end of track, plus the `MASTER`, `SYNC` and
   `ON AIR` flags.
 - **Waveform**: the detail view scrolling under a fixed playhead, with the bar grid
-  and cue points; above it, an overview of the whole track with the played part lit.
+  and **cue / hot-cue markers** (A–H badges); above it, an overview of the whole
+  track with the played part lit and the same cue markers.
 
 The panel pulses on the downbeat of every deck that is playing.
 
-The header (web) or Monitor toolbar (desktop) has switches for **waveform zoom**
-(4 / 8 / 16 / 32 seconds, also `+` and `-` on the keyboard), how many **decks** to
-show (**2** or **4**), and the **waveform colour** (RGB / 3BAND / BLUE). Layout
+The header (web) or Monitor toolbar (desktop) has switches for **waveform zoom in
+4/4 bars** (1 / 2 / 4 / 8 / 16, also `+` and `-` on the keyboard), how many **decks**
+to show (**2** or **4**), and the **waveform colour** (RGB / 3BAND / BLUE). Layout
 order is **1–2** in two-deck mode and **3–1–2–4** in four-deck mode. Those choices
-are remembered.
+are remembered. A **Record session** button captures a chronological playlist with
+timestamps from the first track at `00:00:00` (also under **Session** in the desktop
+sidebar, and via `/api/session`).
 
 ---
 
@@ -154,9 +160,9 @@ python desktop.py
 ```
 
 Or `python -m gui`. The window has a sidebar for **Monitor**, **Devices**,
-**Library**, **Overlay**, **Settings** and **About**. Connection mode, player address, device
-number, zoom, visible decks, waveform style and more live under Settings and are
-saved to `~/.prolink-monitor/settings.json`.
+**Library**, **Session**, **Overlay**, **Settings** and **About**. Connection mode,
+player address, device number, zoom (4/4 bars), visible decks, waveform style and
+more live under Settings and are saved to `~/.prolink-monitor/settings.json`.
 
 **Sidebar.** Hide it with the **☰** button, **Hide sidebar** at the bottom of the
 panel, or **Ctrl+B**. While hidden, a **Navigate** menu appears in the top bar.
@@ -165,12 +171,19 @@ Preference is remembered (also under Settings → Behaviour → Show sidebar).
 **Deck elements.** Under Settings you can turn individual Monitor card pieces on or
 off — artwork, title, artist, album/genre/label, MASTER/SYNC/ON AIR tags, waveform,
 BPM, tempo (±%), elapsed/remaining, key and play state. Hidden columns free space
-for the waveform.
+for the waveform. The identity column is wide enough for the full `ON AIR` chip.
 
 **Waveforms.** Cards split the Monitor viewport evenly so waves grow with the window
 and deck count. Colour follows the player: **RGB**, **3BAND** (stacked blue / amber /
 white the way a CDJ draws it) or **BLUE**. The same switch is on the Monitor page,
-in Settings, and on the web panel.
+in Settings, and on the web panel. **Cue markers** (memory cues and hot cues A–H)
+are drawn on both overview and detail strips in the desktop Monitor and web panel.
+
+**Session playlist.** Hit **Record session** on the Monitor toolbar (or open
+**Session**) to capture every newly played on-air track in order. The first track is
+`00:00:00`; later entries show elapsed `HH:MM:SS`. Stop keeps the list; Clear resets
+it. The web panel has the same Record control and a live strip; HTTP endpoints are
+`/api/session`, `/api/session/start`, `/api/session/stop`, `/api/session/clear`.
 
 **Smooth playhead.** Prolink Listener paints the playhead/waveforms on a separate timer
 (default **60 Hz**, Settings → Playhead refresh rate) while metadata and library
@@ -198,6 +211,7 @@ The page background is transparent. Query parameters:
 | `layout` | `nowplaying` / `dual` / `minimal` | `nowplaying` | Card style |
 | `corner` | `bl` / `br` / `tl` / `tr` / `center` | `bl` | Screen corner |
 | `decks` | `1`–`4` | `1` (`2` for dual) | How many decks to show |
+| `wave` | `rgb` / `3band` / `blue` | `rgb` | Mini-waveform colour style |
 | `playing` | `1` / `0` | `1` | Only decks that have a track |
 | `mix` | `1` / `0` | `1` | Use SmartTiming now-playing (single-deck layouts) |
 | `preview` | `1` / `0` | `0` | Dark preview background (local testing) |
@@ -216,8 +230,9 @@ http://127.0.0.1:8777/overlay?layout=dual&corner=tl&decks=4&playing=0
 http://127.0.0.1:8777/overlay?layout=nowplaying&mix=1
 ```
 
-In the desktop app, open **Overlay**, pick layout/corner, then **Copy URL** into
-OBS. Set the Browser source size to your canvas (e.g. 1920×1080).
+In the desktop app, open **Overlay**, pick layout/corner/**waveform colour**, then
+**Copy URL** into OBS. Set the Browser source size to your canvas (e.g. 1920×1080).
+The same overlay waveform colour is also under **Settings → Overlay**.
 
 ### Web panel
 

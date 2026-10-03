@@ -208,6 +208,8 @@ const onlyPlaying = params.get('playing') !== '0';
 const preview = params.get('preview') === '1';
 const useMix = params.get('mix') !== '0';
 const maxDecks = Math.min(4, Math.max(1, +(params.get('decks') || (layout === 'dual' ? 2 : 1))));
+const WAVE_STYLES = ['rgb', '3band', 'blue'];
+const waveStyle = WAVE_STYLES.includes(params.get('wave')) ? params.get('wave') : 'rgb';
 const spread = layout === 'dual';
 
 if (preview) document.body.classList.add('preview');
@@ -289,6 +291,56 @@ function readWaveform(buf, off){
   return {n, cps, dur, h, rgb, end: off + 24 + n * 4};
 }
 
+function readBands(buf, off){
+  if (!buf || off + 24 > buf.byteLength) return null;
+  const dv = new DataView(buf);
+  const magic = String.fromCharCode(dv.getUint8(off), dv.getUint8(off+1),
+    dv.getUint8(off+2), dv.getUint8(off+3));
+  if (magic !== 'PLWB') return null;
+  const n = dv.getUint32(off + 8, true);
+  const end = off + 24 + n * 3;
+  if (end > buf.byteLength) return null;
+  return {
+    n,
+    low: new Uint8Array(buf, off + 24, n),
+    mid: new Uint8Array(buf, off + 24 + n, n),
+    high: new Uint8Array(buf, off + 24 + 2 * n, n),
+    end,
+  };
+}
+
+function readBlue(buf, off){
+  if (!buf || off + 24 > buf.byteLength) return null;
+  const dv = new DataView(buf);
+  const magic = String.fromCharCode(dv.getUint8(off), dv.getUint8(off+1),
+    dv.getUint8(off+2), dv.getUint8(off+3));
+  if (magic !== 'PLBC') return null;
+  const n = dv.getUint32(off + 8, true);
+  const end = off + 24 + n * 4;
+  if (end > buf.byteLength) return null;
+  return {
+    n,
+    h: new Uint8Array(buf, off + 24, n),
+    rgb: new Uint8Array(buf, off + 24 + n, n * 3),
+    end,
+  };
+}
+
+function attachBands(wave, bands){
+  if (!wave || !bands || bands.n !== wave.n) return;
+  wave.low = bands.low; wave.mid = bands.mid; wave.high = bands.high;
+  let peak = 1;
+  for (let i = 0; i < bands.n; i++) {
+    peak = Math.max(peak, bands.low[i], bands.mid[i], bands.high[i]);
+  }
+  wave.bandPeak = peak;
+}
+
+function attachBlue(wave, blue){
+  if (!wave || !blue || blue.n !== wave.n) return;
+  wave.blueH = blue.h; wave.blueRgb = blue.rgb;
+}
+
 async function loadTrack(id){
   if (!id || tracks.has(id) || pending.has(id)) return;
   pending.add(id);
@@ -302,6 +354,11 @@ async function loadTrack(id){
     if (buf) {
       const detail = readWaveform(buf, 0);
       overview = readWaveform(buf, detail.end);
+      const b1 = readBands(buf, overview.end);
+      const b2 = b1 ? readBands(buf, b1.end) : null;
+      attachBands(overview, b2);
+      const blue1 = readBlue(buf, b2 ? b2.end : (b1 ? b1.end : overview.end));
+      if (blue1) attachBlue(overview, readBlue(buf, blue1.end));
     }
     tracks.set(id, {meta, overview});
   } finally { pending.delete(id); }
@@ -372,14 +429,11 @@ function paintWaveCanvas(cv, pack, pos, color, looping){
   const ov = pack && pack.overview;
   if (!ov || !ov.n) return;
   const mid = H / 2, span = mid * 0.9;
+  const colW = Math.max(1, Math.round(r));
   for (let x = 0; x < cssW; x++) {
     const i = Math.min(ov.n - 1, Math.floor(x * ov.n / cssW));
     const amp = (ov.h[i] / 31) * span;
-    if (amp < 0.5) continue;
-    const rgb = ov.rgb;
-    ctx.fillStyle = `rgb(${rgb[i*3]},${rgb[i*3+1]},${rgb[i*3+2]})`;
-    const top = Math.round(mid - amp);
-    ctx.fillRect(Math.round(x * r), top, Math.max(1, Math.round(r)), Math.max(1, Math.round(amp * 2)));
+    fillOverlayColumn(ctx, Math.round(x * r), mid, amp, i, ov, span, colW);
   }
   const dur = (pack.meta && pack.meta.duration_ms) || ov.dur || 1;
   const px = Math.max(0, Math.min(W, (pos / dur) * W));
@@ -392,10 +446,70 @@ function paintWaveCanvas(cv, pack, pos, color, looping){
       ctx.fillRect(x0, 0, Math.max(1, x1 - x0), H);
     }
   }
+  // Cue markers on the overlay mini-wave.
+  if (pack.meta && pack.meta.cues) {
+    for (const c of pack.meta.cues) {
+      if (c.type === 'loop') continue;
+      const cx = (c.t / dur) * W;
+      ctx.fillStyle = c.color ? `rgb(${c.color[0]},${c.color[1]},${c.color[2]})`
+                              : (c.hot ? '#ffd45e' : '#ffffff');
+      ctx.fillRect(cx - r, 0, Math.max(2, Math.round(2 * r)), H);
+      if (c.hot) {
+        const bw = 10 * r, bh = 8 * r;
+        ctx.fillRect(cx - bw / 2, 0, bw, bh);
+        ctx.fillStyle = '#000';
+        ctx.font = `700 ${7 * r}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillText(String.fromCharCode(64 + c.hot), cx, 6.5 * r);
+      }
+    }
+  }
   ctx.fillStyle = 'rgba(8,10,12,.55)';
   ctx.fillRect(px, 0, W - px, H);
   ctx.fillStyle = color || '#22d3ee';
   ctx.fillRect(px - r, 0, Math.max(2, Math.round(2 * r)), H);
+}
+
+function fillMirrored(ctx, x, mid, amp, colW){
+  if (amp < 0.5) return;
+  ctx.fillRect(x, Math.round(mid - amp), colW, Math.max(1, Math.round(amp * 2)));
+}
+
+function fillOverlayColumn(ctx, x, mid, amp, src, wave, span, colW){
+  if (waveStyle === '3band') {
+    const low = wave.low && wave.low[src];
+    const md = wave.mid && wave.mid[src];
+    const hi = wave.high && wave.high[src];
+    const peak = wave.bandPeak || 31;
+    if (peak >= 2 && (low || md || hi)) {
+      const lowPx = (low || 0) / peak * span;
+      const midPx = (md || 0) / peak * span;
+      const highPx = (hi || 0) / peak * span;
+      if (lowPx > midPx) {
+        ctx.fillStyle = 'rgb(32,83,217)'; fillMirrored(ctx, x, mid, lowPx, colW);
+        ctx.fillStyle = 'rgb(169,107,39)'; fillMirrored(ctx, x, mid, midPx, colW);
+      } else {
+        if (Math.abs(lowPx - midPx) >= 0.4) {
+          ctx.fillStyle = 'rgb(242,170,60)'; fillMirrored(ctx, x, mid, midPx, colW);
+        }
+        ctx.fillStyle = 'rgb(169,107,39)'; fillMirrored(ctx, x, mid, lowPx, colW);
+      }
+      ctx.fillStyle = 'rgb(255,255,255)'; fillMirrored(ctx, x, mid, highPx, colW);
+      return;
+    }
+  }
+  let drawAmp = amp;
+  if (waveStyle === 'blue') {
+    if (wave.blueH && wave.blueH.length === wave.n) drawAmp = (wave.blueH[src] / 31) * span;
+    if (wave.blueRgb && wave.blueRgb.length === wave.n * 3) {
+      const b = wave.blueRgb;
+      ctx.fillStyle = `rgb(${b[src * 3]},${b[src * 3 + 1]},${b[src * 3 + 2]})`;
+    } else ctx.fillStyle = 'rgb(0,168,232)';
+  } else {
+    const rgb = wave.rgb;
+    ctx.fillStyle = `rgb(${rgb[src * 3]},${rgb[src * 3 + 1]},${rgb[src * 3 + 2]})`;
+  }
+  fillMirrored(ctx, x, mid, drawAmp, colW);
 }
 
 function renderNow(deck, pos){
