@@ -361,7 +361,9 @@ class Deck:
     """Live state of one deck, with the playhead interpolated between beats.
 
     Position is kept as a continuous model (base position, base time, speed)
-    that is only nudged, instead of being re-anchored on every beat.
+    that is only nudged, instead of being re-anchored on every beat. When the
+    player sends Absolute Position packets (CDJ-3000 class), those become the
+    source of truth and beat-grid estimation is skipped.
     """
     number: int
     status: proto.Status | None = None
@@ -369,6 +371,8 @@ class Deck:
     last_beat_packet: float = 0.0
     beat_in_bar: int = 0
     beat_packets: int = 0
+    absolute_packets: int = 0
+    position_source: str = "none"   # none | beat_grid | exact
 
     # (position in ms, monotonic instant, speed) -- replaced as a tuple so the
     # web server threads always read a consistent model
@@ -376,6 +380,7 @@ class Deck:
     _last_beat: int = -1
     _beat_times: list[int] = field(default_factory=list, repr=False)
     track_length_ms: int = 0
+    _exact: bool = False
 
     def set_beat_grid(self, times: list[int], length_ms: int = 0) -> None:
         self._beat_times = times
@@ -412,11 +417,17 @@ class Deck:
             self._beat_times = []
             self.track_length_ms = 0
             self._last_beat = -1
+            self._exact = False
+            self.position_source = "none"
             self._model = (0.0, now, 0.0)
 
         # advance the model up to now at the speed it carried, then continue at
         # the new one
         self._model = (self._project(now), now, s.speed if s.has_track else 0.0)
+
+        # Exact Absolute Position packets already own the playhead.
+        if self._exact:
+            return
 
         if s.beat_count == self._last_beat:
             return
@@ -434,17 +445,44 @@ class Deck:
             self._model = (target, now, speed)          # real jump: re-place it
         else:
             self._model = (pos + error * SMOOTHING, now, speed)
+        if self.position_source == "none":
+            self.position_source = "beat_grid"
 
     def on_beat(self, b: proto.Beat, now: float) -> None:
         self.last_beat_packet = now
         self.beat_packets += 1
         self.beat_in_bar = b.beat_in_bar
 
+    def on_absolute_position(self, ap: proto.AbsolutePosition, now: float) -> None:
+        """CDJ-3000-class Precise Position — trust playhead over beat-grid guess."""
+        self.absolute_packets += 1
+        self._exact = True
+        self.position_source = "exact"
+        self.last_seen = now
+        if ap.track_length_s:
+            length_ms = ap.track_length_s * 1000
+            if length_ms > self.track_length_ms:
+                self.track_length_ms = length_ms
+        s = self.status
+        # Prefer status for whether we are actually advancing; use the packet's
+        # pitch slider when status says we are moving.
+        if s and s.has_track and s.speed:
+            speed = ap.speed
+        else:
+            speed = 0.0
+        self._model = (float(ap.position_ms), now, speed)
+
     @property
     def position_ms(self) -> float:
         """Estimated playhead position, in milliseconds."""
         s = self.status
         if not s or not s.has_track:
+            # Absolute packets can arrive before status on some firmwares.
+            if self._exact:
+                pos = self._project(time.monotonic())
+                if self.track_length_ms:
+                    pos = min(pos, self.track_length_ms)
+                return max(0.0, pos)
             return 0.0
         pos = self._project(time.monotonic())
         if self.track_length_ms:
@@ -455,7 +493,6 @@ class Deck:
     def is_playing(self) -> bool:
         s = self.status
         return bool(s and s.play_state_raw in proto.PLAYING_STATES)
-
 
 class ProLink:
     """Discovers the Pro DJ Link network and keeps every deck's state."""
@@ -495,6 +532,8 @@ class ProLink:
                 self.devices[pkt.device_number] = pkt
             elif isinstance(pkt, proto.Beat):
                 self._deck(pkt.device_number).on_beat(pkt, now)
+            elif isinstance(pkt, proto.AbsolutePosition):
+                self._deck(pkt.device_number).on_absolute_position(pkt, now)
             elif isinstance(pkt, proto.Status):
                 deck = self._deck(pkt.device_number)
                 deck.on_status(pkt, now)
