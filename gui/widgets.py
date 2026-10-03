@@ -236,7 +236,12 @@ class Sidebar(QFrame):
 
 
 class WaveformView(QWidget):
-    """Overview strip + scrolling detail waveform with fixed playhead."""
+    """Overview strip + scrolling detail waveform with fixed playhead.
+
+    Overview and detail are painted into QPixmap caches. On playhead motion the
+    detail cache is scrolled and only the newly exposed edge is peak-picked;
+    the overview cache is reused and only the playhead / unplayed shade redraw.
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -251,27 +256,44 @@ class WaveformView(QWidget):
         self._zoom = 8
         self._offair = False
         self._style = "rgb"
+        self._overview_pm: QPixmap | None = None
+        self._overview_key: tuple | None = None
+        self._detail_pm: QPixmap | None = None
+        self._detail_key: tuple | None = None
+        self._detail_start: float = 0.0
 
     def set_deck_color(self, color: str) -> None:
         self._color = QColor(color)
         self.update()
 
     def set_zoom(self, seconds: int) -> None:
+        if seconds == self._zoom:
+            return
         self._zoom = seconds
+        self._invalidate_detail()
         self.update()
 
     def set_style(self, style: str) -> None:
-        self._style = style if style in WAVE_STYLES else "rgb"
+        style = style if style in WAVE_STYLES else "rgb"
+        if style == self._style:
+            return
+        self._style = style
+        self._invalidate_all()
         self.update()
 
     def set_offair(self, off: bool) -> None:
+        off = bool(off)
+        if off == self._offair:
+            return
         self._offair = off
+        self._invalidate_all()
         self.update()
 
     def set_track(self, detail, overview, meta: dict | None) -> None:
         self._detail = detail
         self._overview = overview
         self._meta = meta
+        self._invalidate_all()
         self.update()
 
     def set_position(self, pos_ms: float, playing: bool) -> None:
@@ -279,28 +301,71 @@ class WaveformView(QWidget):
         self._playing = playing
         self.update()
 
+    def _invalidate_all(self) -> None:
+        self._overview_pm = None
+        self._overview_key = None
+        self._invalidate_detail()
+
+    def _invalidate_detail(self) -> None:
+        self._detail_pm = None
+        self._detail_key = None
+
     def paintEvent(self, event):  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, False)
         w, h = self.width(), self.height()
-        # Keep the overview as a slim strip; give most height to the detail wave.
         overview_h = max(28, min(48, int(h * 0.14)))
         detail_h = max(1, h - overview_h - 1)
 
-        bg = QColor("#0b0d10")
-        p.fillRect(0, 0, w, overview_h, bg)
+        p.fillRect(0, 0, w, overview_h, QColor("#0b0d10"))
         p.fillRect(0, overview_h + 1, w, detail_h, QColor("#080a0c"))
         p.setPen(QColor(COLORS["line"]))
         p.drawLine(0, overview_h, w, overview_h)
 
-        alpha = 0.34 if self._offair else 1.0
-        p.setOpacity(alpha)
-        self._paint_overview(p, 0, 0, w, overview_h)
-        self._paint_detail(p, 0, overview_h + 1, w, detail_h)
-        p.setOpacity(1.0)
+        self._blit_overview(p, 0, 0, w, overview_h)
+        self._blit_detail(p, 0, overview_h + 1, w, detail_h)
         p.end()
 
-    def _paint_overview(self, p: QPainter, x0, y0, w, h) -> None:
+    def _blit_overview(self, p: QPainter, x0, y0, w, h) -> None:
+        self._ensure_overview(w, h)
+        if self._overview_pm is not None:
+            alpha = 0.34 if self._offair else 1.0
+            p.setOpacity(alpha)
+            p.drawPixmap(x0, y0, self._overview_pm)
+            p.setOpacity(1.0)
+
+        ov = self._overview
+        if not ov or not ov["n"]:
+            return
+        dur = (self._meta or {}).get("duration_ms") or ov.get("dur") or 1
+        px = max(0, min(w, int((self._pos_ms / max(1, dur)) * w)))
+        if px < w:
+            p.fillRect(x0 + px, y0, w - px, h, QColor(8, 10, 12, 150))
+        p.fillRect(x0 + px - 1, y0, 2, h, self._color)
+
+    def _ensure_overview(self, w, h) -> None:
+        ov = self._overview
+        key = (id(ov) if ov else 0, self._style, w, h, self._offair)
+        if self._overview_pm is not None and self._overview_key == key:
+            return
+        pm = QPixmap(w, h)
+        pm.fill(QColor("#0b0d10"))
+        if ov and ov["n"]:
+            qp = QPainter(pm)
+            self._draw_overview_wave(qp, 0, 0, w, h)
+            # Static cue markers live in the cache; playhead is drawn live.
+            dur = (self._meta or {}).get("duration_ms") or ov.get("dur") or 1
+            for cue in (self._meta or {}).get("cues") or []:
+                cx = int((cue.get("t", 0) / max(1, dur)) * w)
+                c = cue.get("color")
+                color = QColor(*c) if c else QColor(
+                    "#ffd45e" if cue.get("hot") else "#ffffff")
+                qp.fillRect(cx, 0, 1, h, color)
+            qp.end()
+        self._overview_pm = pm
+        self._overview_key = key
+
+    def _draw_overview_wave(self, p: QPainter, x0, y0, w, h) -> None:
         ov = self._overview
         if not ov or not ov["n"]:
             return
@@ -313,23 +378,78 @@ class WaveformView(QWidget):
             tall = (heights[i] / 31.0) * span
             _paint_column(p, x0 + x, mid, tall, self._style, i, ov, span)
 
-        dur = (self._meta or {}).get("duration_ms") or ov.get("dur") or 1
-        px = max(0, min(w, int((self._pos_ms / max(1, dur)) * w)))
-        if px < w:
-            shade = QColor(8, 10, 12, 150)
-            p.fillRect(x0 + px, y0, w - px, h, shade)
+    def _blit_detail(self, p: QPainter, x0, y0, w, h) -> None:
+        self._ensure_detail(w, h)
+        if self._detail_pm is not None:
+            alpha = 0.34 if self._offair else 1.0
+            p.setOpacity(alpha)
+            p.drawPixmap(x0, y0, self._detail_pm)
+            p.setOpacity(1.0)
 
-        for cue in (self._meta or {}).get("cues") or []:
-            cx = int((cue.get("t", 0) / max(1, dur)) * w)
-            c = cue.get("color")
-            color = QColor(*c) if c else QColor("#ffd45e" if cue.get("hot") else "#ffffff")
-            p.fillRect(x0 + cx, y0, 1, h, color)
+        # Fixed playhead at centre.
+        cx = x0 + w // 2
+        glow = QColor(self._color)
+        glow.setAlpha(45 if self._playing else 20)
+        p.fillRect(cx - 8, y0, 16, h, glow)
+        p.fillRect(cx - 1, y0, 2, h, self._color)
 
-        p.fillRect(x0 + px - 1, y0, 2, h, self._color)
-
-    def _paint_detail(self, p: QPainter, x0, y0, w, h) -> None:
+    def _ensure_detail(self, w, h) -> None:
         d = self._detail
         if not d or not d["n"]:
+            self._detail_pm = None
+            self._detail_key = None
+            return
+
+        cps = d["cps"] or 150.0
+        visible = max(1.0, self._zoom * cps)
+        px_per_col = w / visible
+        current = (self._pos_ms / 1000.0) * cps
+        start = current - visible / 2
+        key = (id(d), self._style, self._zoom, w, h, self._offair)
+
+        if (self._detail_pm is None or self._detail_key != key
+                or self._detail_pm.width() != w or self._detail_pm.height() != h):
+            self._rebuild_detail(w, h, start, key)
+            return
+
+        shift_f = (self._detail_start - start) * px_per_col
+        shift = int(shift_f)  # toward zero — wait for a full pixel
+        if shift == 0:
+            return
+        if abs(shift) >= w:
+            self._rebuild_detail(w, h, start, key)
+            return
+
+        # Scroll the cached strip and fill only the newly exposed edge.
+        new_pm = QPixmap(w, h)
+        new_pm.fill(QColor("#080a0c"))
+        qp = QPainter(new_pm)
+        if shift > 0:
+            qp.drawPixmap(shift, 0, self._detail_pm, 0, 0, w - shift, h)
+            self._draw_detail_range(qp, 0, 0, w, h, start, 0, shift)
+        else:
+            sh = -shift
+            qp.drawPixmap(0, 0, self._detail_pm, sh, 0, w - sh, h)
+            self._draw_detail_range(qp, 0, 0, w, h, start, w - sh, w)
+        qp.end()
+        self._detail_pm = new_pm
+        self._detail_start -= shift / px_per_col
+
+    def _rebuild_detail(self, w, h, start: float, key: tuple) -> None:
+        pm = QPixmap(w, h)
+        pm.fill(QColor("#080a0c"))
+        qp = QPainter(pm)
+        self._draw_detail_range(qp, 0, 0, w, h, start, 0, w)
+        qp.end()
+        self._detail_pm = pm
+        self._detail_key = key
+        self._detail_start = start
+
+    def _draw_detail_range(self, p: QPainter, x0, y0, w, h, start: float,
+                           x_lo: int, x_hi: int) -> None:
+        """Peak-pick detail columns for CSS pixels [x_lo, x_hi) at window start."""
+        d = self._detail
+        if not d or not d["n"] or x_hi <= x_lo:
             return
         n = d["n"]
         cps = d["cps"] or 150.0
@@ -337,14 +457,12 @@ class WaveformView(QWidget):
         mid = y0 + h / 2
         visible = max(1.0, self._zoom * cps)
         px_per_col = w / visible
-        current = (self._pos_ms / 1000.0) * cps
-        start = current - visible / 2
+        span = (h / 2) * 0.98
 
-        # beat grid
         beats = (self._meta or {}).get("beats") or []
         if beats:
-            t0 = (start / cps) * 1000
-            t1 = ((start + visible) / cps) * 1000
+            t0 = ((start + x_lo / px_per_col) / cps) * 1000
+            t1 = ((start + x_hi / px_per_col) / cps) * 1000
             for beat in beats:
                 t, number = beat[0], beat[1]
                 if t < t0 - 500:
@@ -352,12 +470,15 @@ class WaveformView(QWidget):
                 if t > t1 + 500:
                     break
                 x = int(((t / 1000.0) * cps - start) * px_per_col)
+                if x < x_lo - 1 or x > x_hi:
+                    continue
                 pen = QPen(QColor(255, 255, 255, 50 if number == 1 else 18))
                 p.setPen(pen)
                 p.drawLine(x0 + x, y0, x0 + x, y0 + h)
 
-        span = (h / 2) * 0.98
-        for px in range(w):
+        x_lo = max(0, x_lo)
+        x_hi = min(w, x_hi)
+        for px in range(x_lo, x_hi):
             lo = int(start + px / px_per_col)
             hi = int(start + (px + 1) / px_per_col + 0.999)
             if hi <= lo:
@@ -377,18 +498,11 @@ class WaveformView(QWidget):
 
         for cue in (self._meta or {}).get("cues") or []:
             x = int(((cue.get("t", 0) / 1000.0) * cps - start) * px_per_col)
-            if x < -20 or x > w + 20:
+            if x < x_lo - 20 or x > x_hi + 20:
                 continue
             c = cue.get("color")
             color = QColor(*c) if c else QColor("#ffd45e" if cue.get("hot") else "#ffffff")
             p.fillRect(x0 + x - 1, y0, 2, h, color)
-
-        # fixed playhead
-        cx = x0 + w // 2
-        glow = QColor(self._color)
-        glow.setAlpha(45 if self._playing else 20)
-        p.fillRect(cx - 8, y0, 16, h, glow)
-        p.fillRect(cx - 1, y0, 2, h, self._color)
 
 
 class DeckCard(QFrame):
@@ -403,6 +517,9 @@ class DeckCard(QFrame):
         self._detail = None
         self._overview = None
         self._art_id = 0
+        self._wave_track_id = 0
+        self._last_offair: bool | None = None
+        self._last_tags = ""
         self._elements = deck_elements_from()
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
@@ -582,6 +699,8 @@ class DeckCard(QFrame):
         self._meta = meta
         self._detail = detail
         self._overview = overview
+        if detail is not None or overview is not None:
+            self._wave_track_id = (meta or {}).get("id") or self._track_id
         self.wave.set_track(detail, overview, meta)
         if meta:
             self.title.setText(meta.get("title") or "—")
@@ -599,6 +718,23 @@ class DeckCard(QFrame):
                 self.art.setText("")
                 self._art_id = (meta or {}).get("id", 0)
 
+    def needs_waveform(self, track_id: int) -> bool:
+        return bool(track_id) and (
+            self._wave_track_id != track_id or self._detail is None
+        )
+
+    def advance_playhead(self, pos_ms: float, playing: bool, duration_ms: float = 0) -> None:
+        """Lightweight per-frame update: times + waveform position only."""
+        self.elapsed.setText(mmss(pos_ms))
+        remain = (duration_ms or 0) - pos_ms
+        self.remaining.setText("-" + mmss(remain))
+        low = bool(duration_ms and remain < 30000)
+        self.remaining.setStyleSheet(
+            "font-family:monospace; font-size:15px; font-weight:700; color:"
+            + (COLORS["danger"] if low else COLORS["dim"]) + ";"
+        )
+        self.wave.set_position(pos_ms, playing)
+
     def update_deck(self, deck: dict, pos_ms: float) -> None:
         tid = deck.get("track_id") or 0
         if tid != self._track_id:
@@ -606,7 +742,10 @@ class DeckCard(QFrame):
             self._meta = None
             self._detail = None
             self._overview = None
+            self._wave_track_id = 0
             self._art_id = 0
+            self._last_offair = None
+            self._last_tags = ""
             if not tid:
                 self.title.setText("—")
                 self.artist.setText("")
@@ -617,10 +756,13 @@ class DeckCard(QFrame):
                 self.wave.set_track(None, None, None)
 
         empty = not tid
-        self.setProperty("offair", "true" if (tid and not deck.get("on_air")) else "false")
-        self.style().unpolish(self)
-        self.style().polish(self)
-        self.wave.set_offair(bool(tid and not deck.get("on_air")))
+        offair = bool(tid and not deck.get("on_air"))
+        if offair != self._last_offair:
+            self._last_offair = offair
+            self.setProperty("offair", "true" if offair else "false")
+            self.style().unpolish(self)
+            self.style().polish(self)
+            self.wave.set_offair(offair)
 
         tags = []
         if deck.get("master"):
@@ -631,7 +773,10 @@ class DeckCard(QFrame):
             tags.append(self._chip(self._i18n.t("on_air"), COLORS["danger"]))
         elif tid:
             tags.append(self._chip(self._i18n.t("channel_closed"), COLORS["dim"]))
-        self.tags.setText(" ".join(tags))
+        tags_html = " ".join(tags)
+        if tags_html != self._last_tags:
+            self._last_tags = tags_html
+            self.tags.setText(tags_html)
 
         bpm = deck.get("bpm") or 0
         self.bpm.setText(f"{bpm:.2f} BPM" if bpm else "— BPM")
@@ -651,21 +796,14 @@ class DeckCard(QFrame):
                 f"font-family:monospace; font-size:12px; color:{COLORS['dim']};"
             )
 
-        self.elapsed.setText(mmss(pos_ms))
-        remain = (deck.get("duration_ms") or 0) - pos_ms
-        self.remaining.setText("-" + mmss(remain))
-        low = bool(deck.get("duration_ms") and remain < 30000)
-        self.remaining.setStyleSheet(
-            "font-family:monospace; font-size:15px; font-weight:700; color:"
-            + (COLORS["danger"] if low else COLORS["dim"]) + ";"
-        )
         self.state.setText(self._i18n.state(deck.get("state") or "unknown"))
         if empty and not self._meta:
             self.title.setText("—")
         elif tid and not self._meta:
             self.title.setText(self._i18n.t("loading"))
 
-        self.wave.set_position(pos_ms, bool(deck.get("playing")))
+        self.advance_playhead(pos_ms, bool(deck.get("playing")),
+                              float(deck.get("duration_ms") or 0))
 
     @staticmethod
     def _chip(text: str, color: str) -> str:

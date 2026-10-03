@@ -272,18 +272,27 @@ class MonitorPage(Page):
             tid = d.get("track_id") or 0
             if tid:
                 meta = self.backend.meta(tid)
-                wave = None
-                if self._elements.get("deck_show_waveform", True):
-                    wave = self.backend.waveform(tid) if meta else None
-                detail = overview = None
-                if wave:
-                    detail, overview = parse_waveform(wave)
-                art = None
-                if (self._elements.get("deck_show_artwork", True)
-                        and meta and meta.get("has_artwork")):
-                    art = self.backend.artwork(tid)
                 if meta:
-                    card.set_track_data(meta, detail, overview, art)
+                    if card.needs_waveform(tid):
+                        detail = overview = None
+                        wave = None
+                        if self._elements.get("deck_show_waveform", True):
+                            wave = self.backend.waveform(tid)
+                        if wave:
+                            detail, overview = parse_waveform(wave)
+                        art = None
+                        if (self._elements.get("deck_show_artwork", True)
+                                and meta.get("has_artwork")):
+                            art = self.backend.artwork(tid)
+                        # Only attach when we have a wave, or when titles are still empty.
+                        if wave or card._meta is None:
+                            card.set_track_data(meta, detail, overview, art)
+                    elif card._meta is None:
+                        art = None
+                        if (self._elements.get("deck_show_artwork", True)
+                                and meta.get("has_artwork")):
+                            art = self.backend.artwork(tid)
+                        card.set_track_data(meta, card._detail, card._overview, art)
             card.update_deck(d, pos)
 
         # Keep layout order (2-deck: 1-2, 4-deck: 3-1-2-4).
@@ -291,6 +300,27 @@ class MonitorPage(Page):
             card = self._cards[d["number"]]
             self.decks_layout.insertWidget(i, card, 1)
         self._relayout_deck_heights()
+
+    def advance_playheads(self) -> None:
+        """Extrapolate playheads between state polls (~60 Hz paint path)."""
+        state = self._last_state
+        if not state or not self._received_at:
+            return
+        decks = self._visible(state.get("decks") or [])
+        if not decks:
+            return
+        dt = time.time() - self._received_at
+        for d in decks:
+            card = self._cards.get(d["number"])
+            if card is None:
+                continue
+            pos = float(d.get("position_ms") or 0)
+            if d.get("playing"):
+                pos += dt * 1000.0 * float(d.get("speed") or 1.0)
+            dur = float(d.get("duration_ms") or 0)
+            if dur:
+                pos = min(pos, dur)
+            card.advance_playhead(pos, bool(d.get("playing")), dur)
 
     def _visible(self, decks: list[dict]) -> list[dict]:
         """Pick decks for the current layout and return them in display order."""
@@ -632,7 +662,7 @@ class SettingsPage(Page):
         self.wave_style.addItem(i18n.t("wave_blue"), "blue")
         self.show_empty = QCheckBox(i18n.t("show_empty"))
         self.poll_hz = QSpinBox()
-        self.poll_hz.setRange(5, 30)
+        self.poll_hz.setRange(5, 60)
         disp.addRow(i18n.t("max_decks"), self.max_decks)
         disp.addRow(i18n.t("zoom"), self.zoom)
         disp.addRow(i18n.t("wave"), self.wave_style)
@@ -735,7 +765,7 @@ class SettingsPage(Page):
         idx = self.wave_style.findData(data.get("waveform_style", "rgb"))
         self.wave_style.setCurrentIndex(max(0, idx))
         self.show_empty.setChecked(bool(data.get("show_empty_decks", True)))
-        self.poll_hz.setValue(int(data.get("poll_hz", 30)))
+        self.poll_hz.setValue(int(data.get("poll_hz", 60)))
         for key, cb in self.deck_checks.items():
             cb.setChecked(bool(data.get(key, True)))
         idx = self.overlay_layout.findData(data.get("overlay_layout", "nowplaying"))

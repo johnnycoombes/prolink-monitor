@@ -24,9 +24,13 @@ class Backend(QObject):
     """Owns the Monitor engine and optionally the HTTP panel server."""
 
     state_changed = Signal(dict)
+    paint_tick = Signal()           # high-rate playhead / waveform paint
     status_changed = Signal(str, str)   # status key, detail message
     track_ready = Signal(int)           # track id whose meta/waveform is ready
     port_changed = Signal(int)          # actual bound HTTP port (may differ from settings)
+
+    # Full Monitor.state() + Devices/Library refresh; paint runs separately.
+    STATE_HZ = 20
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -44,8 +48,10 @@ class Backend(QObject):
         self._fetching: set[int] = set()
         self._meta_miss: dict[int, float] = {}
 
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._tick)
+        self._state_timer = QTimer(self)
+        self._state_timer.timeout.connect(self._tick)
+        self._paint_timer = QTimer(self)
+        self._paint_timer.timeout.connect(self._paint_tick)
 
     # -- public API ---------------------------------------------------------
     @property
@@ -68,11 +74,14 @@ class Backend(QObject):
         self._set_status("connecting", "starting…")
         threading.Thread(target=self._boot, args=(dict(settings),), daemon=True).start()
 
-        hz = max(5, min(30, int(settings.get("poll_hz", 30))))
-        self._timer.start(int(1000 / hz))
+        # State/metadata at a fixed modest rate; playhead paint up to 60 Hz.
+        self._state_timer.start(int(1000 / self.STATE_HZ))
+        paint_hz = max(5, min(60, int(settings.get("poll_hz", 60))))
+        self._paint_timer.start(max(1, int(1000 / paint_hz)))
 
     def stop(self) -> None:
-        self._timer.stop()
+        self._state_timer.stop()
+        self._paint_timer.stop()
         with self._lock:
             monitor = self._monitor
             server = self._server
@@ -250,6 +259,11 @@ class Backend(QObject):
                         self._fetching.discard(track_id)
 
             threading.Thread(target=_warm, daemon=True).start()
+
+    def _paint_tick(self) -> None:
+        if self._monitor is None:
+            return
+        self.paint_tick.emit()
 
     def _set_status(self, status: str, detail: str) -> None:
         self._status = status
