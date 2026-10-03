@@ -1,0 +1,3 @@
+# Optional: OneLibrary / Device Library Plus (exportLibrary.db) on XDJ-AZ USB.
+# DeviceLibraryPlus landed after the 0.4.4 PyPI release — install from GitHub.
+pyrekordbox @ git+https://github.com/dylanljones/pyrekordbox.git@master
