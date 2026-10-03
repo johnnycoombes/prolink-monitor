@@ -3,11 +3,16 @@
 Downloads the exported database once and, on demand, the analysis and artwork of
 each track as it gets loaded on a deck. Everything is cached on disk so that
 restarting the program is instant.
+
+Cache keys include the remote path (and for export.pdb, size+mtime) so swapping
+USB sticks on the same player cannot serve another stick's files.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -17,6 +22,16 @@ from .nfs import NfsClient
 
 PDB_PATH = "PIONEER/rekordbox/export.pdb"
 
+# How long a failed library open stays sticky before the next get() retries.
+ERROR_RETRY_SECONDS = 5.0
+
+
+def _safe_cache_name(prefix: str, remote: str, suffix: str = "") -> str:
+    """Stable, filesystem-safe cache file name derived from the remote path."""
+    digest = hashlib.sha1(remote.encode("utf-8", "replace")).hexdigest()[:16]
+    base = re.sub(r"[^A-Za-z0-9._-]+", "_", os.path.basename(remote))[:40] or "file"
+    return f"{prefix}_{digest}_{base}{suffix}"
+
 
 class Media:
     """One medium (USB/SD) mounted in a player, reachable over NFS."""
@@ -24,9 +39,8 @@ class Media:
     def __init__(self, host: str, export: str | None = None, cache_dir: str | None = None,
                  max_analysis: int = 32):
         self.host = host
-        self.cache_dir = cache_dir or os.path.join(
+        base = cache_dir or os.path.join(
             os.path.expanduser("~"), ".prolink-cache", host.replace(":", "_"))
-        os.makedirs(self.cache_dir, exist_ok=True)
         self.lock = threading.RLock()
         self._analysis: OrderedDict[int, anlz.Analysis] = OrderedDict()
         self._artwork: OrderedDict[int, bytes] = OrderedDict()
@@ -34,6 +48,7 @@ class Media:
         self.db: pdb.PdbDatabase | None = None
         self.export = export
         self.loaded_at = 0.0
+        self._pdb_fingerprint: tuple[int, int] | None = None
 
         self.nfs = NfsClient(host)
         exports = self.nfs.exports()
@@ -44,20 +59,49 @@ class Media:
         self.available_exports = exports
         self.root = self.nfs.mount(self.export)
 
+        # One cache folder per NFS export on this host, so stick swaps that keep
+        # the same IP but change the export path do not share anlz/art files.
+        export_key = re.sub(r"[^A-Za-z0-9._-]+", "_", self.export.strip("/")) or "export"
+        self.cache_dir = os.path.join(base, export_key)
+        os.makedirs(self.cache_dir, exist_ok=True)
+
     # -- database -----------------------------------------------------------
     def load_database(self, force: bool = False) -> pdb.PdbDatabase:
         """Download and parse export.pdb. Reuses the cached copy when it matches."""
         with self.lock:
-            if self.db is not None and not force:
-                return self.db
-            local = os.path.join(self.cache_dir, "export.pdb")
             _fh, attr = self.nfs.resolve(self.root, PDB_PATH)
-            reuse = (not force and os.path.exists(local)
-                     and os.path.getsize(local) == attr.size)
+            fingerprint = (attr.size, int(attr.mtime))
+            if (self.db is not None and not force
+                    and self._pdb_fingerprint == fingerprint):
+                return self.db
+
+            if (self._pdb_fingerprint is not None
+                    and self._pdb_fingerprint != fingerprint):
+                # USB contents changed under us — drop in-memory track caches.
+                self._analysis.clear()
+                self._artwork.clear()
+                self.db = None
+
+            local = os.path.join(self.cache_dir, "export.pdb")
+            stat_path = local + ".stat"
+            want = f"{fingerprint[0]}:{fingerprint[1]}"
+            reuse = (not force and os.path.exists(local) and os.path.exists(stat_path))
+            if reuse:
+                try:
+                    with open(stat_path, "r", encoding="ascii") as f:
+                        reuse = f.read().strip() == want
+                except OSError:
+                    reuse = False
             if not reuse:
                 self.nfs.download(self.root, PDB_PATH, local)
+                try:
+                    with open(stat_path, "w", encoding="ascii") as f:
+                        f.write(want)
+                except OSError:
+                    pass
             with open(local, "rb") as f:
                 self.db = pdb.PdbDatabase(f.read())
+            self._pdb_fingerprint = fingerprint
             self.loaded_at = time.time()
             return self.db
 
@@ -82,7 +126,7 @@ class Media:
         # the .DAT holds the grid and the overview; the .EXT and .2EX the big waveforms
         for ext in (".DAT", ".EXT", ".2EX"):
             path = base[:-4] + ext if base.upper().endswith(".DAT") else base
-            data = self._fetch(path, f"anlz_{track_id}{ext}")
+            data = self._fetch(path, _safe_cache_name("anlz", path, ext.lower()))
             if data is None:
                 continue
             try:
@@ -107,7 +151,8 @@ class Media:
         t = self.track(track_id)
         if not t or not t.artwork_path:
             return None
-        data = self._fetch(t.artwork_path.lstrip("/"), f"art_{track_id}.jpg")
+        remote = t.artwork_path.lstrip("/")
+        data = self._fetch(remote, _safe_cache_name("art", remote, ".jpg"))
         if data:
             with self.lock:
                 self._artwork[track_id] = data
@@ -152,32 +197,54 @@ class Library:
         self.cache_dir = cache_dir
         self.media: dict[str, Media] = {}
         self.errors: dict[str, str] = {}
+        self._error_at: dict[str, float] = {}
         self.lock = threading.RLock()
 
     def get(self, host: str) -> Media | None:
         with self.lock:
             if host in self.media:
                 return self.media[host]
-            if host in self.errors:
-                return None
+            # Sticky errors expire so a late USB insert can succeed without restart.
+            err_at = self._error_at.get(host)
+            if host in self.errors and err_at is not None:
+                if time.time() - err_at < ERROR_RETRY_SECONDS:
+                    return None
+                self.errors.pop(host, None)
+                self._error_at.pop(host, None)
         try:
             m = Media(host, cache_dir=self.cache_dir)
             m.load_database()
         except Exception as e:                    # no medium, no NFS, drive removed
             with self.lock:
                 self.errors[host] = str(e)
+                self._error_at[host] = time.time()
             return None
         with self.lock:
             self.media[host] = m
+            self.errors.pop(host, None)
+            self._error_at.pop(host, None)
         return m
 
     def retry(self, host: str) -> None:
         """Forget a previous failure so the connection is attempted again."""
         with self.lock:
             self.errors.pop(host, None)
+            self._error_at.pop(host, None)
+
+    def drop(self, host: str) -> None:
+        """Close and forget a medium (e.g. after an unmount / stick swap)."""
+        with self.lock:
+            media = self.media.pop(host, None)
+            self.errors.pop(host, None)
+            self._error_at.pop(host, None)
+        if media is not None:
+            try:
+                media.close()
+            except Exception:
+                pass
 
     def close(self) -> None:
         with self.lock:
-            for m in self.media.values():
-                m.close()
-            self.media.clear()
+            hosts = list(self.media.keys())
+        for host in hosts:
+            self.drop(host)

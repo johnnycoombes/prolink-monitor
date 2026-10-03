@@ -41,6 +41,8 @@ class Backend(QObject):
         self._meta_cache: dict[int, dict] = {}
         self._wave_cache: dict[int, bytes] = {}
         self._art_cache: dict[int, bytes] = {}
+        self._fetching: set[int] = set()
+        self._meta_miss: dict[int, float] = {}
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -80,6 +82,8 @@ class Backend(QObject):
             self._meta_cache.clear()
             self._wave_cache.clear()
             self._art_cache.clear()
+            self._fetching.clear()
+            self._meta_miss.clear()
         if server is not None:
             try:
                 server.shutdown()
@@ -216,11 +220,36 @@ class Backend(QObject):
         state["backend_detail"] = self._detail
         self.state_changed.emit(state)
 
-        # warm metadata for loaded tracks without blocking the UI thread hard
+        # warm metadata for loaded tracks without blocking the UI thread hard.
+        # Cap to one in-flight fetch per track_id; remember misses briefly so
+        # rekordbox-linked tracks (no NFS metadata) do not spawn 20 threads/s.
+        now = time.time()
         for deck in state.get("decks") or []:
             tid = deck.get("track_id") or 0
-            if tid and tid not in self._meta_cache:
-                threading.Thread(target=self.meta, args=(tid,), daemon=True).start()
+            if not tid:
+                continue
+            with self._lock:
+                if tid in self._meta_cache or tid in self._fetching:
+                    continue
+                miss_at = self._meta_miss.get(tid)
+                if miss_at is not None and now - miss_at < 10.0:
+                    continue
+                self._fetching.add(tid)
+
+            def _warm(track_id: int = tid) -> None:
+                try:
+                    meta = self.meta(track_id)
+                    if not meta:
+                        with self._lock:
+                            self._meta_miss[track_id] = time.time()
+                    else:
+                        with self._lock:
+                            self._meta_miss.pop(track_id, None)
+                finally:
+                    with self._lock:
+                        self._fetching.discard(track_id)
+
+            threading.Thread(target=_warm, daemon=True).start()
 
     def _set_status(self, status: str, detail: str) -> None:
         self._status = status

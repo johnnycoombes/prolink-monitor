@@ -76,10 +76,15 @@ def main() -> int:
             host[0] = players[0].ip
         media = library.get(host[0])
         if media is None:
+            library.retry(host[0])
+            media = library.get(host[0])
+        if media is None:
             return
         a = media.analysis(track_id)
         if a:
-            deck.set_beat_grid([b.time for b in a.beats], a.duration_ms)
+            current = deck.status
+            if current is not None and current.track_id == track_id:
+                deck.set_beat_grid([b.time for b in a.beats], a.duration_ms)
         tracks[track_id] = media.track(track_id)
 
     engine.on_track_change = on_track_change
