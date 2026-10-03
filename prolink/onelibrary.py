@@ -157,3 +157,103 @@ def find_content(db: Any, content_id: int) -> OneLibraryTrack | None:
     except Exception:
         return None
     return None
+
+
+def _playlist_row(item: Any) -> dict[str, Any]:
+    pid = int(getattr(item, "ID", 0) or getattr(item, "id", 0)
+              or getattr(item, "playlist_id", 0) or 0)
+    name = (getattr(item, "name", None) or getattr(item, "title", None)
+            or getattr(item, "Name", None) or f"Playlist {pid}")
+    parent = getattr(item, "parent_id", None)
+    if parent is None:
+        parent = getattr(item, "ParentID", None)
+    try:
+        parent_id = int(parent) if parent is not None else 0
+    except (TypeError, ValueError):
+        parent_id = 0
+    is_folder = bool(getattr(item, "is_folder", False)
+                     or getattr(item, "attribute", 0) in (1, 2))
+    return {
+        "id": pid,
+        "name": str(name),
+        "parent_id": parent_id,
+        "folder": is_folder,
+    }
+
+
+def list_playlists(db: Any) -> list[dict[str, Any]]:
+    if db is None:
+        return []
+    try:
+        items = list(db.get_playlist())
+    except Exception:
+        return []
+    return [_playlist_row(p) for p in items]
+
+
+def list_history(db: Any) -> list[dict[str, Any]]:
+    if db is None:
+        return []
+    items = []
+    for getter in ("get_history", "get_histories"):
+        fn = getattr(db, getter, None)
+        if not callable(fn):
+            continue
+        try:
+            items = list(fn())
+            break
+        except Exception:
+            continue
+    out = []
+    for item in items:
+        row = _playlist_row(item)
+        row["kind"] = "history"
+        out.append(row)
+    return out
+
+
+def playlist_tracks(db: Any, playlist_id: int, *, limit: int = 200) -> list[dict[str, Any]]:
+    """Best-effort track list for a OneLibrary playlist / history entry."""
+    if db is None or not playlist_id:
+        return []
+    limit = max(1, min(500, int(limit)))
+    candidates = []
+    for name in ("get_playlist_songs", "get_playlist_content", "get_songs"):
+        fn = getattr(db, name, None)
+        if callable(fn):
+            try:
+                candidates = list(fn(playlist_id))
+                break
+            except TypeError:
+                try:
+                    candidates = list(fn())
+                    break
+                except Exception:
+                    pass
+            except Exception:
+                pass
+    if not candidates:
+        try:
+            candidates = list(db.get_content())[:limit]
+        except Exception:
+            return []
+    rows = []
+    for item in candidates[:limit]:
+        content = getattr(item, "content", None) or item
+        try:
+            track = track_from_content(content)
+        except Exception:
+            continue
+        rows.append({
+            "id": track.id,
+            "title": track.title,
+            "artist": track.artist,
+            "album": track.album,
+            "genre": track.genre,
+            "key": track.key,
+            "bpm": track.tempo,
+            "duration_s": int((track.duration_ms or 0) / 1000),
+            "has_artwork": bool(track.artwork_path),
+            "source": "onelibrary",
+        })
+    return rows

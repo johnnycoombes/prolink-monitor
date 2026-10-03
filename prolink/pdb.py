@@ -297,6 +297,37 @@ class PdbDatabase:
                 "albums": len(self.albums), "genres": len(self.genres),
                 "keys": len(self.keys), "artwork": len(self.artwork)}
 
+    def search(self, query: str = "", *, limit: int = 100,
+               offset: int = 0) -> tuple[list[dict], int]:
+        """Filter tracks by title/artist/album substring. Returns (rows, total)."""
+        q = (query or "").strip().lower()
+        rows: list[dict] = []
+        for t in self.tracks.values():
+            if q:
+                hay = " ".join((
+                    t.title or "", t.artist or "", t.album or "",
+                    t.genre or "", t.key or "", t.label or "",
+                )).lower()
+                if q not in hay:
+                    continue
+            rows.append({
+                "id": t.id,
+                "title": t.title or "",
+                "artist": t.artist or "",
+                "album": t.album or "",
+                "genre": t.genre or "",
+                "key": t.key or "",
+                "bpm": t.tempo or 0.0,
+                "duration_s": t.duration or 0,
+                "has_artwork": bool(t.artwork_path),
+                "rating": t.rating or 0,
+            })
+        rows.sort(key=lambda r: ((r["title"] or "").lower(), r["id"]))
+        total = len(rows)
+        limit = max(1, min(500, int(limit)))
+        offset = max(0, int(offset))
+        return rows[offset:offset + limit], total
+
 
 def load(path: str) -> PdbDatabase:
     with open(path, "rb") as f:

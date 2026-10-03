@@ -9,8 +9,9 @@ from typing import Any
 from PySide6.QtCore import Qt, Signal, QEvent
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QGridLayout,
-    QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy,
-    QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton,
+    QScrollArea, QSizePolicy, QSpinBox, QSplitter, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from gui.theme import COLORS
@@ -67,6 +68,8 @@ class MonitorPage(Page):
         self.backend = backend
         self._cards: dict[int, DeckCard] = {}
         self._zoom = DEFAULT_ZOOM_BARS
+        self._zoom_overrides: dict[int, int] = {}
+        self._focus_deck: int | None = None
         self._max_decks = 4
         self._wave_style = "rgb"
         self._show_empty = True
@@ -91,6 +94,12 @@ class MonitorPage(Page):
             b.clicked.connect(lambda _=False, v=bars: self.set_zoom(v))
             tools.addWidget(b)
             self._zoom_btns[bars] = b
+        self.reset_zoom_btn = QPushButton(i18n.t("zoom_reset"))
+        self.reset_zoom_btn.setObjectName("Chip")
+        self.reset_zoom_btn.setCursor(Qt.PointingHandCursor)
+        self.reset_zoom_btn.setToolTip(i18n.t("zoom_reset_tip"))
+        self.reset_zoom_btn.clicked.connect(self.clear_zoom_overrides)
+        tools.addWidget(self.reset_zoom_btn)
 
         tools.addSpacing(16)
         decks_lbl = QLabel(i18n.t("max_decks"))
@@ -153,6 +162,13 @@ class MonitorPage(Page):
 
     def apply_prefs(self, settings: dict) -> None:
         self.set_zoom(int(settings.get("zoom_bars", DEFAULT_ZOOM_BARS)))
+        raw = settings.get("zoom_bars_by_deck") or {}
+        if isinstance(raw, dict):
+            self._zoom_overrides = {
+                int(k): int(v) for k, v in raw.items()
+                if int(v) in ZOOM_BARS
+            }
+        self._apply_card_zooms()
         self.set_max_decks(int(settings.get("max_decks", 4)))
         self.set_wave_style(str(settings.get("waveform_style") or "rgb"))
         self._show_empty = bool(settings.get("show_empty_decks", True))
@@ -166,13 +182,42 @@ class MonitorPage(Page):
 
     def set_zoom(self, bars: int) -> None:
         bars = int(bars) if int(bars) in ZOOM_BARS else DEFAULT_ZOOM_BARS
-        self._zoom = bars
+        # Toolbar zoom: if a deck is focused, override that deck only;
+        # otherwise set the global default for decks without an override.
+        if self._focus_deck is not None and self._focus_deck in self._cards:
+            self._zoom_overrides[self._focus_deck] = bars
+            self._cards[self._focus_deck].set_zoom(bars, override=True)
+        else:
+            self._zoom = bars
+            for n, card in self._cards.items():
+                if n not in self._zoom_overrides:
+                    card.set_zoom(bars, override=False)
         for s, b in self._zoom_btns.items():
             b.setProperty("active", "true" if s == bars else "false")
             b.style().unpolish(b)
             b.style().polish(b)
-        for card in self._cards.values():
-            card.set_zoom(bars)
+
+    def clear_zoom_overrides(self) -> None:
+        self._zoom_overrides.clear()
+        self._apply_card_zooms()
+
+    def _apply_card_zooms(self) -> None:
+        for n, card in self._cards.items():
+            if n in self._zoom_overrides:
+                card.set_zoom(self._zoom_overrides[n], override=True)
+            else:
+                card.set_zoom(self._zoom, override=False)
+
+    def _on_deck_focus(self, number: int) -> None:
+        self._focus_deck = int(number)
+
+    def _on_deck_zoom_override(self, number: int, bars: int) -> None:
+        if bars < 0:
+            self._zoom_overrides.pop(number, None)
+            if number in self._cards:
+                self._cards[number].set_zoom(self._zoom, override=False)
+            return
+        self._zoom_overrides[number] = bars
 
     def set_max_decks(self, n: int) -> None:
         self._max_decks = normalize_max_decks(n)
@@ -197,6 +242,7 @@ class MonitorPage(Page):
     def prefs_snapshot(self) -> dict:
         return {
             "zoom_bars": self._zoom,
+            "zoom_bars_by_deck": {str(k): v for k, v in self._zoom_overrides.items()},
             "max_decks": self._max_decks,
             "waveform_style": self._wave_style,
             **self._elements,
@@ -290,9 +336,14 @@ class MonitorPage(Page):
             n = d["number"]
             if n not in self._cards:
                 card = DeckCard(n, self._i18n)
-                card.set_zoom(self._zoom)
+                if n in self._zoom_overrides:
+                    card.set_zoom(self._zoom_overrides[n], override=True)
+                else:
+                    card.set_zoom(self._zoom, override=False)
                 card.set_wave_style(self._wave_style)
                 card.apply_elements(self._elements)
+                card.focused.connect(self._on_deck_focus)
+                card.zoom_override_changed.connect(self._on_deck_zoom_override)
                 self._cards[n] = card
                 self.decks_layout.addWidget(card, 1)
 
@@ -421,39 +472,260 @@ class DevicesPage(Page):
 
 
 class LibraryPage(Page):
-    def __init__(self, i18n, parent=None):
+    """Browse export.pdb tracks, OneLibrary playlists/history, and on-deck art."""
+
+    def __init__(self, i18n, backend=None, parent=None):
         super().__init__(i18n, "library_title", "library_sub", parent)
-        self.grid = QGridLayout()
-        self.grid.setSpacing(12)
+        self.backend = backend
+        self._query = ""
+        self._source = "all"  # all | loaded | playlist:<id>|<host>
+        self._last_host_key = ""
+        self._art_ids: list[int] = []
+
+        stats = QHBoxLayout()
+        stats.setSpacing(12)
         self.cards: dict[str, QLabel] = {}
-        wrap = QFrame()
-        wrap.setObjectName("Card")
-        wrap_l = QVBoxLayout(wrap)
-        wrap_l.setContentsMargins(18, 18, 18, 18)
-        wrap_l.addLayout(self.grid)
-        self.host_label = QLabel("")
-        self.host_label.setObjectName("Dim")
-        wrap_l.addWidget(self.host_label)
-        self.onelibrary_label = QLabel("")
-        self.onelibrary_label.setObjectName("Dim")
-        wrap_l.addWidget(self.onelibrary_label)
-        self.error_label = QLabel("")
-        self.error_label.setStyleSheet(f"color:{COLORS['danger']};")
-        wrap_l.addWidget(self.error_label)
-        self.layout_root.addWidget(wrap)
-        self.layout_root.addStretch(1)
-        for i, key in enumerate(("tracks", "artists", "albums")):
+        for key in ("tracks", "artists", "albums"):
+            box = QFrame()
+            box.setObjectName("Card")
+            lay = QVBoxLayout(box)
+            lay.setContentsMargins(14, 10, 14, 10)
             title = QLabel(i18n.t(key).upper())
             title.setObjectName("SectionTitle")
             value = QLabel("—")
-            value.setStyleSheet("font-family:monospace; font-size:28px; font-weight:700;")
-            self.grid.addWidget(title, 0, i)
-            self.grid.addWidget(value, 1, i)
+            value.setStyleSheet("font-family:monospace; font-size:22px; font-weight:700;")
+            lay.addWidget(title)
+            lay.addWidget(value)
+            stats.addWidget(box, 1)
             self.cards[key] = value
+        self.layout_root.addLayout(stats)
+
+        self.host_label = QLabel("")
+        self.host_label.setObjectName("Dim")
+        self.onelibrary_label = QLabel("")
+        self.onelibrary_label.setObjectName("Dim")
+        self.multi_label = QLabel("")
+        self.multi_label.setStyleSheet(f"color:{COLORS['accent']}; font-size:12px;")
+        self.error_label = QLabel("")
+        self.error_label.setStyleSheet(f"color:{COLORS['danger']};")
+        for w in (self.host_label, self.onelibrary_label, self.multi_label, self.error_label):
+            self.layout_root.addWidget(w)
+
+        tools = QHBoxLayout()
+        self.search = QLineEdit()
+        self.search.setPlaceholderText(i18n.t("library_search"))
+        self.search.textChanged.connect(self._on_search)
+        self.refresh_btn = QPushButton(i18n.t("library_all"))
+        self.refresh_btn.setCursor(Qt.PointingHandCursor)
+        self.refresh_btn.clicked.connect(self._show_all)
+        self.loaded_btn = QPushButton(i18n.t("library_loaded"))
+        self.loaded_btn.setCursor(Qt.PointingHandCursor)
+        self.loaded_btn.clicked.connect(self._show_loaded)
+        tools.addWidget(self.search, 1)
+        tools.addWidget(self.refresh_btn)
+        tools.addWidget(self.loaded_btn)
+        self.layout_root.addLayout(tools)
+
+        split = QSplitter(Qt.Horizontal)
+        left = QFrame()
+        left.setObjectName("Card")
+        left_l = QVBoxLayout(left)
+        left_l.setContentsMargins(10, 10, 10, 10)
+        pl_lbl = QLabel(i18n.t("library_playlists"))
+        pl_lbl.setObjectName("SectionTitle")
+        left_l.addWidget(pl_lbl)
+        self.playlist_list = QListWidget()
+        self.playlist_list.itemClicked.connect(self._on_playlist)
+        left_l.addWidget(self.playlist_list, 1)
+        hist_lbl = QLabel(i18n.t("library_history"))
+        hist_lbl.setObjectName("SectionTitle")
+        left_l.addWidget(hist_lbl)
+        self.history_list = QListWidget()
+        self.history_list.itemClicked.connect(self._on_history)
+        left_l.addWidget(self.history_list, 1)
+        split.addWidget(left)
+
+        right = QWidget()
+        right_l = QVBoxLayout(right)
+        right_l.setContentsMargins(0, 0, 0, 0)
+        right_l.setSpacing(8)
+        self.art_scroll = QScrollArea()
+        self.art_scroll.setWidgetResizable(True)
+        self.art_scroll.setFixedHeight(96)
+        self.art_scroll.setFrameShape(QFrame.NoFrame)
+        self.art_host = QWidget()
+        self.art_row = QHBoxLayout(self.art_host)
+        self.art_row.setContentsMargins(0, 0, 0, 0)
+        self.art_row.setSpacing(8)
+        self.art_row.addStretch(1)
+        self.art_scroll.setWidget(self.art_host)
+        right_l.addWidget(self.art_scroll)
+
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels([
+            i18n.t("library_col_title"),
+            i18n.t("library_col_artist"),
+            i18n.t("library_col_album"),
+            i18n.t("library_col_bpm"),
+            i18n.t("library_col_key"),
+        ])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        right_l.addWidget(self.table, 1)
+        self.empty = QLabel(i18n.t("library_empty"))
+        self.empty.setAlignment(Qt.AlignCenter)
+        self.empty.setStyleSheet(
+            f"color:{COLORS['dim']}; font-family:monospace; font-size:13px; padding:24px;"
+        )
+        right_l.addWidget(self.empty)
+        split.addWidget(right)
+        split.setStretchFactor(0, 1)
+        split.setStretchFactor(1, 3)
+        self.layout_root.addWidget(split, 1)
+
+        self._status_timer_n = 0
+
+    def set_backend(self, backend) -> None:
+        self.backend = backend
 
     def retranslate(self) -> None:
         super().retranslate()
-        # section labels are recreated via keys on next update; title/sub handled
+        self.search.setPlaceholderText(self._i18n.t("library_search"))
+        self.refresh_btn.setText(self._i18n.t("library_all"))
+        self.loaded_btn.setText(self._i18n.t("library_loaded"))
+        self.empty.setText(self._i18n.t("library_empty"))
+        self.table.setHorizontalHeaderLabels([
+            self._i18n.t("library_col_title"),
+            self._i18n.t("library_col_artist"),
+            self._i18n.t("library_col_album"),
+            self._i18n.t("library_col_bpm"),
+            self._i18n.t("library_col_key"),
+        ])
+
+    def _on_search(self, text: str) -> None:
+        self._query = text.strip()
+        if self._source.startswith("playlist:"):
+            return
+        self._reload_tracks()
+
+    def _show_all(self) -> None:
+        self._source = "all"
+        self._reload_tracks()
+
+    def _show_loaded(self) -> None:
+        self._source = "loaded"
+        self._reload_tracks()
+
+    def _on_playlist(self, item: QListWidgetItem) -> None:
+        data = item.data(Qt.UserRole) or {}
+        self._source = f"playlist:{data.get('id')}|{data.get('host') or ''}"
+        self._reload_tracks()
+
+    def _on_history(self, item: QListWidgetItem) -> None:
+        data = item.data(Qt.UserRole) or {}
+        self._source = f"playlist:{data.get('id')}|{data.get('host') or ''}"
+        self._reload_tracks()
+
+    def _reload_tracks(self) -> None:
+        if self.backend is None:
+            self._fill_table([])
+            return
+        tracks: list[dict] = []
+        if self._source == "loaded":
+            tracks = list(self.backend.loaded_tracks() or [])
+            q = self._query.lower()
+            if q:
+                tracks = [
+                    t for t in tracks
+                    if q in f"{t.get('title','')} {t.get('artist','')} {t.get('album','')}".lower()
+                ]
+        elif self._source.startswith("playlist:"):
+            _, rest = self._source.split(":", 1)
+            pid_s, _, host = rest.partition("|")
+            try:
+                pid = int(pid_s)
+            except ValueError:
+                pid = 0
+            data = self.backend.browse_playlist_tracks(pid, host or None)
+            tracks = list((data or {}).get("tracks") or [])
+        else:
+            data = self.backend.browse_tracks(self._query, limit=200, offset=0)
+            tracks = list((data or {}).get("tracks") or [])
+            if (data or {}).get("multi_player"):
+                self.multi_label.setText(self._i18n.t("library_multi"))
+            else:
+                self.multi_label.setText("")
+        self._fill_table(tracks)
+        self._refresh_art_grid(tracks[:24])
+
+    def _fill_table(self, tracks: list[dict]) -> None:
+        self.empty.setVisible(not tracks)
+        self.table.setVisible(bool(tracks))
+        self.table.setRowCount(len(tracks))
+        for row, t in enumerate(tracks):
+            bpm = t.get("bpm") or 0
+            vals = [
+                t.get("title") or "—",
+                t.get("artist") or "",
+                t.get("album") or "",
+                f"{float(bpm):.1f}" if bpm else "—",
+                t.get("key") or "",
+            ]
+            for col, val in enumerate(vals):
+                self.table.setItem(row, col, QTableWidgetItem(str(val)))
+
+    def _refresh_art_grid(self, tracks: list[dict]) -> None:
+        while self.art_row.count():
+            item = self.art_row.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        self._art_ids = []
+        for t in tracks:
+            tid = int(t.get("id") or 0)
+            if not tid or not t.get("has_artwork"):
+                continue
+            self._art_ids.append(tid)
+            cell = QLabel("♪")
+            cell.setFixedSize(72, 72)
+            cell.setAlignment(Qt.AlignCenter)
+            cell.setStyleSheet(
+                f"background:{COLORS['panel_high']}; border:1px solid {COLORS['line']};"
+                f"border-radius:6px; color:{COLORS['dimmest']};"
+            )
+            cell.setToolTip(f"{t.get('title') or ''} — {t.get('artist') or ''}")
+            if self.backend is not None:
+                art = self.backend.artwork(tid)
+                if art:
+                    from PySide6.QtGui import QImage, QPixmap
+                    img = QImage.fromData(art)
+                    if not img.isNull():
+                        pix = QPixmap.fromImage(img).scaled(
+                            72, 72, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                        cell.setPixmap(pix)
+                        cell.setText("")
+            self.art_row.addWidget(cell)
+        self.art_row.addStretch(1)
+        self.art_scroll.setVisible(bool(self._art_ids))
+
+    def _reload_sidebars(self) -> None:
+        if self.backend is None:
+            return
+        data = self.backend.browse_playlists() or {}
+        self.playlist_list.clear()
+        for p in data.get("playlists") or []:
+            if p.get("folder"):
+                continue
+            item = QListWidgetItem(p.get("name") or f"#{p.get('id')}")
+            item.setData(Qt.UserRole, p)
+            self.playlist_list.addItem(item)
+        self.history_list.clear()
+        for h in data.get("history") or []:
+            item = QListWidgetItem(h.get("name") or f"#{h.get('id')}")
+            item.setData(Qt.UserRole, h)
+            self.history_list.addItem(item)
 
     def update_state(self, state: dict) -> None:
         lib = state.get("library") or {}
@@ -473,6 +745,14 @@ class LibraryPage(Page):
             self.onelibrary_label.setText("")
         err = state.get("library_error")
         self.error_label.setText(err or "")
+
+        # Refresh browse data when media appears / changes (throttled).
+        host_key = f"{host}|{bool(lib)}|{bool(ol and ol.get('readable'))}"
+        self._status_timer_n += 1
+        if host_key != self._last_host_key or self._status_timer_n % 40 == 1:
+            self._last_host_key = host_key
+            self._reload_sidebars()
+            self._reload_tracks()
 
 
 class SessionPage(Page):
@@ -731,18 +1011,35 @@ class OverlayPage(Page):
         self.playing_only = QCheckBox(i18n.t("overlay_playing"))
         self.use_mix = QCheckBox(i18n.t("overlay_mix"))
         self.use_mix.setChecked(True)
+        self.show_tags = QCheckBox(i18n.t("overlay_show_tags"))
+        self.show_tags.setChecked(True)
+        self.show_bpm = QCheckBox(i18n.t("overlay_show_bpm"))
+        self.show_bpm.setChecked(True)
+        self.show_next = QCheckBox(i18n.t("overlay_show_next"))
+        self.show_next.setChecked(True)
         self.wave_box = QComboBox()
         self.wave_box.addItem(i18n.t("wave_rgb"), "rgb")
         self.wave_box.addItem(i18n.t("wave_3band"), "3band")
         self.wave_box.addItem(i18n.t("wave_blue"), "blue")
+        self.scale_box = QComboBox()
+        for label, val in (("100%", "1"), ("75%", "0.75"), ("125%", "1.25"),
+                           ("150%", "1.5"), ("200%", "2")):
+            self.scale_box.addItem(label, val)
+        self.accent_edit = QLineEdit()
+        self.accent_edit.setPlaceholderText("#22d3ee")
         self.preview = QCheckBox(i18n.t("overlay_preview"))
 
         form.addRow(i18n.t("overlay_layout"), self.layout_box)
         form.addRow(i18n.t("overlay_corner"), self.corner_box)
         form.addRow(i18n.t("overlay_decks"), self.decks_box)
         form.addRow(i18n.t("overlay_wave"), self.wave_box)
+        form.addRow(i18n.t("overlay_scale"), self.scale_box)
+        form.addRow(i18n.t("overlay_accent"), self.accent_edit)
         form.addRow("", self.playing_only)
         form.addRow("", self.use_mix)
+        form.addRow("", self.show_tags)
+        form.addRow("", self.show_bpm)
+        form.addRow("", self.show_next)
         form.addRow("", self.preview)
         self.layout_root.addWidget(card)
 
@@ -778,11 +1075,16 @@ class OverlayPage(Page):
         self.layout_root.addWidget(url_box)
         self.layout_root.addStretch(1)
 
-        for w in (self.layout_box, self.corner_box, self.decks_box, self.wave_box):
+        for w in (self.layout_box, self.corner_box, self.decks_box, self.wave_box,
+                  self.scale_box):
             w.currentIndexChanged.connect(self._on_change)
         self.playing_only.toggled.connect(self._on_change)
         self.use_mix.toggled.connect(self._on_change)
+        self.show_tags.toggled.connect(self._on_change)
+        self.show_bpm.toggled.connect(self._on_change)
+        self.show_next.toggled.connect(self._on_change)
         self.preview.toggled.connect(self._on_change)
+        self.accent_edit.textChanged.connect(self._on_change)
         self.layout_box.currentIndexChanged.connect(self._maybe_bump_decks)
 
     def load_prefs(self, data: dict, port: int | None = None) -> None:
@@ -799,8 +1101,15 @@ class OverlayPage(Page):
         self.decks_box.setCurrentIndex(max(0, idx))
         self.playing_only.setChecked(bool(data.get("overlay_playing_only", True)))
         self.use_mix.setChecked(bool(data.get("overlay_mix", True)))
+        self.show_tags.setChecked(bool(data.get("overlay_show_tags", True)))
+        self.show_bpm.setChecked(bool(data.get("overlay_show_bpm", True)))
+        self.show_next.setChecked(bool(data.get("overlay_show_next", True)))
         idx = self.wave_box.findData(data.get("overlay_waveform_style", "rgb"))
         self.wave_box.setCurrentIndex(max(0, idx))
+        scale = str(data.get("overlay_scale") or "1")
+        idx = self.scale_box.findData(scale)
+        self.scale_box.setCurrentIndex(max(0, idx))
+        self.accent_edit.setText(str(data.get("overlay_accent") or ""))
         self.preview.setChecked(False)
         self._refresh_url()
 
@@ -812,6 +1121,11 @@ class OverlayPage(Page):
             "overlay_playing_only": self.playing_only.isChecked(),
             "overlay_mix": self.use_mix.isChecked(),
             "overlay_waveform_style": self.wave_box.currentData(),
+            "overlay_scale": self.scale_box.currentData(),
+            "overlay_accent": self.accent_edit.text().strip(),
+            "overlay_show_tags": self.show_tags.isChecked(),
+            "overlay_show_bpm": self.show_bpm.isChecked(),
+            "overlay_show_next": self.show_next.isChecked(),
         }
 
     def set_port(self, port: int) -> None:
@@ -833,10 +1147,22 @@ class OverlayPage(Page):
             f"decks={self.decks_box.currentData()}",
             f"wave={self.wave_box.currentData()}",
         ]
+        scale = self.scale_box.currentData() or "1"
+        if scale and scale != "1":
+            qs.append(f"scale={scale}")
+        accent = (self.accent_edit.text() or "").strip().lstrip("#")
+        if accent and len(accent) == 6:
+            qs.append(f"accent={accent}")
         if not self.playing_only.isChecked():
             qs.append("playing=0")
         if not self.use_mix.isChecked():
             qs.append("mix=0")
+        if not self.show_tags.isChecked():
+            qs.append("tags=0")
+        if not self.show_bpm.isChecked():
+            qs.append("bpm=0")
+        if not self.show_next.isChecked():
+            qs.append("next=0")
         use_preview = self.preview.isChecked() if preview is None else preview
         if use_preview:
             qs.append("preview=1")

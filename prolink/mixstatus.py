@@ -208,10 +208,13 @@ class MixStatus:
             # when alone.
             self._promote(snap, now)
 
-    def as_state(self) -> dict[str, Any]:
+    def as_state(self, *, now: float | None = None) -> dict[str, Any]:
+        now = time.time() if now is None else now
+        pending = self._pending_promotion(now)
         return {
             "set_active": self.set_active,
             "now_playing": self.now_playing,
+            "pending": pending,
             "setlist": [
                 {
                     "deck": e.deck,
@@ -232,3 +235,57 @@ class MixStatus:
                 "use_on_air": self.config.use_on_air,
             },
         }
+
+    def _pending_promotion(self, now: float) -> dict[str, Any] | None:
+        """Deck that is accumulating SmartTiming beats toward becoming now-playing.
+
+        Used by the overlay lower-third “next track” teaser. Returns None when
+        nothing is approaching promotion, or when the live deck is already NP.
+        """
+        need_beats = max(1, int(self.config.beats_until_reported))
+        best: dict[str, Any] | None = None
+        best_prog = -1.0
+        np_deck = int((self.now_playing or {}).get("number") or 0)
+        for deck, snap in self._last.items():
+            if not snap.get("track_id"):
+                continue
+            if not self._playing(snap) or not self._on_air(snap):
+                continue
+            if deck == np_deck and deck in self._live:
+                continue
+            started = self._started_at.get(deck)
+            if started is None:
+                continue
+            # Alone-in-booth promotes immediately — no pending teaser needed.
+            if not self._live and deck not in self._live:
+                others = [
+                    s for n, s in self._last.items()
+                    if n != deck and self._playing(s) and self._on_air(s)
+                ]
+                if not others:
+                    continue
+            beat_ms = _beat_ms(
+                float(snap.get("track_bpm") or snap.get("bpm") or 0.0),
+                float(snap.get("pitch") or 0.0),
+            )
+            elapsed_beats = max(0.0, (now - started) * 1000.0 / beat_ms)
+            if elapsed_beats >= need_beats:
+                continue
+            progress = min(1.0, elapsed_beats / need_beats)
+            if progress < 0.15:
+                # Too early — avoid flashing a lower-third for every cue-play.
+                continue
+            if progress > best_prog:
+                best_prog = progress
+                best = {
+                    "deck": deck,
+                    "track_id": int(snap.get("track_id") or 0),
+                    "title": str(snap.get("title") or ""),
+                    "artist": str(snap.get("artist") or ""),
+                    "bpm": float(snap.get("bpm") or 0.0),
+                    "key": str(snap.get("key") or ""),
+                    "beats": round(elapsed_beats, 1),
+                    "need_beats": need_beats,
+                    "progress": round(progress, 3),
+                }
+        return best

@@ -107,6 +107,7 @@ class MixStatusTests(unittest.TestCase):
         self.assertTrue(st["set_active"])
         self.assertEqual(st["now_playing"]["track_id"], 7)
         self.assertEqual(st["setlist"][0]["title"], "T")
+        self.assertIn("pending", st)
         self.assertEqual(st["config"]["beats_until_reported"], 4)
 
     def test_no_on_air_when_required(self):
