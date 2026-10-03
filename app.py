@@ -53,6 +53,9 @@ class Monitor:
         self._lock = threading.RLock()
         self.mixstatus = MixStatus(MixStatusConfig())
         self.session = SessionRecorder()
+        # Library totals are expensive (PDB counts); reuse until media set changes.
+        self._library_cache_key: tuple | None = None
+        self._library_cache: tuple[dict | None, str | None, dict | None] = (None, None, None)
 
     def _cache_key(self, host: str, media, track_id: int) -> tuple:
         fp = getattr(media, "_pdb_fingerprint", None) or (0, 0)
@@ -224,8 +227,10 @@ class Monitor:
         with self._lock:
             return self._waveforms.get(key)
 
-    def meta(self, track_id: int) -> dict | None:
-        self.ensure(track_id)
+    def meta(self, track_id: int, *, load: bool = True) -> dict | None:
+        """Return cached track metadata. With load=True, may hit NFS once."""
+        if load:
+            self.ensure(track_id)
         host, media = self._media_for(track_id)
         if not host or media is None:
             return None
@@ -236,7 +241,77 @@ class Monitor:
     def artwork(self, track_id: int) -> bytes | None:
         _host, media = self._media_for(track_id)
         return media.artwork(track_id) if media else None
+
+    def _library_snapshot(self) -> tuple[dict | None, str | None, dict | None]:
+        """Cached library totals / OneLibrary info for the hot state() path."""
+        with self.library.lock:
+            media_list = list(self.library.media.values())
+            first_error = next(iter(self.library.errors.values()), None)
+        key = tuple(
+            (getattr(m, "host", None), getattr(m, "export", None),
+             getattr(m, "_pdb_fingerprint", None),
+             bool(getattr(m, "db", None)),
+             id(getattr(m, "onelibrary", None)))
+            for m in media_list
+        )
+        if key == self._library_cache_key:
+            return self._library_cache
+        totals: dict[str, int | str] = {}
+        onelibrary_info = None
+        for m in media_list:
+            if m.db is None:
+                continue
+            for k, v in m.db.counts().items():
+                totals[k] = totals.get(k, 0) + v
+            ol = getattr(m, "onelibrary", None)
+            if ol is not None and ol.present:
+                onelibrary_info = {
+                    "present": True,
+                    "readable": ol.readable,
+                    "tracks": ol.tracks,
+                    "playlists": ol.playlists,
+                    "history": ol.history,
+                    "detail": ol.detail,
+                    "error": ol.error,
+                }
+                if ol.readable:
+                    totals["onelibrary_playlists"] = (
+                        int(totals.get("onelibrary_playlists", 0)) + ol.playlists)
+                    totals["onelibrary_history"] = (
+                        int(totals.get("onelibrary_history", 0)) + ol.history)
+        snap = (totals or None, None if totals else first_error, onelibrary_info)
+        self._library_cache_key = key
+        self._library_cache = snap
+        return snap
+
     # -- state --------------------------------------------------------------
+    def paint_state(self) -> dict:
+        """Lightweight playhead snapshot for high-rate SSE / paint clients."""
+        decks = []
+        for d in self.engine.active_decks():
+            s = d.status
+            if s is None:
+                continue
+            decks.append({
+                "number": d.number,
+                "track_id": s.track_id,
+                "playing": d.is_playing,
+                "bpm": round(s.effective_bpm, 2),
+                "track_bpm": round(s.bpm, 2),
+                "pitch": round(s.pitch_percent, 2),
+                "speed": round(s.speed, 6),
+                "position_ms": round(d.position_ms, 1),
+                "duration_ms": d.track_length_ms,
+                "beat": s.beat_count,
+                "bar": s.beat_in_bar,
+                "state": s.play_state,
+                "master": s.master,
+                "sync": s.sync,
+                "on_air": s.on_air,
+                "position_source": d.position_source,
+            })
+        return {"t": time.time(), "paint": True, "decks": decks}
+
     def state(self) -> dict:
         decks = []
         for d in self.engine.active_decks():
@@ -269,10 +344,10 @@ class Monitor:
                 "sync": s.sync,
                 "on_air": s.on_air,
             })
-        # Enrich snaps with metadata and feed the mix / setlist processor.
+        # Enrich from cache only — never NFS on the hot path (ensure runs on track change).
         for snap in decks:
             tid = snap.get("track_id") or 0
-            meta = self.meta(tid) if tid else None
+            meta = self.meta(tid, load=False) if tid else None
             if meta:
                 snap["title"] = meta.get("title") or ""
                 snap["artist"] = meta.get("artist") or ""
@@ -284,37 +359,11 @@ class Monitor:
                         "kind": a.kind, "ip": a.ip}
                        for a in sorted(self.engine.devices.values(),
                                        key=lambda x: x.device_number)]
-        # totals across every medium we have opened: with separate players there
-        # can be a USB drive in more than one of them
-        totals: dict[str, int | str] = {}
-        with self.library.lock:
-            media_list = list(self.library.media.values())
-            first_error = next(iter(self.library.errors.values()), None)
-        onelibrary_info = None
-        for m in media_list:
-            if m.db is None:
-                continue
-            for k, v in m.db.counts().items():
-                totals[k] = totals.get(k, 0) + v
-            ol = getattr(m, "onelibrary", None)
-            if ol is not None and ol.present:
-                onelibrary_info = {
-                    "present": True,
-                    "readable": ol.readable,
-                    "tracks": ol.tracks,
-                    "playlists": ol.playlists,
-                    "history": ol.history,
-                    "detail": ol.detail,
-                    "error": ol.error,
-                }
-                if ol.readable:
-                    totals["onelibrary_playlists"] = (
-                        int(totals.get("onelibrary_playlists", 0)) + ol.playlists)
-                    totals["onelibrary_history"] = (
-                        int(totals.get("onelibrary_history", 0)) + ol.history)
+        totals, library_error, onelibrary_info = self._library_snapshot()
         mix = self.mixstatus.as_state()
         return {
             "t": time.time(),
+            "paint": False,
             "decks": decks,
             "devices": devices,
             "packets": self.engine.packets,
@@ -322,9 +371,8 @@ class Monitor:
             "mode_kind": getattr(self.engine.source, "kind", ""),
             "mode_detail": getattr(self.engine.source, "detail", ""),
             "host": self.host or "",
-            # counts, not a sentence: the interface writes its own wording
-            "library": totals or None,
-            "library_error": None if totals else first_error,
+            "library": totals,
+            "library_error": library_error,
             "onelibrary": onelibrary_info,
             "mix": mix,
             "now_playing": mix.get("now_playing"),
@@ -448,18 +496,32 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "not_found"}, 404)
 
     def _events(self) -> None:
-        """Server-sent events: state at 60 Hz. The client interpolates between them."""
+        """SSE: fat state ~15 Hz, lightweight playhead paint at 60 Hz.
+
+        Matches the desktop split (20 Hz metadata / 60 Hz paint). Clients that
+        only need smooth playheads merge ``paint: true`` frames into the last
+        full state.
+        """
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "keep-alive")
         self.end_headers()
+        paint_hz = 60.0
+        full_hz = 15.0
+        full_every = max(1, int(round(paint_hz / full_hz)))
+        tick = 0
         try:
             while True:
-                payload = json.dumps(self.monitor.state(), ensure_ascii=False)
+                if tick % full_every == 0:
+                    payload = json.dumps(self.monitor.state(), ensure_ascii=False)
+                else:
+                    payload = json.dumps(self.monitor.paint_state(),
+                                        ensure_ascii=False)
                 self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
                 self.wfile.flush()
-                time.sleep(1.0 / 60.0)
+                tick += 1
+                time.sleep(1.0 / paint_hz)
         except (BrokenPipeError, ConnectionResetError, OSError):
             return
 

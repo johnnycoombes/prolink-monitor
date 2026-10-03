@@ -340,8 +340,11 @@ class WaveformView(QWidget):
         self._overview_pm: QPixmap | None = None
         self._overview_key: tuple | None = None
         self._detail_pm: QPixmap | None = None
+        self._detail_scratch: QPixmap | None = None
         self._detail_key: tuple | None = None
         self._detail_start: float = 0.0
+        self._last_paint_pos: float = -1.0
+        self._last_paint_playing: bool | None = None
 
     def _visible_seconds(self) -> float:
         return bars_to_seconds(self._zoom_bars, self._bpm)
@@ -390,8 +393,16 @@ class WaveformView(QWidget):
         self.update()
 
     def set_position(self, pos_ms: float, playing: bool) -> None:
+        # Skip a full QWidget repaint when the playhead has not moved a visible
+        # amount and play/pause did not change (saves overview overlay work).
+        moved = abs(pos_ms - self._last_paint_pos) >= 4.0  # ~¼ px at typical zoom
+        play_changed = playing != self._last_paint_playing
         self._pos_ms = pos_ms
         self._playing = playing
+        if not moved and not play_changed and self._detail_pm is not None:
+            return
+        self._last_paint_pos = pos_ms
+        self._last_paint_playing = playing
         self.update()
 
     def set_loop_region(self, start_ms: float | None, end_ms: float | None,
@@ -414,7 +425,10 @@ class WaveformView(QWidget):
 
     def _invalidate_detail(self) -> None:
         self._detail_pm = None
+        self._detail_scratch = None
         self._detail_key = None
+        self._last_paint_pos = -1.0
+        self._last_paint_playing = None
 
     def paintEvent(self, event):  # noqa: N802
         p = QPainter(self)
@@ -564,10 +578,13 @@ class WaveformView(QWidget):
             self._rebuild_detail(w, h, start, key)
             return
 
-        # Scroll the cached strip and fill only the newly exposed edge.
-        new_pm = QPixmap(w, h)
-        new_pm.fill(QColor("#080a0c"))
-        qp = QPainter(new_pm)
+        # Scroll within a recycled scratch pixmap — avoid allocating every frame.
+        scratch = self._detail_scratch
+        if scratch is None or scratch.width() != w or scratch.height() != h:
+            scratch = QPixmap(w, h)
+            self._detail_scratch = scratch
+        scratch.fill(QColor("#080a0c"))
+        qp = QPainter(scratch)
         if shift > 0:
             qp.drawPixmap(shift, 0, self._detail_pm, 0, 0, w - shift, h)
             self._draw_detail_range(qp, 0, 0, w, h, start, 0, shift)
@@ -576,7 +593,9 @@ class WaveformView(QWidget):
             qp.drawPixmap(0, 0, self._detail_pm, sh, 0, w - sh, h)
             self._draw_detail_range(qp, 0, 0, w, h, start, w - sh, w)
         qp.end()
-        self._detail_pm = new_pm
+        # Swap buffers so the previous front becomes the next scratch.
+        self._detail_scratch = self._detail_pm
+        self._detail_pm = scratch
         self._detail_start -= shift / px_per_col
 
     def _rebuild_detail(self, w, h, start: float, key: tuple) -> None:
