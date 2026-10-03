@@ -272,15 +272,32 @@ class Monitor:
                                        key=lambda x: x.device_number)]
         # totals across every medium we have opened: with separate players there
         # can be a USB drive in more than one of them
-        totals: dict[str, int] = {}
+        totals: dict[str, int | str] = {}
         with self.library.lock:
             media_list = list(self.library.media.values())
             first_error = next(iter(self.library.errors.values()), None)
+        onelibrary_info = None
         for m in media_list:
             if m.db is None:
                 continue
             for k, v in m.db.counts().items():
                 totals[k] = totals.get(k, 0) + v
+            ol = getattr(m, "onelibrary", None)
+            if ol is not None and ol.present:
+                onelibrary_info = {
+                    "present": True,
+                    "readable": ol.readable,
+                    "tracks": ol.tracks,
+                    "playlists": ol.playlists,
+                    "history": ol.history,
+                    "detail": ol.detail,
+                    "error": ol.error,
+                }
+                if ol.readable:
+                    totals["onelibrary_playlists"] = (
+                        int(totals.get("onelibrary_playlists", 0)) + ol.playlists)
+                    totals["onelibrary_history"] = (
+                        int(totals.get("onelibrary_history", 0)) + ol.history)
         return {
             "t": time.time(),
             "decks": decks,
@@ -293,6 +310,7 @@ class Monitor:
             # counts, not a sentence: the interface writes its own wording
             "library": totals or None,
             "library_error": None if totals else first_error,
+            "onelibrary": onelibrary_info,
         }
 
 

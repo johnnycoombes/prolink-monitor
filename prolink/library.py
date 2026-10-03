@@ -17,10 +17,11 @@ import threading
 import time
 from collections import OrderedDict
 
-from . import anlz, pdb
+from . import anlz, onelibrary, pdb
 from .nfs import NfsClient
 
 PDB_PATH = "PIONEER/rekordbox/export.pdb"
+ONE_LIBRARY_PATH = onelibrary.ONE_LIBRARY_PATH
 
 # How long a failed library open stays sticky before the next get() retries.
 ERROR_RETRY_SECONDS = 5.0
@@ -49,6 +50,9 @@ class Media:
         self.export = export
         self.loaded_at = 0.0
         self._pdb_fingerprint: tuple[int, int] | None = None
+        self.onelibrary_path: str = ""
+        self.onelibrary_db = None
+        self.onelibrary: onelibrary.OneLibrarySummary = onelibrary.OneLibrarySummary()
 
         self.nfs = NfsClient(host)
         exports = self.nfs.exports()
@@ -103,10 +107,55 @@ class Media:
                 self.db = pdb.PdbDatabase(f.read())
             self._pdb_fingerprint = fingerprint
             self.loaded_at = time.time()
+            self._load_onelibrary(force=force)
             return self.db
+
+    def _load_onelibrary(self, force: bool = False) -> None:
+        """Detect / cache exportLibrary.db and open it when pyrekordbox is available."""
+        local = os.path.join(self.cache_dir, "exportLibrary.db")
+        present = False
+        try:
+            _fh, attr = self.nfs.resolve(self.root, ONE_LIBRARY_PATH)
+            present = True
+            stat_path = local + ".stat"
+            want = f"{attr.size}:{int(attr.mtime)}"
+            reuse = (not force and os.path.exists(local) and os.path.exists(stat_path))
+            if reuse:
+                try:
+                    with open(stat_path, "r", encoding="ascii") as f:
+                        reuse = f.read().strip() == want
+                except OSError:
+                    reuse = False
+            if not reuse:
+                self.nfs.download(self.root, ONE_LIBRARY_PATH, local)
+                try:
+                    with open(stat_path, "w", encoding="ascii") as f:
+                        f.write(want)
+                except OSError:
+                    pass
+            self.onelibrary_path = local
+        except Exception:
+            self.onelibrary_path = local if os.path.exists(local) else ""
+            present = bool(self.onelibrary_path)
+
+        if not present:
+            self.onelibrary_db = None
+            self.onelibrary = onelibrary.summarize(None, present=False)
+            return
+
+        db, err = onelibrary.open_onelibrary(self.onelibrary_path)
+        self.onelibrary_db = db
+        self.onelibrary = onelibrary.summarize(
+            db, present=True, path=self.onelibrary_path, error=err)
 
     def track(self, track_id: int) -> pdb.Track | None:
         return self.load_database().get(track_id)
+
+    def onelibrary_track(self, track_id: int) -> onelibrary.OneLibraryTrack | None:
+        """Look up a content row in OneLibrary (AZ playlists / history IDs)."""
+        if self.onelibrary_db is None:
+            self._load_onelibrary()
+        return onelibrary.find_content(self.onelibrary_db, track_id)
 
     # -- analysis -----------------------------------------------------------
     def analysis(self, track_id: int) -> anlz.Analysis | None:

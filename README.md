@@ -315,6 +315,15 @@ these come from:
 
 - `PIONEER/rekordbox/export.pdb` — the rekordbox database: tracks, artists, albums,
   genres, keys, labels and artwork paths.
+- `PIONEER/rekordbox/exportLibrary.db` — optional **OneLibrary / Device Library
+  Plus** (XDJ-AZ and friends). Encrypted SQLCipher; playlists and history created
+  on the player itself only live here. Classic `export.pdb` is still written by
+  rekordbox and remains the default for live deck metadata. To read OneLibrary::
+
+      pip install "pyrekordbox @ git+https://github.com/dylanljones/pyrekordbox.git@master"
+
+  The Library page then shows playlist / history counts when the file is present
+  and readable.
 - `PIONEER/USBANLZ/.../ANLZ0000.DAT` / `.EXT` / `.2EX` — per-track analysis: beat
   grid, cues, phrases and the waveforms.
 - `PIONEER/Artwork/...` — the artwork itself.
