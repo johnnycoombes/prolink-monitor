@@ -16,6 +16,21 @@ from gui.theme import COLORS
 from gui.widgets import DeckCard, parse_waveform
 from gui.settings import deck_elements_from
 
+# Visual stack order for Monitor cards (Pioneer-style 4-deck layout).
+DECK_LAYOUT = {
+    2: (1, 2),
+    4: (3, 1, 2, 4),
+}
+
+
+def normalize_max_decks(n: int) -> int:
+    """Only 2- and 4-deck layouts are supported."""
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return 4
+    return 4 if n >= 4 else 2
+
 
 class Page(QFrame):
     def __init__(self, i18n, title_key: str, sub_key: str, parent=None):
@@ -79,7 +94,7 @@ class MonitorPage(Page):
         decks_lbl.setObjectName("SectionTitle")
         tools.addWidget(decks_lbl)
         self._deck_btns: dict[int, QPushButton] = {}
-        for n in (2, 3, 4):
+        for n in (2, 4):
             b = QPushButton(str(n))
             b.setObjectName("Chip")
             b.setCursor(Qt.PointingHandCursor)
@@ -149,9 +164,9 @@ class MonitorPage(Page):
             card.set_zoom(seconds)
 
     def set_max_decks(self, n: int) -> None:
-        self._max_decks = n
+        self._max_decks = normalize_max_decks(n)
         for k, b in self._deck_btns.items():
-            b.setProperty("active", "true" if k == n else "false")
+            b.setProperty("active", "true" if k == self._max_decks else "false")
             b.style().unpolish(b)
             b.style().polish(b)
         if self._last_state:
@@ -183,7 +198,8 @@ class MonitorPage(Page):
 
     def _relayout_deck_heights(self) -> None:
         """Split the Monitor viewport evenly so waveforms fill the panel."""
-        cards = [self._cards[n] for n in sorted(self._cards)]
+        order = DECK_LAYOUT.get(self._max_decks, (1, 2))
+        cards = [self._cards[n] for n in order if n in self._cards]
         n = len(cards)
         vh = max(0, self.scroll.viewport().height())
         if n == 0:
@@ -270,21 +286,25 @@ class MonitorPage(Page):
                     card.set_track_data(meta, detail, overview, art)
             card.update_deck(d, pos)
 
-        # Keep layout order matching deck numbers.
+        # Keep layout order (2-deck: 1-2, 4-deck: 3-1-2-4).
         for i, d in enumerate(visible):
             card = self._cards[d["number"]]
             self.decks_layout.insertWidget(i, card, 1)
         self._relayout_deck_heights()
 
     def _visible(self, decks: list[dict]) -> list[dict]:
-        ranked = sorted(
-            decks,
-            key=lambda d: (0 if d.get("track_id") else 1, d.get("number", 0)),
-        )
-        if not self._show_empty:
-            ranked = [d for d in ranked if d.get("track_id")]
-        picked = ranked[: self._max_decks]
-        return sorted(picked, key=lambda d: d.get("number", 0))
+        """Pick decks for the current layout and return them in display order."""
+        by_num = {int(d.get("number") or 0): d for d in decks}
+        order = DECK_LAYOUT.get(self._max_decks, (1, 2))
+        out: list[dict] = []
+        for n in order:
+            d = by_num.get(n)
+            if d is None:
+                continue
+            if not self._show_empty and not d.get("track_id"):
+                continue
+            out.append(d)
+        return out
 
 
 class DevicesPage(Page):
@@ -580,7 +600,7 @@ class SettingsPage(Page):
 
         disp = section("section_display")
         self.max_decks = QComboBox()
-        for n in (2, 3, 4):
+        for n in (2, 4):
             self.max_decks.addItem(str(n), n)
         self.zoom = QComboBox()
         for s in (4, 8, 16, 32):
@@ -685,7 +705,7 @@ class SettingsPage(Page):
         self.iface.setText(data.get("iface") or "")
         self.tshark.setText(data.get("tshark") or "")
         self.cache.setText(data.get("cache") or "")
-        idx = self.max_decks.findData(int(data.get("max_decks", 4)))
+        idx = self.max_decks.findData(normalize_max_decks(data.get("max_decks", 4)))
         self.max_decks.setCurrentIndex(max(0, idx))
         idx = self.zoom.findData(int(data.get("zoom_seconds", 8)))
         self.zoom.setCurrentIndex(max(0, idx))

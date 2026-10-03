@@ -120,7 +120,7 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     out["tshark"] = str(data.get("tshark") or "").strip()
     out["cache"] = str(data.get("cache") or "").strip()
     try:
-        out["max_decks"] = max(2, min(4, int(data.get("max_decks", 4))))
+        out["max_decks"] = 4 if int(data.get("max_decks", 4)) >= 4 else 2
     except (TypeError, ValueError):
         out["max_decks"] = 4
     try:
