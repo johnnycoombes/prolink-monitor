@@ -17,6 +17,7 @@ from gui.pages import (
 )
 from gui.settings import load_settings, save_settings
 from gui.theme import COLORS
+from gui.floating_now import FloatingNowPlayingWindow
 from gui.widgets import Sidebar
 from prolink.session import ZOOM_BARS, DEFAULT_ZOOM_BARS
 
@@ -48,6 +49,8 @@ class MainWindow(QMainWindow):
         self._sidebar_visible = bool(self.settings.get("sidebar_visible", True))
         self._force_quit = False
         self._tray: QSystemTrayIcon | None = None
+        self._floating_now: FloatingNowPlayingWindow | None = None
+        self._last_state: dict | None = None
 
         self.setWindowTitle(self.i18n.t("app_title"))
         self.resize(
@@ -168,6 +171,8 @@ class MainWindow(QMainWindow):
         self.page_monitor.apply_prefs(self.settings)
         self.page_overlay.load_prefs(self.settings, port=int(self.settings.get("port", 8777)))
         self.page_overlay.prefs_changed.connect(self._on_overlay_prefs)
+        self.page_overlay.set_floating_now_handler(self.toggle_floating_now)
+        self.page_settings.settings_floating_btn.clicked.connect(self.toggle_floating_now)
         self.page_overlay.set_web_ready(False)
 
         self.backend.state_changed.connect(self._on_state)
@@ -205,6 +210,7 @@ class MainWindow(QMainWindow):
         bind("Ctrl+B", self.toggle_sidebar)
         bind("Ctrl+R", self._toggle_record)
         bind("Ctrl+O", self._open_overlay_hotkey)
+        bind("Ctrl+Shift+N", self.toggle_floating_now)
 
     def _toggle_record(self) -> None:
         mon = self.backend.monitor
@@ -213,6 +219,26 @@ class MainWindow(QMainWindow):
             self.backend.stop_session()
         else:
             self.backend.start_session()
+
+    def toggle_floating_now(self) -> None:
+        if self.backend.status != "connected":
+            QMessageBox.information(
+                self, self.i18n.t("floating_now_title"), self.i18n.t("connecting"))
+            return
+        if self._floating_now is not None and self._floating_now.isVisible():
+            self._floating_now.close()
+            self._floating_now = None
+            return
+        win = FloatingNowPlayingWindow(
+            self.backend, self.i18n, lambda: self.settings, self)
+        win.setAttribute(Qt.WA_DeleteOnClose)
+        win.destroyed.connect(lambda: setattr(self, "_floating_now", None))
+        self._floating_now = win
+        win.restore_geometry(self.settings)
+        win.apply_settings()
+        if self._last_state:
+            win.apply_state(self._last_state)
+        win.show()
 
     def _open_overlay_hotkey(self) -> None:
         if self.backend.status != "connected":
@@ -239,6 +265,9 @@ class MainWindow(QMainWindow):
         act_record.triggered.connect(self._toggle_record)
         act_overlay = QAction(f"{self.i18n.t('open_overlay')}  ({self.i18n.t('hotkey_overlay')})", self)
         act_overlay.triggered.connect(self._open_overlay_hotkey)
+        act_floating = QAction(
+            f"{self.i18n.t('tray_floating_now')}  ({self.i18n.t('hotkey_floating_now')})", self)
+        act_floating.triggered.connect(self.toggle_floating_now)
         act_connect = QAction(self.i18n.t("connect"), self)
         act_connect.triggered.connect(self.connect_backend)
         act_disconnect = QAction(self.i18n.t("disconnect"), self)
@@ -249,6 +278,7 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction(act_record)
         menu.addAction(act_overlay)
+        menu.addAction(act_floating)
         menu.addSeparator()
         menu.addAction(act_connect)
         menu.addAction(act_disconnect)
@@ -256,6 +286,7 @@ class MainWindow(QMainWindow):
         menu.addAction(act_quit)
         self._tray_act_record = act_record
         self._tray_act_overlay = act_overlay
+        self._tray_act_floating = act_floating
         self._tray_act_connect = act_connect
         self._tray_act_disconnect = act_disconnect
         self._tray.setContextMenu(menu)
@@ -272,6 +303,9 @@ class MainWindow(QMainWindow):
         self.activateWindow()
 
     def quit_app(self) -> None:
+        if self._floating_now is not None:
+            self._floating_now.close()
+            self._floating_now = None
         self._force_quit = True
         self.close()
 
@@ -395,8 +429,13 @@ class MainWindow(QMainWindow):
                 self._tray_act_connect.setEnabled(status != "connecting")
                 self._tray_act_disconnect.setEnabled(busy)
                 self._tray_act_overlay.setEnabled(web_ready)
+                if hasattr(self, "_tray_act_floating"):
+                    self._tray_act_floating.setEnabled(status == "connected")
 
     def _on_state(self, state: dict) -> None:
+        self._last_state = state
+        if self._floating_now is not None and self._floating_now.isVisible():
+            self._floating_now.apply_state(state)
         self.page_monitor.update_state(state)
         self.page_health.update_state(state)
 
@@ -438,6 +477,8 @@ class MainWindow(QMainWindow):
 
     def _on_paint_tick(self) -> None:
         self.page_monitor.advance_playheads()
+        if self._floating_now is not None and self._floating_now.isVisible():
+            self._floating_now.tick_paint()
 
     def _on_track_ready(self, _tid: int) -> None:
         # Next state tick will attach meta/waveform; nudge playheads now.
@@ -457,6 +498,8 @@ class MainWindow(QMainWindow):
         if self.backend.monitor is not None:
             self.backend.monitor.show_phrases = bool(
                 self.settings.get("show_phrases", True))
+        if self._floating_now is not None:
+            self._floating_now.apply_settings()
         if reconnect:
             self.connect_backend()
         else:

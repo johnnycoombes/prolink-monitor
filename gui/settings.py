@@ -47,7 +47,14 @@ DEFAULTS: dict[str, Any] = {
     "deck_show_key": True,
     "deck_show_state": True,
     "overlay_layout": "nowplaying",   # nowplaying | dual | minimal | setlist
+    "overlay_now_pos": "left",        # left | right — now playing card horizontal anchor
     "overlay_corner": "bl",           # bl | br | tl | tr | center
+    "floating_now_topmost": True,
+    "floating_now_transparent": True,
+    "floating_now_x": -1,
+    "floating_now_y": -1,
+    "floating_now_width": 0,
+    "floating_now_height": 0,
     "overlay_playing_only": True,
     "overlay_mix": True,
     "overlay_decks": 1,
@@ -206,6 +213,8 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     out["overlay_layout"] = (
         layout if layout in ("nowplaying", "dual", "minimal", "setlist") else "nowplaying"
     )
+    now_pos = str(data.get("overlay_now_pos") or "left").lower()
+    out["overlay_now_pos"] = "right" if now_pos == "right" else "left"
     corner = str(data.get("overlay_corner") or "bl").lower()
     out["overlay_corner"] = corner if corner in ("bl", "br", "tl", "tr", "center") else "bl"
     out["overlay_playing_only"] = bool(data.get("overlay_playing_only", True))
@@ -229,6 +238,18 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     out["overlay_show_tags"] = bool(data.get("overlay_show_tags", True))
     out["overlay_show_bpm"] = bool(data.get("overlay_show_bpm", True))
     out["overlay_show_next"] = bool(data.get("overlay_show_next", True))
+    out["floating_now_topmost"] = bool(data.get("floating_now_topmost", True))
+    out["floating_now_transparent"] = bool(data.get("floating_now_transparent", True))
+    for key, lo, hi in (
+        ("floating_now_x", -1, 10000),
+        ("floating_now_y", -1, 10000),
+        ("floating_now_width", 0, 4000),
+        ("floating_now_height", 0, 4000),
+    ):
+        try:
+            out[key] = max(lo, min(hi, int(data.get(key, lo))))
+        except (TypeError, ValueError):
+            out[key] = lo if "x" in key or "y" in key else 0
     out["session_autosave"] = bool(data.get("session_autosave", False))
     out["session_autosave_dir"] = str(data.get("session_autosave_dir") or "").strip()
     out["minimize_to_tray"] = bool(data.get("minimize_to_tray", True))
