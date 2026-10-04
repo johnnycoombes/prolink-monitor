@@ -29,6 +29,7 @@ from prolink.library import Library                       # noqa: E402
 from prolink import onelibrary                            # noqa: E402
 from prolink.mixstatus import MixStatus, MixStatusConfig  # noqa: E402
 from prolink.session import SessionRecorder               # noqa: E402
+from prolink.audience_deck import AudienceDeckTracker, merge_live_deck  # noqa: E402
 from prolink.track_key import keys_match, track_cache_key, track_key_token  # noqa: E402
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
@@ -54,6 +55,7 @@ class Monitor:
         self.show_phrases = True
         self._lock = threading.RLock()
         self.mixstatus = MixStatus(MixStatusConfig())
+        self.audience = AudienceDeckTracker()
         self.session = SessionRecorder()
         # Library totals are expensive (PDB counts); reuse until media set changes.
         self._library_cache_key: tuple | None = None
@@ -501,7 +503,16 @@ class Monitor:
                 "position_source": d.position_source,
                 **self._waveform_report(s),
             })
-        return {"t": time.time(), "paint": True, "decks": decks}
+        tracker = getattr(self, "audience", None) or AudienceDeckTracker()
+        self.audience = tracker
+        tracker.observe(decks)
+        audience_deck = merge_live_deck(tracker.pick(decks), decks)
+        return {
+            "t": time.time(),
+            "paint": True,
+            "decks": decks,
+            "audience_deck": audience_deck,
+        }
 
     def state(self) -> dict:
         decks = []
@@ -552,6 +563,10 @@ class Monitor:
                 snap.pop("artist", None)
                 snap.pop("key", None)
             self.mixstatus.handle(snap)
+        tracker = getattr(self, "audience", None) or AudienceDeckTracker()
+        self.audience = tracker
+        tracker.observe(decks)
+        audience_deck = merge_live_deck(tracker.pick(decks), decks)
         # One observe pass: set-clock pause/resume + track logging.
         self.session.observe(decks)
         with self.engine.lock:
@@ -593,6 +608,7 @@ class Monitor:
             "onelibrary": onelibrary_info,
             "nfs": nfs_health,
             "mix": mix,
+            "audience_deck": audience_deck,
             "now_playing": mix.get("now_playing"),
             "pending": mix.get("pending"),
             "setlist": mix.get("setlist") or [],
@@ -768,11 +784,20 @@ class Handler(BaseHTTPRequestHandler):
                    self.TYPES.get(ext, "application/octet-stream"))
 
     def _file(self, name: str, ctype: str) -> None:
+        path = os.path.join(WEB_DIR, name)
         try:
-            with open(os.path.join(WEB_DIR, name), "rb") as f:
-                self._send(200, f.read(), ctype)
+            with open(path, "rb") as f:
+                body = f.read()
         except OSError:
-            self._json({"error": "not_found"}, 404)
+            return self._json({"error": "not_found"}, 404)
+        extra: dict[str, str] = {}
+        if name.endswith(".html"):
+            extra["Pragma"] = "no-cache"
+            try:
+                extra["X-Asset-Version"] = str(int(os.path.getmtime(path)))
+            except OSError:
+                pass
+        self._send(200, body, ctype, "no-store", extra)
 
     @staticmethod
     def _parse_track_request(parsed) -> tuple[int, int | None, str | None]:

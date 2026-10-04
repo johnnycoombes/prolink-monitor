@@ -86,6 +86,16 @@ class MixStatus:
     def _promote(self, snap: dict[str, Any], now: float) -> None:
         deck = int(snap["number"])
         if deck in self._live and self.now_playing and self.now_playing.get("number") == deck:
+            old_tid = int(self.now_playing.get("track_id") or 0)
+            new_tid = int(snap.get("track_id") or 0)
+            if old_tid == new_tid:
+                return
+            # Same live deck, different track — refresh snapshot; restart SmartTiming.
+            self._started_at[deck] = now
+            self.now_playing = dict(snap)
+            self.now_playing["reported_at"] = now
+            if self.on_now_playing:
+                self.on_now_playing(self.now_playing)
             return
         if not self._on_air(snap) or not self._playing(snap):
             return
@@ -146,6 +156,17 @@ class MixStatus:
 
         was_playing = self._playing(last)
         was_on_air = self._on_air(last)
+
+        if (
+            deck in self._live
+            and self.now_playing
+            and self.now_playing.get("number") == deck
+            and int(snap.get("track_id") or 0)
+            and int(snap.get("track_id") or 0) != int(last.get("track_id") or 0)
+        ):
+            self._started_at[deck] = now
+            self.now_playing = dict(snap)
+            self.now_playing["reported_at"] = now
 
         if playing and not was_playing:
             if deck in self._may_stop_at and on_air:

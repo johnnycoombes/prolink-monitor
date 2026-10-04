@@ -491,9 +491,25 @@ function visibleDecks(list){
   return rows.slice(0, maxDecks);
 }
 
+function pickAudienceDeck(state) {
+  const list = state.decks || [];
+  const aud = state.audience_deck;
+  if (aud && aud.number) {
+    const live = list.find(d => d.number === aud.number);
+    const deck = live ? Object.assign({}, aud, live) : aud;
+    if (deck.track_id || deck.playing) return deck;
+  }
+  return null;
+}
+
 function pickDecks(state){
   const list = state.decks || [];
-  if (layout === 'dual' || !useMix) return visibleDecks(list);
+  if (layout === 'dual') return visibleDecks(list);
+  if (layout === 'nowplaying' || layout === 'minimal' || layout === 'setlist') {
+    const aud = pickAudienceDeck(state);
+    if (aud) return [aud];
+  }
+  if (!useMix) return visibleDecks(list);
   const np = state.now_playing;
   if (np && np.number) {
     const live = list.find(d => d.number === np.number);
@@ -501,6 +517,15 @@ function pickDecks(state){
     if (deck.track_id || deck.playing) return [deck];
   }
   return visibleDecks(list);
+}
+
+let _nowPlayingCacheId = '';
+
+function syncNowPlayingCache(deck) {
+  const id = deck ? deckCacheId(deck) : '';
+  if (id === _nowPlayingCacheId) return;
+  if (_nowPlayingCacheId) tracks.delete(_nowPlayingCacheId);
+  _nowPlayingCacheId = id;
 }
 
 function readWaveform(buf, off){
@@ -1175,6 +1200,8 @@ function paint(){
   else if (nowStyle === 'panel') html = renderNowPanel(decks[0], positions[0]);
   else html = renderNow(decks[0], positions[0]);
 
+  const aud = last.audience_deck;
+  const audSig = aud ? `:aud${aud.number}:${aud.track_id||0}:${aud.track_key||''}` : '';
   const np = last.now_playing;
   const mixSig = useMix && np ? `:mix${np.number}:${np.track_id||0}` : '';
   const setlistSig = layout === 'setlist'
@@ -1182,7 +1209,8 @@ function paint(){
     : '';
   const waveSig = decks.map(d => {
     const p = trackPack(d);
-    return `${d.number}:${d.track_id||0}:${d.track_key||''}:${!!(p&&p.meta)}:${!!(p&&p.overview)}:${d.state||''}`;
+    const title = (p && p.meta && p.meta.title) ? String(p.meta.title) : '';
+    return `${d.number}:${d.track_id||0}:${d.track_key||''}:${title}:${!!(p&&p.meta)}:${!!(p&&p.overview)}:${!!(p&&p.detail)}:${d.state||''}`;
   }).join('|');
   // Include whether history track packs loaded so art/titles refresh.
   let histSig = '';
@@ -1192,8 +1220,11 @@ function paint(){
       return `${e.track_id}:${e.track_key||''}:${!!(p&&p.meta)}`;
     }).join(',');
   }
-  const sig = waveSig + '|' + layout + mixSig + setlistSig + '|' + histSig
+  const sig = waveSig + '|' + layout + audSig + mixSig + setlistSig + '|' + histSig
     + `|d${maxDecks}|ns${nowStyle}${nowPos}|zb${zoomBarsDisplay}|ph${playheadModeDisplay}|sp${showPhrasesDisplay}`;
+  if (layout === 'nowplaying' || layout === 'minimal' || layout === 'setlist') {
+    syncNowPlayingCache(decks[0]);
+  }
   card.classList.toggle('spread', spread || (layout === 'nowplaying' && nowStyle === 'panel'));
   if (card.dataset.sig !== sig){
     card.innerHTML = html;
@@ -1231,6 +1262,26 @@ function paint(){
 }
 
 function applyState(state){
+  if (state && state.paint && last) {
+    const byNum = new Map((state.decks || []).map(d => [d.number, d]));
+    last = Object.assign({}, last, {t: state.t});
+    if (state.audience_deck) {
+      const aud = state.audience_deck;
+      const live = (state.decks || []).find(d => d.number === aud.number);
+      last.audience_deck = live ? Object.assign({}, aud, live) : aud;
+    }
+    last.decks = (last.decks || []).map(d => {
+      const p = byNum.get(d.number);
+      return p ? Object.assign({}, d, p) : d;
+    });
+    for (const p of (state.decks || [])) {
+      if (!(last.decks || []).some(d => d.number === p.number)) {
+        last.decks.push(p);
+      }
+    }
+    receivedAt = performance.now();
+    return;
+  }
   last = state;
   receivedAt = performance.now();
   if (state && state.display) {

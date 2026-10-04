@@ -18,6 +18,9 @@ from prolink.session import ZOOM_BARS, bars_to_seconds
 
 # Left identity column: room for artwork + MASTER / SYNC / ON AIR chips.
 IDENT_WIDTH = 300
+# Right readout column: wide enough for "174.00 BPM" at 28px monospace.
+READOUT_PANEL_MIN = 188
+READOUT_PANEL_MAX = 220
 
 
 def mmss(ms: float) -> str:
@@ -995,10 +998,13 @@ class DeckCard(QFrame):
         read = QVBoxLayout()
         read.setSpacing(2)
         self.bpm = QLabel("— BPM")
+        self.bpm.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.bpm.setStyleSheet(
             "font-family:monospace; font-size:28px; font-weight:700;"
         )
+        self.bpm.setMinimumWidth(READOUT_PANEL_MIN - 8)
         self.pitch = QLabel("")
+        self.pitch.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.pitch.setStyleSheet(f"font-family:monospace; font-size:12px; color:{COLORS['dim']};")
         self.times_wrap = QWidget()
         times = QHBoxLayout(self.times_wrap)
@@ -1062,7 +1068,9 @@ class DeckCard(QFrame):
         read.addWidget(self.state_wrap)
         read.addStretch(1)
         self.wrap_read = QWidget()
-        self.wrap_read.setFixedWidth(150)
+        self.wrap_read.setMinimumWidth(READOUT_PANEL_MIN)
+        self.wrap_read.setMaximumWidth(READOUT_PANEL_MAX)
+        self.wrap_read.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Expanding)
         self.wrap_read.setLayout(read)
         body.addWidget(self.wrap_read, 0)
 

@@ -18,16 +18,22 @@ from PySide6.QtWidgets import (
 )
 
 from gui.overlay_now import normalize_now_pos, normalize_now_style
+from prolink.audience_deck import merge_live_deck
 from gui.theme import COLORS
 from gui.widgets import WaveformView, parse_waveform
 from prolink.proto import resolve_playhead_position
 
 
-def pick_now_deck(state: dict | None, *, use_mix: bool = True) -> dict | None:
-    """Same audience-deck selection as the OBS overlay (SmartTiming when enabled)."""
+def pick_now_deck(state: dict | None, *, use_mix: bool = False) -> dict | None:
+    """Live audience deck (master / on-air), matching OBS overlay ``audience_deck``."""
     if not state:
         return None
     decks = state.get("decks") or []
+    aud = state.get("audience_deck")
+    if aud and aud.get("number"):
+        merged = merge_live_deck(aud, decks)
+        if merged and (merged.get("track_id") or merged.get("playing")):
+            return merged
     if use_mix:
         np = state.get("now_playing")
         if np and np.get("number"):
@@ -35,6 +41,9 @@ def pick_now_deck(state: dict | None, *, use_mix: bool = True) -> dict | None:
             deck = {**(np or {}), **(live or {})} if live else dict(np)
             if deck.get("track_id") or deck.get("playing"):
                 return deck
+    for d in decks:
+        if d.get("track_id") and d.get("playing"):
+            return d
     for d in decks:
         if d.get("track_id") or d.get("playing"):
             return d
@@ -448,7 +457,7 @@ class FloatingNowPlayingWindow(QWidget):
         self._last_state = state
         self._received_at = time.time()
         settings = self._settings_getter()
-        deck = pick_now_deck(state, use_mix=bool(settings.get("overlay_mix", True)))
+        deck = pick_now_deck(state)
         if not deck or not deck.get("track_id"):
             empty = self._i18n.t("no_track")
             self._title.setText(empty)
@@ -560,7 +569,7 @@ class FloatingNowPlayingWindow(QWidget):
         if not self._last_state:
             return
         settings = self._settings_getter()
-        deck = pick_now_deck(self._last_state, use_mix=bool(settings.get("overlay_mix", True)))
+        deck = pick_now_deck(self._last_state)
         if deck:
             self._update_progress(deck, extrapolate=True)
 
