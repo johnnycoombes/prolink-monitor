@@ -57,6 +57,34 @@ class OneLibraryHelperTests(unittest.TestCase):
         self.assertAlmostEqual(t.tempo, 122.32)
         self.assertEqual(t.duration_ms, 415000)
 
+    def test_playlist_tracks_uses_get_playlist_content(self):
+        db = mock.Mock()
+        row = SimpleNamespace(
+            content=SimpleNamespace(
+                content_id=7,
+                title="Track",
+                artist=SimpleNamespace(name="Artist"),
+                album=None,
+                genre=None,
+                key=None,
+                label=None,
+                length=180000,
+                bpmx100=12800,
+                analysisDataFilePath="",
+                image=None,
+                rating=0,
+                releaseYear=0,
+                bitrate=0,
+                djComment="",
+            )
+        )
+        db.get_playlist_content.return_value = [row]
+        rows = onelibrary.playlist_tracks(db, 99)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["id"], 7)
+        self.assertEqual(rows[0]["title"], "Track")
+        db.get_playlist_content.assert_called_with(99)
+
 
 if __name__ == "__main__":
     unittest.main()

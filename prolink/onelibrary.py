@@ -217,26 +217,27 @@ def playlist_tracks(db: Any, playlist_id: int, *, limit: int = 200) -> list[dict
     if db is None or not playlist_id:
         return []
     limit = max(1, min(500, int(limit)))
-    candidates = []
-    for name in ("get_playlist_songs", "get_playlist_content", "get_songs"):
+    candidates: list[Any] = []
+    for name in ("get_playlist_content", "get_history_content",
+                 "get_playlist_songs", "get_songs"):
         fn = getattr(db, name, None)
-        if callable(fn):
-            try:
-                candidates = list(fn(playlist_id))
-                break
-            except TypeError:
-                try:
-                    candidates = list(fn())
-                    break
-                except Exception:
-                    pass
-            except Exception:
-                pass
-    if not candidates:
+        if not callable(fn):
+            continue
         try:
-            candidates = list(db.get_content())[:limit]
+            candidates = list(fn(playlist_id))
+            if candidates:
+                break
+        except TypeError:
+            try:
+                candidates = list(fn())
+                if candidates:
+                    break
+            except Exception:
+                continue
         except Exception:
-            return []
+            continue
+    if not candidates:
+        return []
     rows = []
     for item in candidates[:limit]:
         content = getattr(item, "content", None) or item

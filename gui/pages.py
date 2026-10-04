@@ -40,8 +40,10 @@ def _repopulate_overlay_now_pos(combo: QComboBox, i18n, style: str, pos=None) ->
         )
     else:
         opts = (
-            ("overlay_now_pos_left", "left"),
-            ("overlay_now_pos_right", "right"),
+            ("overlay_now_pos_tl", "tl"),
+            ("overlay_now_pos_tr", "tr"),
+            ("overlay_now_pos_bl", "bl"),
+            ("overlay_now_pos_br", "br"),
         )
     for key, data in opts:
         combo.addItem(i18n.t(key), data)
@@ -602,6 +604,42 @@ class HealthPage(Page):
         ov_l.addLayout(grid)
         self.layout_root.addWidget(overview)
 
+        ol_frame = QFrame()
+        ol_frame.setObjectName("Card")
+        ol_l = QVBoxLayout(ol_frame)
+        ol_l.setContentsMargins(18, 14, 18, 14)
+        self._ol_title = QLabel(i18n.t("health_onelibrary"))
+        self._ol_title.setObjectName("SectionTitle")
+        ol_l.addWidget(self._ol_title)
+        ol_grid = QGridLayout()
+        ol_grid.setHorizontalSpacing(24)
+        ol_grid.setVerticalSpacing(8)
+        self._ol_status_val = QLabel("—")
+        self._ol_path_val = QLabel("—")
+        self._ol_pkg_val = QLabel("—")
+        for w in (self._ol_status_val, self._ol_path_val, self._ol_pkg_val):
+            w.setWordWrap(True)
+            w.setStyleSheet("font-family:monospace; font-size:13px;")
+        self._ol_labels = []
+        for col, (title, value) in enumerate((
+            (i18n.t("health_onelibrary_status"), self._ol_status_val),
+            (i18n.t("health_onelibrary_pyrekordbox"), self._ol_pkg_val),
+            (i18n.t("health_onelibrary_path"), self._ol_path_val),
+        )):
+            lbl = QLabel(title)
+            lbl.setObjectName("Dim")
+            lbl.setStyleSheet(f"color:{COLORS['dim']}; font-size:11px;")
+            self._ol_labels.append(lbl)
+            ol_grid.addWidget(lbl, 0, col)
+            ol_grid.addWidget(value, 1, col)
+        ol_l.addLayout(ol_grid)
+        self._ol_hint = QLabel(i18n.t("health_onelibrary_hint"))
+        self._ol_hint.setWordWrap(True)
+        self._ol_hint.setObjectName("Dim")
+        self._ol_hint.setStyleSheet(f"color:{COLORS['dim']}; font-size:12px;")
+        ol_l.addWidget(self._ol_hint)
+        self.layout_root.addWidget(ol_frame)
+
         hint = QLabel(i18n.t("health_hint"))
         hint.setWordWrap(True)
         hint.setObjectName("Dim")
@@ -667,6 +705,15 @@ class HealthPage(Page):
         for lbl, text in zip(self._overview_labels, titles):
             lbl.setText(text)
         self._hint.setText(self._i18n.t("health_hint"))
+        self._ol_title.setText(self._i18n.t("health_onelibrary"))
+        self._ol_hint.setText(self._i18n.t("health_onelibrary_hint"))
+        ol_titles = (
+            self._i18n.t("health_onelibrary_status"),
+            self._i18n.t("health_onelibrary_pyrekordbox"),
+            self._i18n.t("health_onelibrary_path"),
+        )
+        for lbl, text in zip(self._ol_labels, ol_titles):
+            lbl.setText(text)
         self._decks_lbl.setText(self._i18n.t("health_decks"))
         self._nfs_lbl.setText(self._i18n.t("health_nfs"))
         self.deck_empty.setText(self._i18n.t("health_no_decks"))
@@ -724,6 +771,37 @@ class HealthPage(Page):
         )
         self._prev_packets = packets
         self._prev_t = now
+
+        ol = state.get("onelibrary") or {}
+        lib_err = state.get("library_error")
+        if ol.get("present"):
+            if ol.get("readable"):
+                status = ol.get("detail") or "readable"
+            else:
+                status = ol.get("error") or ol.get("detail") or "present but unreadable"
+            self._ol_status_val.setText(str(status))
+            self._ol_status_val.setStyleSheet(
+                "font-family:monospace; font-size:13px; color:#2ee89a;"
+                if ol.get("readable")
+                else "font-family:monospace; font-size:13px; color:#ff6b61;"
+            )
+            self._ol_path_val.setText(str(ol.get("path") or "—"))
+        elif lib_err:
+            self._ol_status_val.setText(f"PDB/library: {lib_err}")
+            self._ol_status_val.setStyleSheet(
+                "font-family:monospace; font-size:13px; color:#ff6b61;"
+            )
+            self._ol_path_val.setText("—")
+        else:
+            self._ol_status_val.setText("not detected on USB (exportLibrary.db)")
+            self._ol_status_val.setStyleSheet("font-family:monospace; font-size:13px;")
+            self._ol_path_val.setText("—")
+        pkg = ol.get("pyrekordbox")
+        if pkg is None:
+            from prolink import onelibrary as _ol
+
+            pkg = _ol.pyrekordbox_available()
+        self._ol_pkg_val.setText("installed" if pkg else "missing (see requirements-onelibrary.txt)")
 
         decks = list(state.get("decks") or [])
         self.deck_empty.setVisible(not decks)
@@ -1300,7 +1378,7 @@ class OverlayPage(Page):
         self.now_style_box.addItem(i18n.t("overlay_now_style_card"), "card")
         self.now_style_box.addItem(i18n.t("overlay_now_style_panel"), "panel")
         self.now_pos_box = QComboBox()
-        _repopulate_overlay_now_pos(self.now_pos_box, i18n, "card", "left")
+        _repopulate_overlay_now_pos(self.now_pos_box, i18n, "card", "bl")
         self._overlay_now_style = "card"
         self.corner_box = QComboBox()
         for key, label in (
@@ -1436,7 +1514,7 @@ class OverlayPage(Page):
         idx = self.now_style_box.findData(style)
         self.now_style_box.setCurrentIndex(max(0, idx))
         _repopulate_overlay_now_pos(
-            self.now_pos_box, self._i18n, style, data.get("overlay_now_pos", "left"))
+            self.now_pos_box, self._i18n, style, data.get("overlay_now_pos", "bl"))
         self._sync_overlay_layout_rows()
         decks = int(data.get("overlay_decks", 1))
         if self.layout_box.currentData() == "dual" and decks < 2:
@@ -1498,7 +1576,7 @@ class OverlayPage(Page):
             if style == "panel":
                 qs.append("style=panel")
             pos = self.now_pos_box.currentData() or (
-                "bottom" if style == "panel" else "left")
+                "bottom" if style == "panel" else "bl")
             qs.append(f"pos={pos}")
         else:
             qs.append(f"corner={self.corner_box.currentData()}")
@@ -1687,7 +1765,7 @@ class SettingsPage(Page):
         self.settings_now_style.addItem(i18n.t("overlay_now_style_card"), "card")
         self.settings_now_style.addItem(i18n.t("overlay_now_style_panel"), "panel")
         self.settings_now_pos = QComboBox()
-        _repopulate_overlay_now_pos(self.settings_now_pos, i18n, "card", "left")
+        _repopulate_overlay_now_pos(self.settings_now_pos, i18n, "card", "bl")
         self._settings_now_style = "card"
         self.settings_now_pos_doc = QLabel(i18n.t("floating_now_panel_pos_doc"))
         self.settings_now_pos_doc.setWordWrap(True)
@@ -1811,7 +1889,7 @@ class SettingsPage(Page):
         idx = self.settings_now_style.findData(style)
         self.settings_now_style.setCurrentIndex(max(0, idx))
         _repopulate_overlay_now_pos(
-            self.settings_now_pos, self._i18n, style, data.get("overlay_now_pos", "left"))
+            self.settings_now_pos, self._i18n, style, data.get("overlay_now_pos", "bl"))
         self._sync_settings_overlay_rows()
         self.floating_now_topmost.setChecked(bool(data.get("floating_now_topmost", True)))
         self.floating_now_transparent.setChecked(bool(data.get("floating_now_transparent", True)))
