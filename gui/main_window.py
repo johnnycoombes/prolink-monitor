@@ -225,6 +225,16 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self, self.i18n.t("floating_now_title"), self.i18n.t("connecting"))
             return
+        from gui.floating_now import webengine_available
+
+        if not webengine_available():
+            QMessageBox.warning(
+                self,
+                self.i18n.t("floating_now_title"),
+                "Install PySide6-Addons for the floating Now Playing window "
+                "(Qt WebEngine). See requirements.txt.",
+            )
+            return
         if self._floating_now is not None and self._floating_now.isVisible():
             self._floating_now.close()
             self._floating_now = None

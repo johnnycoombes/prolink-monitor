@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import unittest
 
-from gui.floating_now import pick_now_deck
+from gui.floating_now import pick_now_deck, webengine_available
+from gui.overlay_url import (
+    build_floating_overlay_file_url,
+    build_floating_overlay_url,
+    build_parity_screenshot_url,
+)
 from gui.settings import load_settings, save_settings, _sanitize
 
 
@@ -32,6 +37,44 @@ class PickNowDeckTests(unittest.TestCase):
         }
         deck = pick_now_deck(state)
         self.assertEqual(deck["number"], 1)
+
+
+class FloatingOverlayUrlTests(unittest.TestCase):
+    def test_build_floating_url_embed_and_mix_off(self):
+        settings = {
+            **load_settings(),
+            "overlay_now_style": "card",
+            "overlay_now_pos": "left",
+            "overlay_waveform_style": "rgb",
+        }
+        url = build_floating_overlay_url(9876, settings)
+        self.assertIn("layout=nowplaying", url)
+        self.assertIn("embed=1", url)
+        self.assertIn("mix=0", url)
+        self.assertIn("next=0", url)
+        self.assertIn("style=card", url)
+        self.assertIn("pos=left", url)
+        self.assertIn(":9876/overlay", url)
+
+    def test_parity_screenshot_url_preview_mock_embed(self):
+        settings = {**load_settings(), "overlay_now_style": "card"}
+        url = build_parity_screenshot_url(8080, settings)
+        self.assertIn("preview=1", url)
+        self.assertIn("mock=1", url)
+        self.assertIn("embed=1", url)
+        self.assertIn(":8080/overlay", url)
+
+    def test_file_url_for_mock_screenshots(self):
+        settings = {**load_settings(), "overlay_now_style": "panel", "overlay_now_pos": "bottom"}
+        url = build_floating_overlay_file_url(settings)
+        self.assertIn("overlay.html", url)
+        self.assertIn("mock=1", url)
+        self.assertIn("embed=1", url)
+        self.assertIn("style=panel", url)
+
+    def test_webengine_flag(self):
+        # Addons installed in dev/CI for floating window; flag reflects import success.
+        self.assertIsInstance(webengine_available(), bool)
 
 
 class OverlayNowPosSettingsTests(unittest.TestCase):
