@@ -406,6 +406,20 @@ batches and read time says nothing about arrival time.
 
 Measured on the real stream (beat-grid path): ±1.3 ms.
 
+The scrolling detail waveform keeps that needle fixed and moves the wave under
+it. Players with a **Waveform Current Position** setting report it in the CDJ
+status packet when settings block 1 is present (`12 34 56 78` at offset `0xD0`;
+byte `0xDD` is `01` centre or `02` left; byte `0xDA` is the waveform colour).
+CDJ-3000 defaults to Centre. XDJ-AZ and Opus Quad default to Left. Older players
+(CDJ-2000NXS2, XDJ-XZ) have no setting and are always centred. The desktop app
+and the web panel share a Playhead control: **Auto** (follow the player, with
+that model fallback when the byte is missing), **Centre**, or **Left**. Left
+places the needle at 25% of the strip width. Whether the XDJ-AZ actually sends
+the settings block is unverified — Auto still uses the Left fallback, and
+`python probe.py` names bytes `0xDA` and `0xDD` so toggling the setting on the
+player shows up. The OBS overlay wave is a full-track overview with a moving
+needle, so this control does not apply to it.
+
 ### Metadata and waveforms — NFS
 
 The player exports the inserted USB/SD over **NFS v2 on UDP**. That is where

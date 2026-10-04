@@ -53,6 +53,12 @@ FIELDS = {
         (0xA6, 1, "beat in bar"),
         (0xC0, 4, "physical pitch (copy)"), (0xC4, 4, "actual pitch (copy)"),
         (0xCC, 1, "device class"),
+        # Settings block 1. Present when 0xD0 reads 12 34 56 78. Toggle
+        # WAVEFORM CURRENT POSITION on a CDJ-3000 / XDJ-AZ / Opus Quad to
+        # see 0xDD move (01 centre, 02 left). Unverified on the XDJ-AZ.
+        (0xD0, 4, "settings block marker (12 34 56 78)"),
+        (0xDA, 1, "waveform colour (01=blue 03=RGB 04=3-band)"),
+        (0xDD, 1, "waveform current position (01=centre 02=left)"),
     ],
     0x28: [
         (0x24, 4, "ms to the next beat"), (0x28, 4, "ms to the 2nd beat"),
@@ -92,6 +98,10 @@ def format_value(name: str, raw: int) -> str:
         on = [n for bit, n in ((0x08, "on air"), (0x10, "sync"),
                                (0x20, "master"), (0x40, "play")) if raw & bit]
         return f"0x{raw:04x} [{', '.join(on) or 'none'}]"
+    if name.startswith("waveform colour"):
+        return {1: "blue", 3: "RGB", 4: "3-band"}.get(raw, f"0x{raw:02x} (unknown)")
+    if name.startswith("waveform current position"):
+        return {1: "centre", 2: "left"}.get(raw, f"0x{raw:02x} (unknown)")
     return str(raw)
 
 

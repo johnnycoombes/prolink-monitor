@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 from gui.theme import COLORS
 from gui.widgets import DeckCard, parse_waveform
 from gui.settings import deck_elements_from
+from prolink.proto import normalize_playhead_mode
 from prolink.session import ZOOM_BARS, DEFAULT_ZOOM_BARS
 
 # Visual stack order for Monitor cards (Pioneer-style 4-deck layout).
@@ -72,6 +73,7 @@ class MonitorPage(Page):
         self._focus_deck: int | None = None
         self._max_decks = 4
         self._wave_style = "rgb"
+        self._playhead_mode = "auto"
         self._show_empty = True
         self._elements = deck_elements_from()
         self._last_state: dict[str, Any] | None = None
@@ -127,6 +129,21 @@ class MonitorPage(Page):
             tools.addWidget(b)
             self._style_btns[key] = b
 
+        tools.addSpacing(16)
+        ph_lbl = QLabel(i18n.t("playhead"))
+        ph_lbl.setObjectName("SectionTitle")
+        ph_lbl.setToolTip(i18n.t("playhead_tip"))
+        tools.addWidget(ph_lbl)
+        self._playhead_btns: dict[str, QPushButton] = {}
+        for key in ("auto", "centre", "left"):
+            b = QPushButton(i18n.t(f"playhead_{key}"))
+            b.setObjectName("Chip")
+            b.setCursor(Qt.PointingHandCursor)
+            b.setToolTip(i18n.t("playhead_tip"))
+            b.clicked.connect(lambda _=False, v=key: self.set_playhead_mode(v))
+            tools.addWidget(b)
+            self._playhead_btns[key] = b
+
         tools.addStretch(1)
         self.record_btn = QPushButton(i18n.t("session_record"))
         self.record_btn.setObjectName("Chip")
@@ -159,6 +176,7 @@ class MonitorPage(Page):
         self.set_zoom(DEFAULT_ZOOM_BARS)
         self.set_max_decks(4)
         self.set_wave_style("rgb")
+        self.set_playhead_mode("auto")
 
     def apply_prefs(self, settings: dict) -> None:
         self.set_zoom(int(settings.get("zoom_bars", DEFAULT_ZOOM_BARS)))
@@ -171,6 +189,7 @@ class MonitorPage(Page):
         self._apply_card_zooms()
         self.set_max_decks(int(settings.get("max_decks", 4)))
         self.set_wave_style(str(settings.get("waveform_style") or "rgb"))
+        self.set_playhead_mode(str(settings.get("playhead_position") or "auto"))
         self._show_empty = bool(settings.get("show_empty_decks", True))
         self.set_elements(settings)
 
@@ -239,12 +258,23 @@ class MonitorPage(Page):
         for card in self._cards.values():
             card.set_wave_style(self._wave_style)
 
+    def set_playhead_mode(self, mode: str) -> None:
+        mode = normalize_playhead_mode(mode)
+        self._playhead_mode = mode
+        for key, b in self._playhead_btns.items():
+            b.setProperty("active", "true" if key == mode else "false")
+            b.style().unpolish(b)
+            b.style().polish(b)
+        for card in self._cards.values():
+            card.set_playhead_mode(mode)
+
     def prefs_snapshot(self) -> dict:
         return {
             "zoom_bars": self._zoom,
             "zoom_bars_by_deck": {str(k): v for k, v in self._zoom_overrides.items()},
             "max_decks": self._max_decks,
             "waveform_style": self._wave_style,
+            "playhead_position": self._playhead_mode,
             **self._elements,
         }
 
@@ -341,6 +371,7 @@ class MonitorPage(Page):
                 else:
                     card.set_zoom(self._zoom, override=False)
                 card.set_wave_style(self._wave_style)
+                card.set_playhead_mode(self._playhead_mode)
                 card.apply_elements(self._elements)
                 card.focused.connect(self._on_deck_focus)
                 card.zoom_override_changed.connect(self._on_deck_zoom_override)
@@ -1479,12 +1510,18 @@ class SettingsPage(Page):
         self.wave_style.addItem(i18n.t("wave_rgb"), "rgb")
         self.wave_style.addItem(i18n.t("wave_3band"), "3band")
         self.wave_style.addItem(i18n.t("wave_blue"), "blue")
+        self.playhead = QComboBox()
+        self.playhead.addItem(i18n.t("playhead_auto"), "auto")
+        self.playhead.addItem(i18n.t("playhead_centre"), "centre")
+        self.playhead.addItem(i18n.t("playhead_left"), "left")
+        self.playhead.setToolTip(i18n.t("playhead_tip"))
         self.show_empty = QCheckBox(i18n.t("show_empty"))
         self.poll_hz = QSpinBox()
         self.poll_hz.setRange(5, 60)
         disp.addRow(i18n.t("max_decks"), self.max_decks)
         disp.addRow(i18n.t("zoom"), self.zoom)
         disp.addRow(i18n.t("wave"), self.wave_style)
+        disp.addRow(i18n.t("playhead"), self.playhead)
         disp.addRow(i18n.t("poll_hz"), self.poll_hz)
         disp.addRow("", self.show_empty)
 
@@ -1603,6 +1640,8 @@ class SettingsPage(Page):
         self.zoom.setCurrentIndex(max(0, idx))
         idx = self.wave_style.findData(data.get("waveform_style", "rgb"))
         self.wave_style.setCurrentIndex(max(0, idx))
+        idx = self.playhead.findData(normalize_playhead_mode(data.get("playhead_position")))
+        self.playhead.setCurrentIndex(max(0, idx))
         self.show_empty.setChecked(bool(data.get("show_empty_decks", True)))
         self.poll_hz.setValue(int(data.get("poll_hz", 60)))
         for key, cb in self.deck_checks.items():
@@ -1639,6 +1678,7 @@ class SettingsPage(Page):
             "max_decks": self.max_decks.currentData(),
             "zoom_bars": self.zoom.currentData(),
             "waveform_style": self.wave_style.currentData(),
+            "playhead_position": self.playhead.currentData(),
             "show_empty_decks": self.show_empty.isChecked(),
             "poll_hz": self.poll_hz.value(),
             "overlay_layout": self.overlay_layout.currentData(),

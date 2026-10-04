@@ -268,6 +268,10 @@ body.readonly #session .head::after{content:' · read-only'; color:var(--dimmest
     <div class="switch" id="wave-switch">
       <button data-w="rgb">RGB</button><button data-w="3band">3BAND</button><button data-w="blue">BLUE</button>
     </div>
+    <span class="switch-label" data-i18n="needle">needle</span>
+    <div class="switch" id="needle-switch" title="Scrolling playhead. Auto follows each player's Waveform Current Position.">
+      <button data-p="auto" title="Auto — follow the player">AUTO</button><button data-p="centre" title="Centre">CEN</button><button data-p="left" title="Left (quarter)">LEFT</button>
+    </div>
     <span class="switch-label" data-i18n="zoom">bars</span>
     <div class="switch" id="zoom-switch">
       <button data-b="1">1</button><button data-b="2">2</button><button data-b="4">4</button><button data-b="8">8</button><button data-b="16">16</button>
@@ -300,7 +304,7 @@ if (READONLY) document.body.classList.add('readonly');
 const STRINGS = {
   brand: 'Prolink Listener <span>// pro dj link</span>',
   starting: 'starting…',
-  decks: 'decks', zoom: 'bars', wave: 'wave',
+  decks: 'decks', zoom: 'bars', wave: 'wave', needle: 'needle',
   mode: 'mode', library: 'library', devices: 'devices', tracks: 'tracks',
   noDevices: 'no devices',
   elapsed: 'elapsed', remaining: 'remaining',
@@ -374,6 +378,12 @@ function persistDeckZoom() {
 }
 let waveStyle = WAVE_STYLES.includes(localStorage.getItem('waveStyle'))
   ? localStorage.getItem('waveStyle') : 'rgb';
+const PLAYHEAD_MODES = ['auto', 'centre', 'left'];
+// Left needle sits at the left quarter of the strip (same fraction as the desktop painter).
+const PLAYHEAD_LEFT_FRACTION = 0.25;
+let storedPlayhead = localStorage.getItem('playheadPosition');
+if (storedPlayhead === 'center') storedPlayhead = 'centre';
+let playheadMode = PLAYHEAD_MODES.includes(storedPlayhead) ? storedPlayhead : 'auto';
 
 function barsToSeconds(bars, bpm) {
   const b = (bpm && bpm > 0) ? bpm : DEFAULT_BPM;
@@ -404,6 +414,36 @@ function prune(list) {
   const alive = new Set(list.map(d => d.number));
   for (const [n, d] of decks) if (!alive.has(n)) { d.el.remove(); decks.delete(n); }
   sortDecks();
+}
+
+function modelDefaultsLeft(name) {
+  const compact = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return compact.includes('xdjaz') || compact.includes('opusquad');
+}
+
+function playheadAnchor(s) {
+  /** 0.5 centre, 0.25 left. Auto uses the reported byte, else the model fallback. */
+  let pos = 'centre';
+  if (playheadMode === 'left' || playheadMode === 'centre') pos = playheadMode;
+  else if (s && (s.waveform_position === 'left' || s.waveform_position === 'centre')) {
+    pos = s.waveform_position;
+  } else if (modelDefaultsLeft(s && s.name)) {
+    pos = 'left';
+  }
+  return pos === 'left' ? PLAYHEAD_LEFT_FRACTION : 0.5;
+}
+
+function setPlayheadMode(mode) {
+  if (mode === 'center') mode = 'centre';
+  if (!PLAYHEAD_MODES.includes(mode)) mode = 'auto';
+  playheadMode = mode;
+  localStorage.setItem('playheadPosition', mode);
+  document.querySelectorAll('#needle-switch button').forEach(
+    b => b.classList.toggle('on', b.dataset.p === mode));
+  for (const d of decks.values()) {
+    d.detailKey = null;
+    d.detailOff = null;
+  }
 }
 
 function setWaveStyle(style) {
@@ -931,7 +971,7 @@ function drawOverview(d, track, pos, looping) {
   ctx.fillRect(px - r, 0, Math.max(2, Math.round(2 * r)), H);
 }
 
-function drawDetail(d, track, pos, playing, looping) {
+function drawDetail(d, track, pos, playing, looping, anchor) {
   const cv = d.cvDetail, ctx = d.ctxDetail;
   const resized = fitCanvas(cv);
   const W = cv.width, H = cv.height, r = window.devicePixelRatio || 1;
@@ -958,8 +998,9 @@ function drawDetail(d, track, pos, playing, looping) {
   const visibleCols = visibleSeconds * cps;
   const pxPerCol = cssW / visibleCols;
   const currentCol = (pos / 1000) * cps;
-  const start = currentCol - visibleCols / 2;
-  const key = `${track.meta.id}|${waveStyle}|${deckZoom(d.n)}|${Math.round(bpm)}|${cssW}|${H}`;
+  const needle = anchor === PLAYHEAD_LEFT_FRACTION ? PLAYHEAD_LEFT_FRACTION : 0.5;
+  const start = currentCol - visibleCols * needle;
+  const key = `${track.meta.id}|${waveStyle}|${deckZoom(d.n)}|${Math.round(bpm)}|${cssW}|${H}|${needle}`;
 
   function paintRange(o, rangeStart, xLo, xHi) {
     // Peak-pick CSS pixels [xLo, xHi) into offscreen context `o`.
@@ -1089,12 +1130,13 @@ function drawDetail(d, track, pos, playing, looping) {
     }
   }
 
-  // playhead, fixed in the middle
+  // Needle stays put (centre, or the left quarter). The wave scrolls under it.
+  const px = W * needle;
   ctx.fillStyle = getComputedStyle(d.el).getPropertyValue('--c').trim();
   ctx.globalAlpha = playing ? .18 : .07;
-  ctx.fillRect(W / 2 - 9 * r, 0, 18 * r, H);
+  ctx.fillRect(px - 9 * r, 0, 18 * r, H);
   ctx.globalAlpha = 1;
-  ctx.fillRect(W / 2 - r, 0, Math.max(2, Math.round(2 * r)), H);
+  ctx.fillRect(px - r, 0, Math.max(2, Math.round(2 * r)), H);
 }
 
 /* --------------------------------------------------------------------- loop */
@@ -1146,7 +1188,7 @@ function render() {
     d.lastBar = s.bar;
 
     drawOverview(d, track, pos, looping);
-    drawDetail(d, track, pos, s.playing, looping);
+    drawDetail(d, track, pos, s.playing, looping, playheadAnchor(s));
   }
 }
 
@@ -1262,6 +1304,8 @@ document.querySelectorAll('#zoom-switch button').forEach(
   b => b.addEventListener('click', () => setZoom(+b.dataset.b)));
 document.querySelectorAll('#wave-switch button').forEach(
   b => b.addEventListener('click', () => setWaveStyle(b.dataset.w)));
+document.querySelectorAll('#needle-switch button').forEach(
+  b => b.addEventListener('click', () => setPlayheadMode(b.dataset.p)));
 document.getElementById('rec-btn').addEventListener('click', toggleSession);
 // + and - zoom too, so it can be driven without leaving the keyboard
 document.addEventListener('keydown', ev => {
@@ -1272,6 +1316,7 @@ document.addEventListener('keydown', ev => {
 setDeckCount(maxDecks);
 setZoom(zoomBars);
 setWaveStyle(waveStyle);
+setPlayheadMode(playheadMode);
 applyStrings();
 connect();
 render();

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 
 from gui.theme import COLORS, DECK_COLORS
 from gui.settings import deck_elements_from
+from prolink.proto import playhead_fraction, resolve_playhead_position
 from prolink.session import ZOOM_BARS, bars_to_seconds
 
 # Left identity column: room for artwork + MASTER / SYNC / ON AIR chips.
@@ -395,6 +396,7 @@ class WaveformView(QWidget):
         self._bpm = 120.0
         self._offair = False
         self._style = "rgb"
+        self._playhead_frac = 0.5
         self._loop_start_ms: float | None = None
         self._loop_end_ms: float | None = None
         self._loop_active = False
@@ -432,7 +434,8 @@ class WaveformView(QWidget):
                 return max(0.0, min(dur, (x / w) * dur))
             return None
         visible_s = self._visible_seconds()
-        ms = self._pos_ms + ((x - w / 2) / w) * visible_s * 1000.0
+        anchor = w * self._playhead_frac
+        ms = self._pos_ms + ((x - anchor) / w) * visible_s * 1000.0
         if dur:
             ms = max(0.0, min(dur, ms))
         return max(0.0, ms)
@@ -487,6 +490,15 @@ class WaveformView(QWidget):
             return
         self._style = style
         self._invalidate_all()
+        self.update()
+
+    def set_playhead_position(self, position: str) -> None:
+        """Needle anchor: 'centre' (middle) or 'left' (left quarter)."""
+        frac = playhead_fraction(position)
+        if frac == self._playhead_frac:
+            return
+        self._playhead_frac = frac
+        self._invalidate_detail()
         self.update()
 
     def set_offair(self, off: bool) -> None:
@@ -667,7 +679,7 @@ class WaveformView(QWidget):
             visible = max(1.0, self._visible_seconds() * cps)
             px_per_col = w / visible
             current = (self._pos_ms / 1000.0) * cps
-            start = current - visible / 2
+            start = self._window_start(current, visible)
             lx0 = int(((self._loop_start_ms / 1000.0) * cps - start) * px_per_col)
             lx1 = int(((self._loop_end_ms / 1000.0) * cps - start) * px_per_col)
             left = max(0, min(w, lx0))
@@ -683,7 +695,7 @@ class WaveformView(QWidget):
             visible = max(1.0, self._visible_seconds() * cps)
             px_per_col = w / visible
             current = (self._pos_ms / 1000.0) * cps
-            start = current - visible / 2
+            start = self._window_start(current, visible)
             for cue in (self._meta or {}).get("cues") or []:
                 x = int(((cue.get("t", 0) / 1000.0) * cps - start) * px_per_col)
                 if x < -20 or x > w + 20:
@@ -698,8 +710,10 @@ class WaveformView(QWidget):
                     continue
                 _draw_phrase_marker(p, x0 + x, y0, h, phrase, labeled=True)
 
-        # Fixed playhead at centre.
-        cx = x0 + w // 2
+        # Needle stays put; the wave scrolls under it. Centre is the middle,
+        # Left is the left quarter (PLAYHEAD_LEFT_FRACTION).
+        cx = x0 + int(round(w * self._playhead_frac))
+        cx = max(x0, min(x0 + max(0, w - 2), cx))
         glow = QColor(self._color)
         glow.setAlpha(45 if self._playing else 20)
         p.fillRect(cx - 8, y0, 16, h, glow)
@@ -716,8 +730,9 @@ class WaveformView(QWidget):
         visible = max(1.0, self._visible_seconds() * cps)
         px_per_col = w / visible
         current = (self._pos_ms / 1000.0) * cps
-        start = current - visible / 2
-        key = (id(d), self._style, self._zoom_bars, round(self._bpm, 1), w, h, self._offair)
+        start = self._window_start(current, visible)
+        key = (id(d), self._style, self._zoom_bars, round(self._bpm, 1),
+               w, h, self._offair, self._playhead_frac)
 
         if (self._detail_pm is None or self._detail_key != key
                 or self._detail_pm.width() != w or self._detail_pm.height() != h):
@@ -761,6 +776,10 @@ class WaveformView(QWidget):
         self._detail_pm = pm
         self._detail_key = key
         self._detail_start = start
+
+    def _window_start(self, current: float, visible: float) -> float:
+        """First visible detail column so the needle stays on the playhead."""
+        return current - visible * self._playhead_frac
 
     def _draw_detail_range(self, p: QPainter, x0, y0, w, h, start: float,
                            x_lo: int, x_hi: int) -> None:
@@ -837,6 +856,8 @@ class DeckCard(QFrame):
         self._elements = deck_elements_from()
         self._zoom_bars = 4
         self._zoom_override = False
+        self._playhead_mode = "auto"
+        self._last_deck: dict | None = None
         self._cue_ms: float | None = None
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setCursor(Qt.PointingHandCursor)
@@ -1115,6 +1136,20 @@ class DeckCard(QFrame):
     def set_wave_style(self, style: str) -> None:
         self.wave.set_style(style)
 
+    def set_playhead_mode(self, mode: str) -> None:
+        """User override (auto / centre / left). Applies immediately."""
+        self._playhead_mode = mode or "auto"
+        self._apply_playhead()
+
+    def _apply_playhead(self) -> None:
+        deck = self._last_deck or {}
+        position = resolve_playhead_position(
+            self._playhead_mode,
+            deck.get("waveform_position"),
+            str(deck.get("name") or ""),
+        )
+        self.wave.set_playhead_position(position)
+
     def set_track_data(self, meta: dict | None, detail, overview, art: bytes | None) -> None:
         self._meta = meta
         self._detail = detail
@@ -1273,6 +1308,8 @@ class DeckCard(QFrame):
             )
 
         self.state.setText(self._i18n.state(deck.get("state") or "unknown"))
+        self._last_deck = deck
+        self._apply_playhead()
         if empty and not self._meta:
             self.title.setText("—")
         elif tid and not self._meta:

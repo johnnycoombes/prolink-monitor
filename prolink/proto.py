@@ -54,6 +54,30 @@ PLAY_STATES = {
 }
 PLAYING_STATES = {0x03, 0x04, 0x07}
 
+# CDJ status "settings block 1" (documented CDJ status layout).
+# When present it starts at 0xD0 with 12 34 56 78 (then 00 00 00 01 on
+# current players). Older packets are shorter or leave these bytes zero.
+# Whether the XDJ-AZ includes the block is unverified — a missing or
+# unrecognised block yields None and callers fall back by model.
+SETTINGS_BLOCK_OFFSET = 0xD0
+SETTINGS_BLOCK_MARKER = bytes.fromhex("12345678")
+WAVEFORM_COLOR_OFFSET = 0xDA      # 01 blue, 03 RGB, 04 3-band
+WAVEFORM_POSITION_OFFSET = 0xDD   # 01 centre, 02 left
+
+_WAVEFORM_COLORS = {0x01: "blue", 0x03: "rgb", 0x04: "3band"}
+_WAVEFORM_POSITIONS = {0x01: "centre", 0x02: "left"}
+
+# Scrolling-waveform needle, as a fraction of the strip width.
+# Centre is the historical middle. Left is the left quarter: the needle
+# stays near the left edge so more of the upcoming track stays visible,
+# matching WAVEFORM CURRENT POSITION = Left on the players.
+PLAYHEAD_CENTRE_FRACTION = 0.5
+PLAYHEAD_LEFT_FRACTION = 0.25
+
+# Factory default is Left on these models. CDJ-3000 defaults to Centre.
+# CDJ-2000NXS2 and XDJ-XZ have no such setting and are always centred.
+_LEFT_DEFAULT_MODELS = ("xdjaz", "opusquad")
+
 
 def _name(data: bytes, off: int, length: int = 20) -> str:
     return data[off:off + length].split(b"\0")[0].decode("ascii", "replace")
@@ -147,6 +171,11 @@ class Status:
     beat_count: int = 0           # absolute beat within the track
     beat_in_bar: int = 0          # 1..4
     cue_distance: int = 0         # beats to the next cue (0x1ff = none)
+
+    # From settings block 1 when the marker is present; None if absent,
+    # the packet is short, or the byte is not a known value.
+    waveform_color: str | None = None       # blue | rgb | 3band
+    waveform_position: str | None = None    # centre | left
 
     on_air: bool = False
     sync: bool = False
@@ -275,7 +304,77 @@ def _parse_status(data: bytes) -> Status | None:
     s.beat_count = 0 if beat_count == 0xFFFFFFFF else beat_count   # -1 = no track
     s.cue_distance = struct.unpack_from(">H", data, 0xA4)[0]
     s.beat_in_bar = data[0xA6]
+    s.waveform_color, s.waveform_position = _parse_waveform_settings(data)
     return s
+
+
+def _parse_waveform_settings(data: bytes) -> tuple[str | None, str | None]:
+    """Waveform colour and current position from settings block 1.
+
+    Requires the 12 34 56 78 marker at 0xD0 and enough bytes to read each
+    field. Unknown colour or position values are None (not a guess).
+    """
+    off = SETTINGS_BLOCK_OFFSET
+    marker = SETTINGS_BLOCK_MARKER
+    if len(data) < off + len(marker):
+        return None, None
+    if data[off:off + len(marker)] != marker:
+        return None, None
+    color = None
+    position = None
+    if len(data) > WAVEFORM_COLOR_OFFSET:
+        color = _WAVEFORM_COLORS.get(data[WAVEFORM_COLOR_OFFSET])
+    if len(data) > WAVEFORM_POSITION_OFFSET:
+        position = _WAVEFORM_POSITIONS.get(data[WAVEFORM_POSITION_OFFSET])
+    return color, position
+
+
+def normalize_playhead_mode(value: str | None) -> str:
+    """User override: auto (default), centre, or left. Unknown -> auto."""
+    mode = str(value or "auto").strip().lower()
+    if mode == "center":
+        mode = "centre"
+    return mode if mode in ("auto", "centre", "left") else "auto"
+
+
+def _normalize_reported_position(value: str | None) -> str | None:
+    if value is None:
+        return None
+    pos = str(value).strip().lower()
+    if pos == "center":
+        pos = "centre"
+    return pos if pos in ("centre", "left") else None
+
+
+def _model_defaults_left(player_name: str) -> bool:
+    compact = "".join(ch for ch in (player_name or "").lower() if ch.isalnum())
+    return any(token in compact for token in _LEFT_DEFAULT_MODELS)
+
+
+def resolve_playhead_position(mode: str | None, reported: str | None,
+                              player_name: str = "") -> str:
+    """Centre or left for one deck.
+
+    A manual Centre/Left override wins. Auto uses the player's reported
+    Waveform Current Position, then a model fallback (Left for XDJ-AZ and
+    Opus Quad, Centre otherwise) when the packet does not say.
+    """
+    chosen = normalize_playhead_mode(mode)
+    if chosen in ("centre", "left"):
+        return chosen
+    reported_pos = _normalize_reported_position(reported)
+    if reported_pos:
+        return reported_pos
+    if _model_defaults_left(player_name):
+        return "left"
+    return "centre"
+
+
+def playhead_fraction(position: str | None) -> float:
+    """Horizontal anchor for the scrolling-waveform needle (0 = left edge)."""
+    if _normalize_reported_position(position) == "left":
+        return PLAYHEAD_LEFT_FRACTION
+    return PLAYHEAD_CENTRE_FRACTION
 
 
 def build_keepalive(name: str, device_number: int, mac: bytes, ip: str,

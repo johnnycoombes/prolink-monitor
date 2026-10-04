@@ -41,6 +41,8 @@ class PaintStateShapeTests(unittest.TestCase):
         self.assertEqual(d["number"], 1)
         self.assertEqual(d["track_id"], 9)
         self.assertEqual(d["position_ms"], 1234.5)
+        self.assertIsNone(d["waveform_position"])
+        self.assertIsNone(d["waveform_color"])
         self.assertNotIn("devices", out)
         self.assertNotIn("library", out)
 
