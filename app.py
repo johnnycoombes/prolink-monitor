@@ -33,6 +33,7 @@ from prolink.mixstatus import MixStatus, MixStatusConfig  # noqa: E402
 from prolink.session import SessionRecorder               # noqa: E402
 from prolink.audience_deck import AudienceDeckTracker, merge_live_deck  # noqa: E402
 from prolink.track_key import keys_match, track_cache_key, track_key_token  # noqa: E402
+from prolink.wnp import WnpPublisher  # noqa: E402
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
@@ -66,6 +67,7 @@ class Monitor:
         self._art_cache: dict[tuple, tuple[bytes, str]] = {}
         self._art_source_by_deck: dict[int, str] = {}
         self._last_art_source: str = "none"
+        self.wnp = WnpPublisher()
 
     def _device_number_for_host(self, host: str) -> int | None:
         with self.engine.lock:
@@ -766,7 +768,7 @@ class Monitor:
             "audience_deck": audience_deck,
         }
 
-    def state(self) -> dict:
+    def state(self, *, notify_wnp: bool = True) -> dict:
         decks = []
         for d in self.engine.active_decks():
             s = d.status
@@ -848,6 +850,7 @@ class Monitor:
         else:
             last_art = "none"
         mix = self.mixstatus.as_state()
+        wnp_state = self._wnp_state(audience_deck) if notify_wnp else self._wnp_health_only()
         nfs_health: list[dict] = []
         with self.library.lock:
             for host, media in self.library.media.items():
@@ -884,11 +887,87 @@ class Monitor:
             "nfs": nfs_health,
             "mix": mix,
             "audience_deck": audience_deck,
+            "wnp": wnp_state,
             "now_playing": mix.get("now_playing"),
             "pending": mix.get("pending"),
             "setlist": mix.get("setlist") or [],
             "session": self.session.as_state(),
         }
+
+    def _audience_meta(self, audience_deck: dict | None) -> dict | None:
+        """Cached library fields for the audience deck. Never touches NFS."""
+        if not audience_deck:
+            return None
+        try:
+            track_id = int(audience_deck.get("track_id") or 0)
+        except (TypeError, ValueError):
+            return None
+        if not track_id:
+            return None
+        try:
+            deck_no = int(audience_deck.get("number") or 0) or None
+        except (TypeError, ValueError):
+            deck_no = None
+        try:
+            meta = self.meta(track_id, deck=deck_no, load=False)
+        except Exception:
+            return None
+        if not meta:
+            return None
+        deck_key = str(audience_deck.get("track_key") or "")
+        meta_key = str(meta.get("track_key") or "")
+        if deck_key and meta_key and deck_key != meta_key:
+            return None
+        return meta
+
+    def _wnp_health_only(self) -> dict:
+        publisher = getattr(self, "wnp", None)
+        if publisher is None:
+            return {
+                "enabled": False,
+                "status": "disabled",
+                "detail": "Off",
+                "host": "",
+                "port": 0,
+                "track": "",
+            }
+        try:
+            return publisher.health()
+        except Exception:
+            return {
+                "enabled": False,
+                "status": "error",
+                "detail": "What's Now Playing update failed inside the listener.",
+                "host": "",
+                "port": 0,
+                "track": "",
+            }
+
+    def _wnp_state(self, audience_deck: dict | None) -> dict:
+        """Queue a What's Now Playing update and return Health-page status."""
+        publisher = getattr(self, "wnp", None)
+        if publisher is None:
+            return {
+                "enabled": False,
+                "status": "disabled",
+                "detail": "Off",
+                "host": "",
+                "port": 0,
+                "track": "",
+            }
+        try:
+            publisher.refresh_from_disk()
+            publisher.observe(audience_deck, self._audience_meta(audience_deck))
+            return publisher.health()
+        except Exception:
+            return {
+                "enabled": False,
+                "status": "error",
+                "detail": "What's Now Playing update failed inside the listener.",
+                "host": "",
+                "port": 0,
+                "track": "",
+            }
 
 
 def _pack_wave(heights, rgb, columns_per_second: float, duration_ms: int) -> bytes:

@@ -168,6 +168,8 @@ class MainWindow(QMainWindow):
 
         self.page_settings.load_settings(self.settings)
         self.page_settings.saved.connect(self._on_settings_saved)
+        self.page_settings.wnp_test_btn.clicked.connect(self._on_wnp_test)
+        self.backend.wnp_test_finished.connect(self._on_wnp_test_finished)
         self.page_monitor.apply_prefs(self.settings)
         self.page_overlay.load_prefs(self.settings, port=int(self.settings.get("port", 8777)))
         self.page_overlay.prefs_changed.connect(self._on_overlay_prefs)
@@ -508,6 +510,9 @@ class MainWindow(QMainWindow):
         if self.backend.monitor is not None:
             self.backend.monitor.show_phrases = bool(
                 self.settings.get("show_phrases", True))
+            publisher = getattr(self.backend.monitor, "wnp", None)
+            if publisher is not None:
+                publisher.configure(self.settings)
         if self._floating_now is not None:
             self._floating_now.apply_settings()
         if reconnect:
@@ -515,6 +520,13 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.information(self, self.i18n.t("settings_title"),
                                     self.i18n.t("saved"))
+
+    def _on_wnp_test(self) -> None:
+        self.page_settings.set_wnp_test_result(self.i18n.t("wnp_testing"), None)
+        self.backend.test_wnp(self.page_settings.collect())
+
+    def _on_wnp_test_finished(self, ok: bool, detail: str) -> None:
+        self.page_settings.set_wnp_test_result(detail, bool(ok))
 
     def _on_overlay_prefs(self, data: dict) -> None:
         self.settings.update(data)
