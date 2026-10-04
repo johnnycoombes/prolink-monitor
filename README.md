@@ -192,6 +192,25 @@ When minimized to the tray, use the tray menu for Record / Overlay / Quit.
 **Connection health.** The **Health** page shows overall status-packet rate, per-deck
 **beat** vs **Absolute Position (AP)** packet rates and which position source each
 deck is using, plus NFS UDP RTT for mounted media (library / waveform reads).
+It also shows the optional What's Now Playing output: off, the last track sent,
+or the error if that app is not running.
+
+**What's Now Playing.** Settings → What's Now Playing can send the audience
+track (the master on-air deck, the same one the overlay shows) to
+[What's Now Playing](https://github.com/whatsnowplaying/whats-now-playing).
+It is off until you enable it. Each track is sent once, when it changes.
+Nothing is written to the player or to `master.db`. If What's Now Playing is
+closed, the listener keeps running and Health shows the error. Cover art is
+not included: that app's remote input drops image data and only downloads a
+cover from a public web address.
+
+In What's Now Playing: open Settings, choose **Core Settings → Source → Remote**,
+then **Output & Display → Web Server** and leave it enabled (port **8899**
+unless you changed it). Set a shared secret on the Remote source only if you
+want one. In prolink-monitor: tick **Send the audience track**, leave host
+as `localhost` when both apps are on this computer, use the same port and
+secret, Save, then **Test**. Play the master on-air deck; that track is what
+gets sent.
 
 **Deck elements.** Under Settings you can turn individual Monitor card pieces on or
 off — artwork, title, artist, album/genre/label, MASTER/SYNC/ON AIR tags, waveform,
