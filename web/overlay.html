@@ -65,6 +65,10 @@ body.embed{background:transparent !important}
 #root.embed-mode .now-card{flex:1;justify-content:flex-start}
 #root.embed-mode .now-panel{flex:1;min-height:0}
 #root.embed-mode .panel-detail{flex:1;min-height:calc(72px * var(--scale));height:auto}
+body.float-window .card{-webkit-app-region:drag}
+body.float-window canvas{-webkit-app-region:no-drag}
+#root.now-card-mode:not(.embed-mode) .card{min-height:50vh;display:flex;flex-direction:column}
+#root.now-card-mode:not(.embed-mode) .now-card{flex:1;justify-content:flex-start}
 #root{
   width:100%;height:100%;
   display:flex;align-items:flex-end;justify-content:flex-start;
@@ -119,11 +123,11 @@ body.embed{background:transparent !important}
   max-width:min(calc(920px * var(--scale)),96vw);
 }
 .now-card .art{
-  width:min(calc(300px * var(--scale)),40vw);
-  height:min(calc(300px * var(--scale)),40vw);
-  border-radius:calc(18px * var(--scale));
-  margin:0 auto calc(16px * var(--scale));
-  font-size:calc(72px * var(--scale));
+  width:min(calc(380px * var(--scale)),44vw);
+  height:min(calc(380px * var(--scale)),44vw);
+  border-radius:calc(20px * var(--scale));
+  margin:0 auto calc(18px * var(--scale));
+  font-size:calc(84px * var(--scale));
 }
 .now-card .meta{width:100%;min-width:0}
 .now-card .tags{justify-content:center;margin-bottom:calc(10px * var(--scale))}
@@ -398,10 +402,17 @@ const layout = ['nowplaying','dual','minimal','setlist'].includes(params.get('la
 const corner = ['bl','br','tl','tr','center'].includes(params.get('corner'))
   ? params.get('corner') : 'bl';
 const nowStyle = params.get('style') === 'panel' ? 'panel' : 'card';
-const nowPosRaw = (params.get('pos') || (nowStyle === 'panel' ? 'bottom' : 'left')).toLowerCase();
+const floatWindow = params.get('float') === '1';
+function normalizeCardPos(raw) {
+  const r = String(raw || 'bl').toLowerCase();
+  const alias = { left: 'bl', right: 'br' };
+  const p = alias[r] || r;
+  return ['tl', 'tr', 'bl', 'br'].includes(p) ? p : 'bl';
+}
+const nowPosRaw = (params.get('pos') || (nowStyle === 'panel' ? 'bottom' : 'bl')).toLowerCase();
 const nowPos = nowStyle === 'panel'
   ? (nowPosRaw === 'top' ? 'top' : 'bottom')
-  : (nowPosRaw === 'right' ? 'right' : 'left');
+  : normalizeCardPos(nowPosRaw);
 const PLAYHEAD_LEFT_FRACTION = 0.25;
 const DEFAULT_BPM = 120;
 const ZOOM_BARS_OPTS = [1, 2, 4, 8, 16];
@@ -430,15 +441,14 @@ const accent = /^#?[0-9a-fA-F]{6}$/.test(accentParam)
 
 if (preview) document.body.classList.add('preview');
 if (embed) document.body.classList.add('embed');
+if (floatWindow) document.body.classList.add('float-window');
 const root = document.getElementById('root');
 if (embed) root.classList.add('embed-mode');
 if (layout === 'nowplaying') {
   if (nowStyle === 'panel') {
     root.classList.add('now-panel-mode', nowPos === 'top' ? 'now-panel-top' : 'now-panel-bottom');
   } else {
-    // Bottom-aligned card hugs the left or right edge of the canvas.
-    root.classList.add(nowPos === 'right' ? 'corner-br' : 'corner-bl');
-    root.classList.add('now-pos-' + nowPos);
+    root.classList.add('now-card-mode', 'corner-' + nowPos, 'now-pos-' + nowPos);
   }
 } else {
   root.classList.add('corner-' + corner);
@@ -1390,6 +1400,39 @@ function connect(){
 function loop(){
   requestAnimationFrame(loop);
   paint();
+}
+
+function installFloatingDrag() {
+  if (!floatWindow || window.__floatingDragInstalled) return;
+  if (typeof QWebChannel === 'undefined' || typeof qt === 'undefined') return;
+  window.__floatingDragInstalled = true;
+  new QWebChannel(qt.webChannelTransport, function(channel) {
+    const bridge = channel.objects.floatingDrag;
+    if (!bridge) return;
+    const block = (el) => el && el.closest && (
+      el.closest('canvas') || el.closest('a') || el.closest('button')
+    );
+    const onDown = (e) => {
+      if (e.button !== 0 || block(e.target)) return;
+      if (!e.target.closest('#card')) return;
+      e.preventDefault();
+      bridge.dragStart(e.screenX, e.screenY);
+    };
+    const onMove = (e) => {
+      if (e.buttons & 1) bridge.dragMove(e.screenX, e.screenY);
+    };
+    const onUp = () => bridge.dragEnd();
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('mousemove', onMove, true);
+    document.addEventListener('mouseup', onUp, true);
+  });
+}
+
+if (floatWindow) {
+  const s = document.createElement('script');
+  s.src = 'qrc:///qtwebchannel/qwebchannel.js';
+  s.onload = installFloatingDrag;
+  document.head.appendChild(s);
 }
 
 connect();

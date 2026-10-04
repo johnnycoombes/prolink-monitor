@@ -134,9 +134,14 @@ class Media:
                 except OSError:
                     pass
             self.onelibrary_path = local
-        except Exception:
+        except Exception as exc:
             self.onelibrary_path = local if os.path.exists(local) else ""
             present = bool(self.onelibrary_path)
+            if not present:
+                self.onelibrary_db = None
+                self.onelibrary = onelibrary.summarize(
+                    None, present=False, error=str(exc))
+                return
 
         if not present:
             self.onelibrary_db = None

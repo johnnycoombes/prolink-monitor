@@ -187,6 +187,8 @@ def _pair(port: int, settings: dict, out_path: str, width: int, height: int) -> 
     from gui.overlay_url import build_parity_screenshot_url
 
     url = build_parity_screenshot_url(port, settings)
+    if "float=1" not in url:
+        url += "&float=1"
     tmp_web = out_path + ".web.png"
     tmp_float = out_path + ".float.png"
 

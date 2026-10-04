@@ -66,6 +66,7 @@ def build_floating_overlay_url(
 ) -> str:
     """URL for the desktop floating Now Playing window (live SSE from local HTTP server)."""
     qs = _now_playing_query(settings, embed=True, mock=mock)
+    qs.append(("float", "1"))
     return f"http://127.0.0.1:{int(port)}/overlay?{urlencode(qs)}"
 
 
@@ -75,6 +76,7 @@ def build_parity_screenshot_url(
 ) -> str:
     """HTTP URL for parity docs: mock preview with embed (card or panel)."""
     qs = _now_playing_query(settings, embed=True, mock=True, preview=True)
+    qs.append(("float", "1"))
     return f"http://127.0.0.1:{int(port)}/overlay?{urlencode(qs)}"
 
 

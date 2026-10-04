@@ -340,7 +340,18 @@ class Monitor:
             media_list = list(self.library.media.items())
         playlists: list[dict] = []
         history: list[dict] = []
+        errors: list[dict] = []
+        any_present = False
         for host, media in media_list:
+            summary = getattr(media, "onelibrary", None)
+            if summary is not None and summary.present:
+                any_present = True
+                if not summary.readable:
+                    errors.append({
+                        "host": host,
+                        "path": summary.path or onelibrary.ONE_LIBRARY_PATH,
+                        "error": summary.error or summary.detail,
+                    })
             ol = getattr(media, "onelibrary_db", None)
             if ol is None:
                 continue
@@ -356,6 +367,9 @@ class Monitor:
             "playlists": playlists,
             "history": history,
             "readable": bool(playlists or history),
+            "present": any_present,
+            "errors": errors,
+            "pyrekordbox": onelibrary.pyrekordbox_available(),
         }
 
     def browse_playlist_tracks(self, playlist_id: int, host: str | None = None,
@@ -428,6 +442,8 @@ class Monitor:
                     "history": ol.history,
                     "detail": ol.detail,
                     "error": ol.error,
+                    "path": ol.path or onelibrary.ONE_LIBRARY_PATH,
+                    "pyrekordbox": onelibrary.pyrekordbox_available(),
                 }
                 if ol.readable:
                     totals["onelibrary_playlists"] = (

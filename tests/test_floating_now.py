@@ -44,7 +44,7 @@ class FloatingOverlayUrlTests(unittest.TestCase):
         settings = {
             **load_settings(),
             "overlay_now_style": "card",
-            "overlay_now_pos": "left",
+            "overlay_now_pos": "bl",
             "overlay_waveform_style": "rgb",
         }
         url = build_floating_overlay_url(9876, settings)
@@ -53,7 +53,7 @@ class FloatingOverlayUrlTests(unittest.TestCase):
         self.assertIn("mix=0", url)
         self.assertIn("next=0", url)
         self.assertIn("style=card", url)
-        self.assertIn("pos=left", url)
+        self.assertIn("pos=bl", url)
         self.assertIn(":9876/overlay", url)
 
     def test_parity_screenshot_url_preview_mock_embed(self):
@@ -80,9 +80,9 @@ class FloatingOverlayUrlTests(unittest.TestCase):
 class OverlayNowPosSettingsTests(unittest.TestCase):
     def test_sanitize_now_pos(self):
         clean = _sanitize({**load_settings(), "overlay_now_pos": "RIGHT"})
-        self.assertEqual(clean["overlay_now_pos"], "right")
+        self.assertEqual(clean["overlay_now_pos"], "br")
         clean = _sanitize({**load_settings(), "overlay_now_pos": "nope"})
-        self.assertEqual(clean["overlay_now_pos"], "left")
+        self.assertEqual(clean["overlay_now_pos"], "bl")
 
     def test_panel_pos_when_style_panel(self):
         base = {**load_settings(), "overlay_now_style": "panel"}

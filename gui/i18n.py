@@ -58,8 +58,12 @@ STRINGS = {
     "overlay_now_style_card": "Card (artwork + overview wave)",
     "overlay_now_style_panel": "Panel (full-width scrolling wave)",
     "overlay_now_pos": "Now playing position",
-    "overlay_now_pos_left": "Left (bottom)",
-    "overlay_now_pos_right": "Right (bottom)",
+    "overlay_now_pos_tl": "Top left",
+    "overlay_now_pos_tr": "Top right",
+    "overlay_now_pos_bl": "Bottom left",
+    "overlay_now_pos_br": "Bottom right",
+    "overlay_now_pos_left": "Bottom left",
+    "overlay_now_pos_right": "Bottom right",
     "overlay_now_pos_bottom": "Bottom (full width)",
     "overlay_now_pos_top": "Top (full width)",
     "floating_now_panel_pos_doc": (
@@ -194,6 +198,16 @@ STRINGS = {
     "hotkey_zoom_out": "-",
     "health_overview": "LINK",
     "health_decks": "DECK POSITION",
+    "health_onelibrary": "ONELIBRARY",
+    "health_onelibrary_status": "Status",
+    "health_onelibrary_path": "Cached DB",
+    "health_onelibrary_pyrekordbox": "pyrekordbox",
+    "health_onelibrary_hint": (
+        "Playlists on the player USB live in PIONEER/rekordbox/exportLibrary.db (SQLCipher). "
+        "Track browse still uses export.pdb. Install pyrekordbox @ GitHub master "
+        "(requirements-onelibrary.txt). This app only reads and caches the DB locally — "
+        "never writes to the USB."
+    ),
     "health_nfs": "NFS LATENCY",
     "health_packets_total": "Status packets",
     "health_packet_rate": "Packet rate",

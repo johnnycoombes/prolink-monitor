@@ -4,19 +4,21 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from PySide6.QtCore import QPoint, Qt, QTimer, QUrl
+from PySide6.QtCore import QObject, QPoint, Qt, QTimer, QUrl, Slot
 from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QHBoxLayout, QSizeGrip, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QSizeGrip, QVBoxLayout, QWidget
 
 from gui.overlay_now import normalize_now_style
 from prolink.audience_deck import merge_live_deck
 
 try:
+    from PySide6.QtWebChannel import QWebChannel
     from PySide6.QtWebEngineCore import QWebEngineSettings
     from PySide6.QtWebEngineWidgets import QWebEngineView
 
     _HAS_WEBENGINE = True
 except ImportError:  # pragma: no cover - optional PySide6-Addons
+    QWebChannel = None  # type: ignore[misc, assignment]
     QWebEngineView = None  # type: ignore[misc, assignment]
     QWebEngineSettings = None  # type: ignore[misc, assignment]
     _HAS_WEBENGINE = False
@@ -52,18 +54,31 @@ def webengine_available() -> bool:
     return _HAS_WEBENGINE
 
 
+class _FloatingDragBridge(QObject):
+    """JS → Qt drag bridge (Chromium eats mouse events before Qt event filters)."""
+
+    def __init__(self, window: "FloatingNowPlayingWindow") -> None:
+        super().__init__()
+        self._window = window
+
+    @Slot(int, int)
+    def dragStart(self, global_x: int, global_y: int) -> None:
+        self._window._begin_drag(global_x, global_y)
+
+    @Slot(int, int)
+    def dragMove(self, global_x: int, global_y: int) -> None:
+        self._window._drag_to(global_x, global_y)
+
+    @Slot()
+    def dragEnd(self) -> None:
+        self._window._end_drag()
+
+
 class FloatingNowPlayingWindow(QWidget):
-    """Draggable, resizable always-on-top window showing ``web/overlay.html`` (now playing).
+    """Draggable, resizable always-on-top window showing ``web/overlay.html`` (now playing)."""
 
-    Uses Qt WebEngine so typography, layout, waveforms, and phrase strip stay identical
-    to the OBS/browser overlay. Live deck data comes from the same ``/api/events`` SSE
-    stream as the overlay page.
-    """
-
-    _CARD_MIN = (360, 420)
+    _CARD_MIN = (380, 360)
     _PANEL_MIN = (640, 160)
-    _CARD_DEFAULT = (420, 520)
-    _PANEL_DEFAULT = (960, 200)
 
     def __init__(
         self,
@@ -77,7 +92,9 @@ class FloatingNowPlayingWindow(QWidget):
         self._i18n = i18n
         self._settings_getter = settings_getter
         self._drag_offset: QPoint | None = None
+        self._dragging = False
         self._loaded_url = ""
+        self._drag_bridge: _FloatingDragBridge | None = None
 
         if not _HAS_WEBENGINE:
             raise RuntimeError(
@@ -100,6 +117,14 @@ class FloatingNowPlayingWindow(QWidget):
         wsettings = self._web.settings()
         wsettings.setAttribute(QWebEngineSettings.ShowScrollBars, False)
         wsettings.setAttribute(QWebEngineSettings.LocalContentCanAccessRemoteUrls, True)
+        wsettings.setAttribute(QWebEngineSettings.JavascriptEnabled, True)
+
+        self._drag_bridge = _FloatingDragBridge(self)
+        channel = QWebChannel(page)
+        channel.registerObject("floatingDrag", self._drag_bridge)
+        page.setWebChannel(channel)
+        page.loadFinished.connect(self._on_load_finished)
+
         outer.addWidget(self._web, 1)
 
         grip_row = QHBoxLayout()
@@ -109,7 +134,7 @@ class FloatingNowPlayingWindow(QWidget):
         grip_row.addWidget(self._grip, 0, Qt.AlignBottom | Qt.AlignRight)
         outer.addLayout(grip_row)
 
-        self._web.installEventFilter(self)
+        self._grip.installEventFilter(self)
 
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
@@ -119,21 +144,40 @@ class FloatingNowPlayingWindow(QWidget):
         self._apply_transparency()
         self._apply_mode_visibility()
 
+    def _begin_drag(self, global_x: int, global_y: int) -> None:
+        self._drag_offset = QPoint(global_x, global_y) - self.frameGeometry().topLeft()
+        self._dragging = True
+        self.grabMouse()
+
+    def _drag_to(self, global_x: int, global_y: int) -> None:
+        if self._drag_offset is None:
+            return
+        self.move(QPoint(global_x, global_y) - self._drag_offset)
+        self._save_timer.start()
+
+    def _end_drag(self) -> None:
+        self._dragging = False
+        self._drag_offset = None
+        if self.mouseGrabber() is self:
+            self.releaseMouse()
+
     def eventFilter(self, obj, event):  # noqa: N802
-        if event.type() == event.Type.MouseButtonPress and isinstance(event, QMouseEvent):
-            if event.button() == Qt.LeftButton and obj is not self._grip:
-                self._drag_offset = (
-                    event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-                )
-                return True
-        if event.type() == event.Type.MouseMove and isinstance(event, QMouseEvent):
-            if self._drag_offset is not None and event.buttons() & Qt.LeftButton:
-                self.move(event.globalPosition().toPoint() - self._drag_offset)
-                self._save_timer.start()
-                return True
-        if event.type() == event.Type.MouseButtonRelease:
-            self._drag_offset = None
+        if obj is self._grip:
+            return super().eventFilter(obj, event)
         return super().eventFilter(obj, event)
+
+    def mouseReleaseEvent(self, event):  # noqa: N802
+        if self._dragging:
+            self._end_drag()
+        super().mouseReleaseEvent(event)
+
+    def _on_load_finished(self, ok: bool) -> None:
+        if not ok:
+            return
+        # overlay.html installs drag when float=1; retry once qwebchannel.js is ready.
+        self._web.page().runJavaScript(
+            "if (typeof installFloatingDrag === 'function') installFloatingDrag();"
+        )
 
     def _style(self) -> str:
         return normalize_now_style(self._settings_getter().get("overlay_now_style"))
@@ -152,6 +196,22 @@ class FloatingNowPlayingWindow(QWidget):
             "floating_now_width",
             "floating_now_height",
         )
+
+    @staticmethod
+    def _default_card_size() -> tuple[int, int]:
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return 420, 520
+        geo = screen.availableGeometry()
+        return max(380, min(920, int(geo.width() * 0.42))), max(360, int(geo.height() * 0.5))
+
+    @staticmethod
+    def _default_panel_size() -> tuple[int, int]:
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return 960, 200
+        geo = screen.availableGeometry()
+        return max(640, int(geo.width() * 0.55)), max(160, int(geo.height() * 0.22))
 
     def _apply_window_flags(self) -> None:
         settings = self._settings_getter()
@@ -197,13 +257,16 @@ class FloatingNowPlayingWindow(QWidget):
     def load_url(self, url: str) -> None:
         """Load a specific overlay URL (used by screenshot tooling)."""
         self._loaded_url = url
+        if "float=1" not in url:
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}float=1"
         self._web.load(QUrl(url))
 
     def restore_geometry(self, settings: dict[str, Any]) -> None:
         style = normalize_now_style(settings.get("overlay_now_style"))
         if style == "panel":
             min_w, min_h = self._PANEL_MIN
-            def_w, def_h = self._PANEL_DEFAULT
+            def_w, def_h = self._default_panel_size()
             keys = (
                 "floating_now_panel_x",
                 "floating_now_panel_y",
@@ -212,7 +275,7 @@ class FloatingNowPlayingWindow(QWidget):
             )
         else:
             min_w, min_h = self._CARD_MIN
-            def_w, def_h = self._CARD_DEFAULT
+            def_w, def_h = self._default_card_size()
             keys = ("floating_now_x", "floating_now_y", "floating_now_width", "floating_now_height")
         try:
             w = int(settings.get(keys[2]) or 0)
@@ -255,6 +318,7 @@ class FloatingNowPlayingWindow(QWidget):
         self._save_timer.start()
 
     def closeEvent(self, event):  # noqa: N802
+        self._end_drag()
         self._persist_geometry()
         super().closeEvent(event)
 
