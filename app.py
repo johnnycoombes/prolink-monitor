@@ -32,6 +32,7 @@ from prolink.remotedb_client import RemoteDbBrowser, choose_requesting_player  #
 from prolink.mixstatus import MixStatus, MixStatusConfig  # noqa: E402
 from prolink.session import SessionRecorder               # noqa: E402
 from prolink.audience_deck import AudienceDeckTracker, merge_live_deck  # noqa: E402
+from prolink.capture import idle_capture_status  # noqa: E402
 from prolink.track_key import keys_match, track_cache_key, track_key_token  # noqa: E402
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
@@ -848,6 +849,13 @@ class Monitor:
         else:
             last_art = "none"
         mix = self.mixstatus.as_state()
+        timing = getattr(self.engine, "link_timing", None)
+        if timing is not None:
+            link_timing = timing.snapshot(time.monotonic())
+        else:
+            link_timing = []
+        cap = getattr(self.engine, "capture", None)
+        capture = cap.status() if cap is not None else idle_capture_status()
         nfs_health: list[dict] = []
         with self.library.lock:
             for host, media in self.library.media.items():
@@ -882,6 +890,8 @@ class Monitor:
             "artwork_source_last": last_art,
             "onelibrary": onelibrary_info,
             "nfs": nfs_health,
+            "link_timing": link_timing,
+            "capture": capture,
             "mix": mix,
             "audience_deck": audience_deck,
             "now_playing": mix.get("now_playing"),

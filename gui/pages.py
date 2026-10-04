@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
+from gui.health_timing import LinkHealthPanel
 from gui.overlay_now import migrate_now_pos_for_style, normalize_now_pos, normalize_now_style
 from gui.theme import COLORS
 from gui.widgets import DeckCard, parse_waveform
@@ -565,8 +566,9 @@ _POSITION_SOURCE_KEYS = {
 class HealthPage(Page):
     """Packet rates, AP vs beat-grid position source, and NFS RTT."""
 
-    def __init__(self, i18n, parent=None):
+    def __init__(self, i18n, backend=None, parent=None):
         super().__init__(i18n, "health_title", "health_sub", parent)
+        self._backend = backend
         self._prev_packets = 0
         self._prev_t = 0.0
         self._prev_decks: dict[int, tuple[int, int, float]] = {}
@@ -603,6 +605,10 @@ class HealthPage(Page):
             grid.addWidget(value, 1, col)
         ov_l.addLayout(grid)
         self.layout_root.addWidget(overview)
+
+        self.link_panel = LinkHealthPanel(i18n)
+        self.link_panel.capture_requested.connect(self._start_capture)
+        self.layout_root.addWidget(self.link_panel)
 
         ol_frame = QFrame()
         ol_frame.setObjectName("Card")
@@ -702,6 +708,15 @@ class HealthPage(Page):
         self.nfs_empty.setObjectName("Dim")
         self.layout_root.addWidget(self.nfs_empty)
 
+    def _start_capture(self, seconds: int) -> None:
+        backend = getattr(self, "_backend", None)
+        if backend is None:
+            self.link_panel.note(self._i18n.t("health_capture_offline"))
+            return
+        err = backend.start_link_capture(int(seconds))
+        if err:
+            self.link_panel.note(self._i18n.t(err))
+
     def retranslate(self) -> None:
         super().retranslate()
         titles = (
@@ -728,6 +743,7 @@ class HealthPage(Page):
         self._nfs_lbl.setText(self._i18n.t("health_nfs"))
         self.deck_empty.setText(self._i18n.t("health_no_decks"))
         self.nfs_empty.setText(self._i18n.t("health_no_nfs"))
+        self.link_panel.retranslate()
         self.deck_table.setHorizontalHeaderLabels([
             self._i18n.t("health_col_deck"),
             self._i18n.t("health_col_source"),
@@ -874,6 +890,8 @@ class HealthPage(Page):
             ]
             for col, val in enumerate(vals):
                 self.nfs_table.setItem(row, col, QTableWidgetItem(val))
+
+        self.link_panel.update_state(state)
 
 
 class LibraryPage(Page):

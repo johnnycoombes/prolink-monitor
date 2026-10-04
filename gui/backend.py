@@ -197,6 +197,20 @@ class Backend(QObject):
             return []
         return mon.loaded_tracks()
 
+    def start_link_capture(self, seconds: float) -> str:
+        """Start a listen-only packet capture. Returns '' or an i18n key."""
+        with self._lock:
+            mon = self._monitor
+        if mon is None:
+            return "health_capture_offline"
+        cap = getattr(mon.engine, "capture", None)
+        if cap is None:
+            return "health_capture_offline"
+        try:
+            return cap.start(float(seconds)) or ""
+        except OSError:
+            return "health_capture_offline"
+
     def start_session(self) -> None:
         with self._lock:
             mon = self._monitor
