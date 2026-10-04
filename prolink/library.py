@@ -53,6 +53,10 @@ class Media:
         self.onelibrary_path: str = ""
         self.onelibrary_db = None
         self.onelibrary: onelibrary.OneLibrarySummary = onelibrary.OneLibrarySummary()
+        # How the Library UI reads metadata: remotedb (live TCP) or nfs-cache (USB export files).
+        self.library_source: str = "none"
+        self.library_source_detail: str = ""
+        self._exports_fingerprint: tuple[str, ...] = ()
 
         self.nfs = NfsClient(host)
         exports = self.nfs.exports()
@@ -68,6 +72,59 @@ class Media:
         export_key = re.sub(r"[^A-Za-z0-9._-]+", "_", self.export.strip("/")) or "export"
         self.cache_dir = os.path.join(base, export_key)
         os.makedirs(self.cache_dir, exist_ok=True)
+        self._exports_fingerprint = tuple(sorted(exports))
+
+    def _remote_pdb_fingerprint(self) -> tuple[int, int] | None:
+        """Current export.pdb size/mtime on the player (no disk cache)."""
+        try:
+            _fh, attr = self.nfs.resolve(self.root, PDB_PATH)
+            return (attr.size, int(attr.mtime))
+        except Exception:
+            return None
+
+    def is_stale(self) -> bool:
+        """True when NFS export set or export.pdb fingerprint changed."""
+        try:
+            exports = tuple(sorted(self.nfs.exports()))
+        except Exception:
+            return True
+        if exports != self._exports_fingerprint:
+            return True
+        fp = self._remote_pdb_fingerprint()
+        if fp is None:
+            return self.db is not None
+        return self._pdb_fingerprint is not None and fp != self._pdb_fingerprint
+
+    def refresh_if_stale(self) -> None:
+        """Drop in-memory DB and re-fetch export files when the medium changed."""
+        if not self.is_stale():
+            return
+        with self.lock:
+            self._analysis.clear()
+            self._artwork.clear()
+            self.db = None
+            self.onelibrary_db = None
+            self.onelibrary = onelibrary.OneLibrarySummary()
+            self._pdb_fingerprint = None
+        try:
+            exports = self.nfs.exports()
+            if not exports:
+                raise RuntimeError("no exports")
+            if self.export not in exports:
+                self.export = exports[0]
+                export_key = re.sub(r"[^A-Za-z0-9._-]+", "_", self.export.strip("/")) or "export"
+                base = os.path.dirname(os.path.dirname(self.cache_dir))
+                self.cache_dir = os.path.join(base, export_key)
+                os.makedirs(self.cache_dir, exist_ok=True)
+            self._exports_fingerprint = tuple(sorted(exports))
+            self.root = self.nfs.mount(self.export)
+        except Exception:
+            pass
+        self.load_database(force=True)
+
+    def set_library_source(self, source: str, detail: str = "") -> None:
+        self.library_source = source or "none"
+        self.library_source_detail = detail or ""
 
     # -- database -----------------------------------------------------------
     def load_database(self, force: bool = False) -> pdb.PdbDatabase:
@@ -257,7 +314,11 @@ class Library:
     def get(self, host: str) -> Media | None:
         with self.lock:
             if host in self.media:
-                return self.media[host]
+                media = self.media[host]
+                if media.is_stale():
+                    self.drop(host)
+                else:
+                    return media
             # Sticky errors expire so a late USB insert can succeed without restart.
             err_at = self._error_at.get(host)
             if host in self.errors and err_at is not None:

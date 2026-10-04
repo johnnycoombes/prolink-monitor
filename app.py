@@ -27,6 +27,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from prolink import anlz, link, proto                     # noqa: E402
 from prolink.library import Library                       # noqa: E402
 from prolink import onelibrary                            # noqa: E402
+from prolink import remotedb as remotedb_wire             # noqa: E402
+from prolink.remotedb_client import RemoteDbBrowser, choose_requesting_player  # noqa: E402
 from prolink.mixstatus import MixStatus, MixStatusConfig  # noqa: E402
 from prolink.session import SessionRecorder               # noqa: E402
 from prolink.audience_deck import AudienceDeckTracker, merge_live_deck  # noqa: E402
@@ -60,6 +62,41 @@ class Monitor:
         # Library totals are expensive (PDB counts); reuse until media set changes.
         self._library_cache_key: tuple | None = None
         self._library_cache: tuple[dict | None, str | None, dict | None] = (None, None, None)
+        self._remotedb_fail: dict[str, str] = {}
+
+    def _device_number_for_host(self, host: str) -> int | None:
+        with self.engine.lock:
+            for ann in self.engine.devices.values():
+                if ann.ip == host:
+                    return int(ann.device_number)
+        return None
+
+    def _requesting_player_for_db(self) -> int:
+        src = self.engine.source
+        vn = getattr(src, "device_number", None)
+        return choose_requesting_player(vn)
+
+    def _media_slot_for_db(self) -> int:
+        for d in self.engine.active_decks():
+            s = d.status
+            if s is None:
+                continue
+            if s.slot == "usb":
+                return remotedb_wire.SLOT_USB
+            if s.slot == "sd":
+                return remotedb_wire.SLOT_SD
+        return remotedb_wire.SLOT_USB
+
+    def _open_remotedb(self, host: str) -> RemoteDbBrowser | None:
+        target = self._device_number_for_host(host)
+        if target is None:
+            return None
+        return RemoteDbBrowser(
+            host=host,
+            target_player=target,
+            requesting_player=self._requesting_player_for_db(),
+            slot=self._media_slot_for_db(),
+        )
 
     def _cache_key(self, host: str, media, track_id: int, slot: str = "") -> tuple:
         fp = getattr(media, "_pdb_fingerprint", None)
@@ -306,22 +343,81 @@ class Monitor:
 
     def browse_tracks(self, query: str = "", *, limit: int = 100,
                       offset: int = 0) -> dict:
-        """Search classic export.pdb tracks across mounted media."""
+        """Search tracks — prefers live dbserver, falls back to NFS export.pdb cache."""
         limit = max(1, min(500, int(limit)))
         offset = max(0, int(offset))
+        q = (query or "").strip().lower()
         with self.library.lock:
             media_list = list(self.library.media.items())
         all_rows: list[dict] = []
         hosts: list[str] = []
+        source = "none"
         for host, media in media_list:
-            if media.db is None:
-                continue
             hosts.append(host)
+            media.refresh_if_stale()
+            live_rows: list[dict] | None = None
+            browser = self._open_remotedb(host)
+            if browser is not None:
+                try:
+                    with browser:
+                        detail = (
+                            f"TCP dbserver · player {browser.target_player} "
+                            f"as client #{browser.requesting_player} slot {browser.slot}"
+                        )
+                        media.set_library_source("remotedb", detail)
+                        source = "remotedb"
+                        self._remotedb_fail.pop(host, None)
+                        chunk: list[dict] = []
+                        off = 0
+                        while off < 2000:
+                            page = browser.track_search_page(offset=off, limit=64)
+                            if not page:
+                                break
+                            chunk.extend(page)
+                            if len(page) < 64:
+                                break
+                            off += 64
+                        live_rows = []
+                        for row in chunk:
+                            tid = int(row.get("id") or 0)
+                            if not tid:
+                                continue
+                            title = str(row.get("name") or "")
+                            artist = str(row.get("subtitle") or "")
+                            live_rows.append({
+                                "id": tid,
+                                "title": title,
+                                "artist": artist,
+                                "host": host,
+                                "source": "remotedb",
+                            })
+                except Exception as exc:
+                    self._remotedb_fail[host] = str(exc)
+                    live_rows = None
+            if live_rows is not None:
+                if q:
+                    live_rows = [
+                        r for r in live_rows
+                        if q in (r.get("title") or "").lower()
+                        or q in (r.get("artist") or "").lower()
+                    ]
+                all_rows.extend(live_rows)
+                continue
+            if media.db is None:
+                try:
+                    media.load_database()
+                except Exception:
+                    continue
+            media.set_library_source(
+                "nfs-cache",
+                f"NFS export.pdb cache ({media.cache_dir})",
+            )
+            source = "nfs-cache"
             rows, _total = media.db.search(query, limit=10_000, offset=0)
             for r in rows:
                 r = dict(r)
                 r["host"] = host
-                r["source"] = "pdb"
+                r["source"] = "nfs-cache"
                 all_rows.append(r)
         all_rows.sort(key=lambda r: ((r.get("title") or "").lower(), r.get("id") or 0))
         total = len(all_rows)
@@ -333,6 +429,7 @@ class Monitor:
             "query": query or "",
             "hosts": hosts,
             "multi_player": len(hosts) > 1,
+            "library_source": source,
         }
 
     def browse_playlists(self) -> dict:
@@ -342,7 +439,47 @@ class Monitor:
         history: list[dict] = []
         errors: list[dict] = []
         any_present = False
+        library_source = "none"
         for host, media in media_list:
+            media.refresh_if_stale()
+            browser = self._open_remotedb(host)
+            if browser is not None:
+                try:
+                    with browser:
+                        detail = (
+                            f"TCP dbserver · player {browser.target_player} "
+                            f"as client #{browser.requesting_player}"
+                        )
+                        media.set_library_source("remotedb", detail)
+                        library_source = "remotedb"
+                        any_present = True
+                        for row in browser.playlist_folder(0):
+                            if row.get("folder"):
+                                continue
+                            pid = int(row.get("id") or 0)
+                            if not pid:
+                                continue
+                            playlists.append({
+                                "id": pid,
+                                "name": row.get("name") or f"#{pid}",
+                                "host": host,
+                                "source": "remotedb",
+                            })
+                        for row in browser.history_entries():
+                            hid = int(row.get("id") or 0)
+                            if not hid:
+                                continue
+                            history.append({
+                                "id": hid,
+                                "name": row.get("name") or f"#{hid}",
+                                "host": host,
+                                "source": "remotedb",
+                            })
+                        self._remotedb_fail.pop(host, None)
+                        continue
+                except Exception as exc:
+                    self._remotedb_fail[host] = str(exc)
+                    errors.append({"host": host, "error": f"remotedb: {exc}"})
             summary = getattr(media, "onelibrary", None)
             if summary is not None and summary.present:
                 any_present = True
@@ -354,14 +491,27 @@ class Monitor:
                     })
             ol = getattr(media, "onelibrary_db", None)
             if ol is None:
+                try:
+                    media.load_database()
+                    ol = getattr(media, "onelibrary_db", None)
+                except Exception:
+                    ol = None
+            if ol is None:
                 continue
+            media.set_library_source(
+                "nfs-cache",
+                f"NFS exportLibrary.db cache ({media.cache_dir})",
+            )
+            library_source = "nfs-cache"
             for p in onelibrary.list_playlists(ol):
                 p = dict(p)
                 p["host"] = host
+                p["source"] = "nfs-cache"
                 playlists.append(p)
             for h in onelibrary.list_history(ol):
                 h = dict(h)
                 h["host"] = host
+                h["source"] = "nfs-cache"
                 history.append(h)
         return {
             "playlists": playlists,
@@ -370,6 +520,8 @@ class Monitor:
             "present": any_present,
             "errors": errors,
             "pyrekordbox": onelibrary.pyrekordbox_available(),
+            "library_source": library_source,
+            "remotedb_errors": dict(self._remotedb_fail),
         }
 
     def browse_playlist_tracks(self, playlist_id: int, host: str | None = None,
@@ -379,13 +531,46 @@ class Monitor:
         for h, media in media_list:
             if host and h != host:
                 continue
+            media.refresh_if_stale()
+            browser = self._open_remotedb(h)
+            if browser is not None:
+                try:
+                    with browser:
+                        rows = browser.playlist_tracks(playlist_id)[:limit]
+                        tracks = []
+                        for row in rows:
+                            tid = int(row.get("id") or 0)
+                            if not tid:
+                                continue
+                            tracks.append({
+                                "id": tid,
+                                "title": row.get("name") or "",
+                                "artist": row.get("subtitle") or "",
+                                "host": h,
+                                "source": "remotedb",
+                            })
+                        media.set_library_source("remotedb", browser.last_status.detail or "")
+                        return {
+                            "id": playlist_id,
+                            "host": h,
+                            "tracks": tracks,
+                            "library_source": "remotedb",
+                        }
+                except Exception:
+                    pass
             ol = getattr(media, "onelibrary_db", None)
             if ol is None:
                 continue
             tracks = onelibrary.playlist_tracks(ol, playlist_id, limit=limit)
             for t in tracks:
                 t["host"] = h
-            return {"id": playlist_id, "host": h, "tracks": tracks}
+                t["source"] = "nfs-cache"
+            return {
+                "id": playlist_id,
+                "host": h,
+                "tracks": tracks,
+                "library_source": "nfs-cache",
+            }
         return {"id": playlist_id, "host": host, "tracks": []}
 
     def loaded_tracks(self) -> list[dict]:
@@ -419,6 +604,8 @@ class Monitor:
         key = tuple(
             (getattr(m, "host", None), getattr(m, "export", None),
              getattr(m, "_pdb_fingerprint", None),
+             getattr(m, "_exports_fingerprint", None),
+             getattr(m, "library_source", None),
              bool(getattr(m, "db", None)),
              id(getattr(m, "onelibrary", None)))
             for m in media_list
@@ -591,6 +778,17 @@ class Monitor:
                        for a in sorted(self.engine.devices.values(),
                                        key=lambda x: x.device_number)]
         totals, library_error, onelibrary_info = self._library_snapshot()
+        library_source = {"source": "none", "detail": ""}
+        with self.library.lock:
+            for _h, m in self.library.media.items():
+                library_source = {
+                    "source": getattr(m, "library_source", "none") or "none",
+                    "detail": getattr(m, "library_source_detail", "") or "",
+                }
+                break
+        remotedb_fail = getattr(self, "_remotedb_fail", None) or {}
+        if remotedb_fail and library_source.get("source") != "remotedb":
+            library_source["remotedb_error"] = next(iter(remotedb_fail.values()))
         mix = self.mixstatus.as_state()
         nfs_health: list[dict] = []
         with self.library.lock:
@@ -621,6 +819,7 @@ class Monitor:
             "host": self.host or "",
             "library": totals,
             "library_error": library_error,
+            "library_source": library_source,
             "onelibrary": onelibrary_info,
             "nfs": nfs_health,
             "mix": mix,

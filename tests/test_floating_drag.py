@@ -5,10 +5,14 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from PySide6.QtCore import QPoint
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtWidgets import QApplication
 
-from gui.floating_now import FloatingNowPlayingWindow, _FloatingDragBridge
+from gui.floating_now import (
+    FloatingNowPlayingWindow,
+    _FloatingDragBridge,
+    _FloatingDragHandle,
+)
 
 
 class FloatingDragTests(unittest.TestCase):
@@ -29,6 +33,7 @@ class FloatingDragTests(unittest.TestCase):
         win.releaseMouse = mock.Mock()
         win.mouseGrabber = mock.Mock(return_value=win)
         win._save_timer = mock.Mock()
+        win.windowHandle = mock.Mock(return_value=None)
 
         FloatingNowPlayingWindow._begin_drag(win, 150, 260)
         self.assertTrue(win._dragging)
@@ -45,11 +50,32 @@ class FloatingDragTests(unittest.TestCase):
         win = mock.Mock()
         bridge = _FloatingDragBridge(win)
         bridge.dragStart(10, 20)
-        win._begin_drag.assert_called_with(10, 20)
+        win._begin_drag.assert_called_with(10, 20, origin="bridge")
         bridge.dragMove(11, 21)
         win._drag_to.assert_called_with(11, 21)
         bridge.dragEnd()
         win._end_drag.assert_called()
+
+    def test_drag_handle_calls_system_move(self):
+        win = mock.Mock()
+        win._begin_system_drag = mock.Mock()
+        handle = _FloatingDragHandle(win)
+        from PySide6.QtCore import QEvent, QPoint
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance() or QApplication([])
+        ev = QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            QPoint(2, 2),
+            QPoint(2, 2),
+            QPoint(2, 2),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        handle.mousePressEvent(ev)
+        win._begin_system_drag.assert_called_once_with("handle")
 
 
 if __name__ == "__main__":
