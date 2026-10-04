@@ -36,6 +36,35 @@ html,body{
 body.preview{
   background:radial-gradient(circle at 20% 10%,#1a2230,#07080a 55%) !important;
 }
+body.embed{background:transparent !important}
+#root.embed-mode{
+  padding:0;
+  align-items:stretch;
+  justify-content:stretch;
+}
+#root.embed-mode #stack{
+  width:100%;
+  height:100%;
+  max-width:none;
+  align-items:stretch;
+  flex:1;
+}
+#root.embed-mode #next{display:none !important}
+#root.embed-mode .card{
+  width:100%;
+  height:100%;
+  max-width:none;
+  min-width:0;
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  border-radius:calc(16px * var(--scale));
+}
+#root.embed-mode.now-panel-mode .card{border-radius:calc(10px * var(--scale))}
+#root.embed-mode .card.show{transform:none}
+#root.embed-mode .now-card{flex:1;justify-content:flex-start}
+#root.embed-mode .now-panel{flex:1;min-height:0}
+#root.embed-mode .panel-detail{flex:1;min-height:calc(72px * var(--scale));height:auto}
 #root{
   width:100%;height:100%;
   display:flex;align-items:flex-end;justify-content:flex-start;
@@ -381,6 +410,7 @@ let zoomBarsDisplay = 4;
 let playheadModeDisplay = 'auto';
 const onlyPlaying = params.get('playing') !== '0';
 const preview = params.get('preview') === '1';
+const embed = params.get('embed') === '1';
 const useMix = params.get('mix') !== '0';
 const maxDecks = Math.min(4, Math.max(1, +(params.get('decks') || (layout === 'dual' ? 2 : 1))));
 const WAVE_STYLES = ['rgb', '3band', 'blue'];
@@ -399,7 +429,9 @@ const accent = /^#?[0-9a-fA-F]{6}$/.test(accentParam)
   : '';
 
 if (preview) document.body.classList.add('preview');
+if (embed) document.body.classList.add('embed');
 const root = document.getElementById('root');
+if (embed) root.classList.add('embed-mode');
 if (layout === 'nowplaying') {
   if (nowStyle === 'panel') {
     root.classList.add('now-panel-mode', nowPos === 'top' ? 'now-panel-top' : 'now-panel-bottom');
