@@ -235,8 +235,9 @@ class Monitor:
 
     def _media_for_legacy(self, track_id: int):
         """Best-effort medium lookup when no deck binding exists (library API)."""
+        deck_keys = getattr(self, "_deck_keys", {})
         with self._lock:
-            for key in self._deck_keys.values():
+            for key in deck_keys.values():
                 if keys_match(key, track_id):
                     host = key[0]
                     media = self.library.get(host)

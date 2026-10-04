@@ -1264,6 +1264,9 @@ class OverlayPage(Page):
         self.layout_box.addItem(i18n.t("overlay_layout_dual"), "dual")
         self.layout_box.addItem(i18n.t("overlay_layout_min"), "minimal")
         self.layout_box.addItem(i18n.t("overlay_layout_setlist"), "setlist")
+        self.now_pos_box = QComboBox()
+        self.now_pos_box.addItem(i18n.t("overlay_now_pos_left"), "left")
+        self.now_pos_box.addItem(i18n.t("overlay_now_pos_right"), "right")
         self.corner_box = QComboBox()
         for key, label in (
             ("bl", "overlay_corner_bl"),
@@ -1273,6 +1276,8 @@ class OverlayPage(Page):
             ("center", "overlay_corner_center"),
         ):
             self.corner_box.addItem(i18n.t(label), key)
+        self.corner_label = QLabel(i18n.t("overlay_corner"))
+        self.now_pos_label = QLabel(i18n.t("overlay_now_pos"))
         self.decks_box = QComboBox()
         for n in (1, 2, 3, 4):
             self.decks_box.addItem(str(n), n)
@@ -1298,7 +1303,11 @@ class OverlayPage(Page):
         self.preview = QCheckBox(i18n.t("overlay_preview"))
 
         form.addRow(i18n.t("overlay_layout"), self.layout_box)
-        form.addRow(i18n.t("overlay_corner"), self.corner_box)
+        form.addRow(self.now_pos_label, self.now_pos_box)
+        form.addRow(self.corner_label, self.corner_box)
+        self.floating_now_btn = QPushButton(i18n.t("open_floating_now"))
+        self.floating_now_btn.setCursor(Qt.PointingHandCursor)
+        form.addRow(i18n.t("floating_now"), self.floating_now_btn)
         form.addRow(i18n.t("overlay_decks"), self.decks_box)
         form.addRow(i18n.t("overlay_wave"), self.wave_box)
         form.addRow(i18n.t("overlay_scale"), self.scale_box)
@@ -1343,9 +1352,10 @@ class OverlayPage(Page):
         self.layout_root.addWidget(url_box)
         self.layout_root.addStretch(1)
 
-        for w in (self.layout_box, self.corner_box, self.decks_box, self.wave_box,
-                  self.scale_box):
+        for w in (self.layout_box, self.corner_box, self.now_pos_box, self.decks_box,
+                  self.wave_box, self.scale_box):
             w.currentIndexChanged.connect(self._on_change)
+        self.layout_box.currentIndexChanged.connect(self._sync_overlay_layout_rows)
         self.playing_only.toggled.connect(self._on_change)
         self.use_mix.toggled.connect(self._on_change)
         self.show_tags.toggled.connect(self._on_change)
@@ -1354,6 +1364,17 @@ class OverlayPage(Page):
         self.preview.toggled.connect(self._on_change)
         self.accent_edit.textChanged.connect(self._on_change)
         self.layout_box.currentIndexChanged.connect(self._maybe_bump_decks)
+        self._sync_overlay_layout_rows()
+
+    def set_floating_now_handler(self, slot) -> None:
+        self.floating_now_btn.clicked.connect(slot)
+
+    def _sync_overlay_layout_rows(self) -> None:
+        now = self.layout_box.currentData() == "nowplaying"
+        self.now_pos_label.setVisible(now)
+        self.now_pos_box.setVisible(now)
+        self.corner_label.setVisible(not now)
+        self.corner_box.setVisible(not now)
 
     def load_prefs(self, data: dict, port: int | None = None) -> None:
         if port is not None:
@@ -1362,6 +1383,9 @@ class OverlayPage(Page):
         self.layout_box.setCurrentIndex(max(0, idx))
         idx = self.corner_box.findData(data.get("overlay_corner", "bl"))
         self.corner_box.setCurrentIndex(max(0, idx))
+        idx = self.now_pos_box.findData(data.get("overlay_now_pos", "left"))
+        self.now_pos_box.setCurrentIndex(max(0, idx))
+        self._sync_overlay_layout_rows()
         decks = int(data.get("overlay_decks", 1))
         if self.layout_box.currentData() == "dual" and decks < 2:
             decks = 2
@@ -1384,6 +1408,7 @@ class OverlayPage(Page):
     def collect(self) -> dict:
         return {
             "overlay_layout": self.layout_box.currentData(),
+            "overlay_now_pos": self.now_pos_box.currentData(),
             "overlay_corner": self.corner_box.currentData(),
             "overlay_decks": self.decks_box.currentData(),
             "overlay_playing_only": self.playing_only.isChecked(),
@@ -1409,12 +1434,16 @@ class OverlayPage(Page):
             self.hint.setText(self._i18n.t("overlay_need_web"))
 
     def build_url(self, preview: bool | None = None) -> str:
+        layout = self.layout_box.currentData()
         qs = [
-            f"layout={self.layout_box.currentData()}",
-            f"corner={self.corner_box.currentData()}",
+            f"layout={layout}",
             f"decks={self.decks_box.currentData()}",
             f"wave={self.wave_box.currentData()}",
         ]
+        if layout == "nowplaying":
+            qs.append(f"pos={self.now_pos_box.currentData() or 'left'}")
+        else:
+            qs.append(f"corner={self.corner_box.currentData()}")
         scale = self.scale_box.currentData() or "1"
         if scale and scale != "1":
             qs.append(f"scale={scale}")
@@ -1595,8 +1624,19 @@ class SettingsPage(Page):
         self.overlay_wave.addItem(i18n.t("wave_rgb"), "rgb")
         self.overlay_wave.addItem(i18n.t("wave_3band"), "3band")
         self.overlay_wave.addItem(i18n.t("wave_blue"), "blue")
+        self.settings_now_pos = QComboBox()
+        self.settings_now_pos.addItem(i18n.t("overlay_now_pos_left"), "left")
+        self.settings_now_pos.addItem(i18n.t("overlay_now_pos_right"), "right")
+        self.floating_now_topmost = QCheckBox(i18n.t("floating_now_topmost"))
+        self.floating_now_transparent = QCheckBox(i18n.t("floating_now_transparent"))
+        self.settings_floating_btn = QPushButton(i18n.t("open_floating_now"))
+        self.settings_floating_btn.setCursor(Qt.PointingHandCursor)
         ov.addRow(i18n.t("overlay_layout"), self.overlay_layout)
+        ov.addRow(i18n.t("overlay_now_pos"), self.settings_now_pos)
         ov.addRow(i18n.t("overlay_corner"), self.overlay_corner)
+        ov.addRow("", self.floating_now_topmost)
+        ov.addRow("", self.floating_now_transparent)
+        ov.addRow(i18n.t("floating_now"), self.settings_floating_btn)
         ov.addRow(i18n.t("overlay_decks"), self.overlay_decks)
         ov.addRow(i18n.t("overlay_wave"), self.overlay_wave)
         ov.addRow("", self.overlay_playing)
@@ -1673,6 +1713,10 @@ class SettingsPage(Page):
         self.overlay_layout.setCurrentIndex(max(0, idx))
         idx = self.overlay_corner.findData(data.get("overlay_corner", "bl"))
         self.overlay_corner.setCurrentIndex(max(0, idx))
+        idx = self.settings_now_pos.findData(data.get("overlay_now_pos", "left"))
+        self.settings_now_pos.setCurrentIndex(max(0, idx))
+        self.floating_now_topmost.setChecked(bool(data.get("floating_now_topmost", True)))
+        self.floating_now_transparent.setChecked(bool(data.get("floating_now_transparent", True)))
         idx = self.overlay_decks.findData(int(data.get("overlay_decks", 1)))
         self.overlay_decks.setCurrentIndex(max(0, idx))
         self.overlay_playing.setChecked(bool(data.get("overlay_playing_only", True)))
@@ -1706,11 +1750,14 @@ class SettingsPage(Page):
             "show_empty_decks": self.show_empty.isChecked(),
             "poll_hz": self.poll_hz.value(),
             "overlay_layout": self.overlay_layout.currentData(),
+            "overlay_now_pos": self.settings_now_pos.currentData(),
             "overlay_corner": self.overlay_corner.currentData(),
             "overlay_decks": self.overlay_decks.currentData(),
             "overlay_playing_only": self.overlay_playing.isChecked(),
             "overlay_mix": self.overlay_mix.isChecked(),
             "overlay_waveform_style": self.overlay_wave.currentData(),
+            "floating_now_topmost": self.floating_now_topmost.isChecked(),
+            "floating_now_transparent": self.floating_now_transparent.isChecked(),
             "session_autosave": self.session_autosave.isChecked(),
             "session_autosave_dir": self.session_autosave_dir.text().strip(),
             "auto_connect": self.auto_connect.isChecked(),
