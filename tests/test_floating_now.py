@@ -5,7 +5,11 @@ from __future__ import annotations
 import unittest
 
 from gui.floating_now import pick_now_deck, webengine_available
-from gui.overlay_url import build_floating_overlay_url, build_floating_overlay_file_url
+from gui.overlay_url import (
+    build_floating_overlay_file_url,
+    build_floating_overlay_url,
+    build_parity_screenshot_url,
+)
 from gui.settings import load_settings, save_settings, _sanitize
 
 
@@ -51,6 +55,14 @@ class FloatingOverlayUrlTests(unittest.TestCase):
         self.assertIn("style=card", url)
         self.assertIn("pos=left", url)
         self.assertIn(":9876/overlay", url)
+
+    def test_parity_screenshot_url_preview_mock_embed(self):
+        settings = {**load_settings(), "overlay_now_style": "card"}
+        url = build_parity_screenshot_url(8080, settings)
+        self.assertIn("preview=1", url)
+        self.assertIn("mock=1", url)
+        self.assertIn("embed=1", url)
+        self.assertIn(":8080/overlay", url)
 
     def test_file_url_for_mock_screenshots(self):
         settings = {**load_settings(), "overlay_now_style": "panel", "overlay_now_pos": "bottom"}

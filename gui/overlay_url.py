@@ -20,7 +20,13 @@ def overlay_asset_version() -> str:
         return "0"
 
 
-def _now_playing_query(settings: dict[str, Any], *, embed: bool, mock: bool) -> list[tuple[str, str]]:
+def _now_playing_query(
+    settings: dict[str, Any],
+    *,
+    embed: bool,
+    mock: bool,
+    preview: bool = False,
+) -> list[tuple[str, str]]:
     style = normalize_now_style(settings.get("overlay_now_style"))
     pos = normalize_now_pos(style, settings.get("overlay_now_pos"))
     qs: list[tuple[str, str]] = [
@@ -37,6 +43,8 @@ def _now_playing_query(settings: dict[str, Any], *, embed: bool, mock: bool) -> 
         qs.append(("embed", "1"))
     if mock:
         qs.append(("mock", "1"))
+    if preview:
+        qs.append(("preview", "1"))
     scale = str(settings.get("overlay_scale") or "1")
     if scale and scale != "1":
         qs.append(("scale", scale))
@@ -58,6 +66,15 @@ def build_floating_overlay_url(
 ) -> str:
     """URL for the desktop floating Now Playing window (live SSE from local HTTP server)."""
     qs = _now_playing_query(settings, embed=True, mock=mock)
+    return f"http://127.0.0.1:{int(port)}/overlay?{urlencode(qs)}"
+
+
+def build_parity_screenshot_url(
+    port: int,
+    settings: dict[str, Any],
+) -> str:
+    """HTTP URL for parity docs: mock preview with embed (card or panel)."""
+    qs = _now_playing_query(settings, embed=True, mock=True, preview=True)
     return f"http://127.0.0.1:{int(port)}/overlay?{urlencode(qs)}"
 
 
