@@ -27,6 +27,18 @@ ONE_LIBRARY_PATH = onelibrary.ONE_LIBRARY_PATH
 ERROR_RETRY_SECONDS = 5.0
 
 
+def _track_useful(track) -> bool:
+    if track is None:
+        return False
+    return bool(
+        getattr(track, "title", "")
+        or getattr(track, "artist", "")
+        or getattr(track, "analyze_path", "")
+        or getattr(track, "artwork_path", "")
+        or getattr(track, "file_path", "")
+    )
+
+
 def _safe_cache_name(prefix: str, remote: str, suffix: str = "") -> str:
     """Stable, filesystem-safe cache file name derived from the remote path."""
     digest = hashlib.sha1(remote.encode("utf-8", "replace")).hexdigest()[:16]
@@ -216,11 +228,56 @@ class Media:
     def onelibrary_track(self, track_id: int) -> onelibrary.OneLibraryTrack | None:
         """Look up a content row in OneLibrary (AZ playlists / history IDs)."""
         if self.onelibrary_db is None:
+            # load_database already looked. Skip another NFS stat when the
+            # file is not on the medium.
+            if not self.onelibrary.present:
+                return None
             self._load_onelibrary()
         return onelibrary.find_content(self.onelibrary_db, track_id)
 
+    def copied_track(self, track_id: int, *, prefer_onelibrary: bool = False
+                     ) -> tuple[pdb.Track | None, str]:
+        """NFS-cached lookup. Live dbserver is the caller's job, before this.
+
+        XDJ-AZ track ids are OneLibrary content ids. When that database is
+        readable, a hit in export.pdb at the same number is a different
+        namespace and is not used.
+        """
+        ol = self._safe_onelibrary_track(track_id)
+        pdb_track = self._safe_pdb_track(track_id)
+        ol_ok = _track_useful(ol)
+        pdb_ok = _track_useful(pdb_track)
+        if prefer_onelibrary:
+            if ol_ok and ol is not None:
+                return onelibrary.as_pdb_track(ol), "onelibrary"
+            summary = self.onelibrary
+            if summary.present and summary.readable:
+                return None, ""
+            if pdb_ok and pdb_track is not None:
+                return pdb_track, "nfs-cache"
+            return (pdb_track, "nfs-cache") if pdb_track is not None else (None, "")
+        if pdb_ok and pdb_track is not None:
+            return pdb_track, "nfs-cache"
+        if ol_ok and ol is not None:
+            return onelibrary.as_pdb_track(ol), "onelibrary"
+        if pdb_track is not None:
+            return pdb_track, "nfs-cache"
+        return None, ""
+
+    def _safe_pdb_track(self, track_id: int) -> pdb.Track | None:
+        try:
+            return self.track(track_id)
+        except Exception:
+            return None
+
+    def _safe_onelibrary_track(self, track_id: int) -> onelibrary.OneLibraryTrack | None:
+        try:
+            return self.onelibrary_track(track_id)
+        except Exception:
+            return None
+
     # -- analysis -----------------------------------------------------------
-    def analysis(self, track_id: int) -> anlz.Analysis | None:
+    def analysis(self, track_id: int, track: pdb.Track | None = None) -> anlz.Analysis | None:
         """Beat grid, cues and waveforms for a track."""
         with self.lock:
             cached = self._analysis.get(track_id)
@@ -228,7 +285,13 @@ class Media:
                 self._analysis.move_to_end(track_id)
                 return cached
 
-        t = self.track(track_id)
+        t = track if track is not None and getattr(track, "analyze_path", "") else None
+        if t is None:
+            t = self._safe_pdb_track(track_id)
+        if t is None or not t.analyze_path:
+            ol = self._safe_onelibrary_track(track_id)
+            if ol is not None and ol.analyze_path:
+                t = onelibrary.as_pdb_track(ol)
         if not t or not t.analyze_path:
             return None
 

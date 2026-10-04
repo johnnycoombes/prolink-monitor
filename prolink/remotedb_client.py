@@ -113,18 +113,20 @@ class RemoteDbBrowser:
             raise wire.DbServerError(f"menu unavailable type {resp.msg_type:#x}")
         return resp
 
-    def _render_all(self, count: int) -> list[wire.DbMessage]:
+    def _render_all(self, count: int, *, track_type: int | None = None) -> list[wire.DbMessage]:
         if self._sock is None:
             raise wire.DbServerError("not connected")
         if count <= 0 or count == 0xFFFFFFFF:
             return []
         items: list[wire.DbMessage] = []
         offset = 0
+        tt = wire.TRACK_REKORDBOX if track_type is None else int(track_type)
         while offset < count:
             batch = min(wire.MENU_BATCH, count - offset)
             tx = self._next_tx()
             pkt = wire.encode_render_menu(
-                tx, self.requesting_player, self.slot, offset, batch, count)
+                tx, self.requesting_player, self.slot, offset, batch, count,
+                track_type=tt)
             self._sock.sendall(pkt)
             header = wire.read_message(self._sock)
             if header.msg_type != wire.TYPE_MENU_HEADER:
@@ -161,6 +163,26 @@ class RemoteDbBrowser:
         avail = self._menu_request(wire.TYPE_HISTORY_MENU, 0)
         count = int(avail.args[1]) if len(avail.args) > 1 else 0
         return [wire.menu_item_row(m) for m in self._render_all(count)]
+
+    def track_metadata(self, track_id: int, *, track_type: int = wire.TRACK_REKORDBOX) -> dict:
+        """Read one track's title, artist, and related fields. Never writes."""
+        if self._sock is None:
+            raise wire.DbServerError("not connected")
+        if not track_id:
+            return {}
+        tx = self._next_tx()
+        pkt = wire.encode_metadata_request(
+            tx, self.requesting_player, self.slot, int(track_type), int(track_id))
+        self._sock.sendall(pkt)
+        avail = wire.read_message(self._sock)
+        if avail.tx_id != tx:
+            raise wire.DbServerError("transaction id mismatch")
+        if avail.msg_type != wire.TYPE_MENU_AVAILABLE:
+            raise wire.DbServerError(f"metadata unavailable type {avail.msg_type:#x}")
+        count = int(avail.args[1]) if len(avail.args) > 1 and isinstance(avail.args[1], int) else 0
+        if count <= 0 or count == 0xFFFFFFFF:
+            return {}
+        return wire.metadata_from_items(self._render_all(count, track_type=int(track_type)))
 
     def album_art(self, artwork_id: int, *, high_res: bool = True) -> bytes | None:
         """Fetch album art bytes via dbserver (high-res when *high_res* and player supports it)."""

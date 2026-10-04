@@ -26,7 +26,10 @@ PORT_MIXER = 50004
 TYPE_KEEPALIVE = 0x06
 TYPE_BEAT = 0x28
 TYPE_ABSOLUTE_POSITION = 0x0B
-TYPE_MIXER_STATUS = 0x03
+# 0x03 on the beat port (50001) is Channels On-Air. An XDJ-AZ sends it
+# while Utility → PRO DJ LINK is on, and stops in 4-deck mode.
+TYPE_CHANNELS_ON_AIR = 0x03
+TYPE_MIXER_STATUS = TYPE_CHANNELS_ON_AIR
 TYPE_CDJ_STATUS = 0x0A
 TYPE_DJM_STATUS = 0x29
 TYPE_MIXER_CLOCK = 0x20
@@ -42,8 +45,33 @@ ABS_POS_BPM = 0x38         # effective BPM × 10
 
 # These are stable keys, not user-facing text: they travel through the API as-is
 # and each interface translates them (see web/index.html).
-SLOTS = {0: "empty", 1: "cd", 2: "sd", 3: "usb", 4: "rekordbox"}
-TRACK_TYPES = {0: "unknown", 1: "rekordbox", 2: "file", 5: "cd"}
+# Slot bytes follow the public CDJ status table (Sr at 0x29):
+#   0 empty, 1 CD, 2 SD, 3 USB, 4 rekordbox,
+#   6 Streaming Direct Play, 7 USB 2 (XDJ-AZ 4-deck), 9 Beatport LINK.
+# 5 and 8 are only documented as "possibly a streaming service" — not Apple
+# Music, TIDAL, or SoundCloud specifically — so they share the key "streaming".
+SLOTS = {
+    0: "empty",
+    1: "cd",
+    2: "sd",
+    3: "usb",
+    4: "rekordbox",
+    5: "streaming",
+    6: "direct_play",
+    7: "usb2",
+    8: "streaming",
+    9: "beatport",
+}
+TRACK_TYPES = {
+    0: "unknown",
+    1: "rekordbox",
+    2: "file",
+    5: "cd",
+    6: "streaming",
+}
+
+# How long a Channels On-Air packet from an XDJ-AZ still counts as Pro DJ Link.
+AZ_ON_AIR_WINDOW_S = 1.0
 STORAGE = {0: "loaded", 2: "stopping", 3: "unmounting", 4: "no_media"}
 
 PLAY_STATES = {
@@ -160,7 +188,9 @@ class Status:
     track_id: int = 0
     track_number: int = 0
     slot: str = ""
+    slot_raw: int = 0             # Sr byte; kept so 5 and 8 stay distinct
     track_type: str = ""
+    track_type_raw: int = 0       # Tr byte
     loaded_from: int = 0          # device number the track was loaded from
 
     play_state: str = ""
@@ -206,7 +236,73 @@ class Status:
         return self.track_id != 0
 
 
-def parse(data: bytes) -> Announce | Beat | AbsolutePosition | Status | None:
+@dataclass
+class ChannelsOnAir:
+    """Mixer (or XDJ-AZ in Pro DJ Link mode) reporting which channels are audible.
+
+    Sent to port 50001 with packet type 0x03. The name field is the same
+    20-byte slot as other Pro DJ Link packets.
+    """
+    name: str
+    device_number: int = 0
+
+
+def is_xdj_az(name: str) -> bool:
+    """True when a device-name field is an XDJ-AZ."""
+    if not isinstance(name, str):
+        return False
+    compact = "".join(ch for ch in name.lower() if ch.isalnum())
+    return compact == "xdjaz" or compact.startswith("xdjaz")
+
+
+def az_link_mode(seen_az: bool, last_on_air_at: float | None, now: float) -> str | None:
+    """``pro_dj_link`` if an XDJ-AZ sent Channels On-Air within the last second.
+
+    ``four_deck`` when an AZ is present but that packet has gone quiet.
+    ``None`` when no XDJ-AZ has been seen.
+    """
+    if not seen_az:
+        return None
+    if last_on_air_at is not None and (now - last_on_air_at) < AZ_ON_AIR_WINDOW_S:
+        return "pro_dj_link"
+    return "four_deck"
+
+
+def stream_service_label(slot: str, track_type: str = "") -> str:
+    """Visible name for a non-file source, or '' for a track on CD/SD/USB."""
+    slot = slot or ""
+    track_type = track_type or ""
+    if slot == "beatport":
+        return "Beatport"
+    if slot == "direct_play":
+        return "Streaming Direct Play"
+    if slot == "rekordbox":
+        return "rekordbox"
+    if slot == "streaming" or track_type == "streaming":
+        return "Streaming"
+    return ""
+
+
+def apply_source_label(meta: dict, slot: str, track_type: str = "") -> dict:
+    """Fill a blank title (then artist, then label) with the streaming source name."""
+    service = stream_service_label(slot, track_type)
+    if not service:
+        return meta
+    out = dict(meta)
+    out["service"] = service
+    title = str(out.get("title") or "").strip()
+    artist = str(out.get("artist") or "").strip()
+    label = str(out.get("label") or "").strip()
+    if not title:
+        out["title"] = service
+    elif title != service and not artist:
+        out["artist"] = service
+    elif title != service and artist != service and not label:
+        out["label"] = service
+    return out
+
+
+def parse(data: bytes) -> Announce | Beat | AbsolutePosition | Status | ChannelsOnAir | None:
     """Decode any Pro DJ Link packet; returns None if it is not one."""
     if len(data) < 0x24 or not data.startswith(MAGIC):
         return None
@@ -219,6 +315,8 @@ def parse(data: bytes) -> Announce | Beat | AbsolutePosition | Status | None:
         return _parse_absolute_position(data)
     if packet_type == TYPE_CDJ_STATUS:
         return _parse_status(data)
+    if packet_type == TYPE_CHANNELS_ON_AIR:
+        return _parse_channels_on_air(data)
     return None
 
 
@@ -278,8 +376,10 @@ def _parse_status(data: bytes) -> Status | None:
     s.firmware = _name(data, 0x7C, 4)
 
     s.loaded_from = data[0x28]
-    s.slot = SLOTS.get(data[0x29], "unknown")
-    s.track_type = TRACK_TYPES.get(data[0x2A], "unknown")
+    s.slot_raw = data[0x29]
+    s.slot = SLOTS.get(s.slot_raw, "unknown")
+    s.track_type_raw = data[0x2A]
+    s.track_type = TRACK_TYPES.get(s.track_type_raw, "unknown")
     s.track_id = struct.unpack_from(">I", data, 0x2C)[0]
     s.track_number = struct.unpack_from(">I", data, 0x30)[0]
 
@@ -306,6 +406,14 @@ def _parse_status(data: bytes) -> Status | None:
     s.beat_in_bar = data[0xA6]
     s.waveform_color, s.waveform_position = _parse_waveform_settings(data)
     return s
+
+
+def _parse_channels_on_air(data: bytes) -> ChannelsOnAir | None:
+    """Channels On-Air (type 0x03). Four-channel packets are 0x2d bytes; six-channel are longer."""
+    if len(data) < 0x2D:
+        return None
+    number = data[0x21] if len(data) > 0x21 else 0
+    return ChannelsOnAir(name=_name(data, 0x0B), device_number=number)
 
 
 def _parse_waveform_settings(data: bytes) -> tuple[str | None, str | None]:
