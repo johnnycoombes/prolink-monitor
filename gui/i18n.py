@@ -140,6 +140,15 @@ STRINGS = {
     "zoom_reset": "All",
     "zoom_reset_tip": "Clear per-deck zoom overrides (toolbar zoom applies to all again)",
     "wave": "Waveform",
+    "playhead": "Playhead",
+    "playhead_auto": "Auto",
+    "playhead_centre": "Centre",
+    "playhead_left": "Left",
+    "playhead_tip": (
+        "Where the scrolling waveform needle sits. Auto follows each player's "
+        "Waveform Current Position. If the player does not report it, XDJ-AZ "
+        "and Opus Quad fall back to the left; every other model stays centred."
+    ),
     "wave_rgb": "RGB",
     "wave_3band": "3-Band",
     "wave_blue": "Blue",

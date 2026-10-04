@@ -7,6 +7,8 @@ import os
 from copy import deepcopy
 from typing import Any
 
+from prolink.proto import normalize_playhead_mode
+
 
 DEFAULTS: dict[str, Any] = {
     "host": "",
@@ -22,6 +24,7 @@ DEFAULTS: dict[str, Any] = {
     "zoom_bars": 4,                # 4/4 bars shown in the detail waveform
     "zoom_bars_by_deck": {},        # optional per-deck overrides { "1": 8, ... }
     "waveform_style": "rgb",       # rgb | 3band | blue
+    "playhead_position": "auto",   # auto | centre | left — scrolling needle
     "auto_connect": True,
     "start_web_server": True,
     "window_width": 1360,
@@ -177,6 +180,7 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     out["zoom_bars_by_deck"] = clean_deck
     style = str(data.get("waveform_style") or "rgb").lower()
     out["waveform_style"] = style if style in ("rgb", "3band", "blue") else "rgb"
+    out["playhead_position"] = normalize_playhead_mode(data.get("playhead_position"))
     out["auto_connect"] = bool(data.get("auto_connect", True))
     out["start_web_server"] = bool(data.get("start_web_server", True))
     try:

@@ -379,6 +379,20 @@ class Monitor:
         return snap
 
     # -- state --------------------------------------------------------------
+    @staticmethod
+    def _waveform_report(status) -> dict:
+        """Player-reported waveform settings, or null when absent/unknown.
+
+        MagicMock-style stand-ins and unexpected strings stay null so a
+        missing field cannot leak into the SSE payload.
+        """
+        pos = getattr(status, "waveform_position", None)
+        color = getattr(status, "waveform_color", None)
+        return {
+            "waveform_position": pos if pos in ("centre", "left") else None,
+            "waveform_color": color if color in ("blue", "rgb", "3band") else None,
+        }
+
     def paint_state(self) -> dict:
         """Lightweight playhead snapshot for high-rate SSE / paint clients."""
         decks = []
@@ -403,6 +417,7 @@ class Monitor:
                 "sync": s.sync,
                 "on_air": s.on_air,
                 "position_source": d.position_source,
+                **self._waveform_report(s),
             })
         return {"t": time.time(), "paint": True, "decks": decks}
 
@@ -437,6 +452,7 @@ class Monitor:
                 "master": s.master,
                 "sync": s.sync,
                 "on_air": s.on_air,
+                **self._waveform_report(s),
             })
         # Enrich from cache only — never NFS on the hot path (ensure runs on track change).
         for snap in decks:
