@@ -143,6 +143,8 @@ header{
   border-left:1px solid var(--line);border-right:1px solid var(--line);
   transition:opacity .25s,filter .25s}
 .overview{height:26%;min-height:26px;position:relative;border-bottom:1px solid var(--line);background:#0b0d10}
+.phrases{height:16px;min-height:16px;position:relative;border-bottom:1px solid var(--line);background:#0a0c0f;display:none}
+.phrases.on{display:block}
 .detail{flex:1;position:relative;background:#080a0c}
 .scrub{
   position:absolute;left:8px;bottom:6px;z-index:2;pointer-events:none;
@@ -268,6 +270,10 @@ body.readonly #session .head::after{content:' · read-only'; color:var(--dimmest
     <div class="switch" id="wave-switch">
       <button data-w="rgb">RGB</button><button data-w="3band">3BAND</button><button data-w="blue">BLUE</button>
     </div>
+    <span class="switch-label">phrases</span>
+    <div class="switch" id="phrase-switch">
+      <button data-ph="1">ON</button><button data-ph="0">OFF</button>
+    </div>
     <span class="switch-label" data-i18n="needle">needle</span>
     <div class="switch" id="needle-switch" title="Scrolling playhead. Auto follows each player's Waveform Current Position.">
       <button data-p="auto" title="Auto — follow the player">AUTO</button><button data-p="centre" title="Centre">CEN</button><button data-p="left" title="Left (quarter)">LEFT</button>
@@ -391,8 +397,28 @@ function barsToSeconds(bars, bpm) {
 }
 
 const decks = new Map();          // number -> deck view
-const tracks = new Map();         // id -> {meta, detail, overview}
+const tracks = new Map();         // cacheId -> {meta, detail, overview, track_id}
 const pending = new Set();
+let showPhrases = localStorage.getItem('showPhrases') !== '0';
+
+function deckCacheId(deck) {
+  if (deck && deck.track_key) return String(deck.track_key);
+  const id = deck && deck.track_id;
+  return id ? `id:${id}` : '';
+}
+
+function trackApiQuery(deck) {
+  const id = deck.track_id || 0;
+  if (!id) return '';
+  const q = new URLSearchParams();
+  q.set('deck', String(deck.number));
+  if (deck.track_key) q.set('key', deck.track_key);
+  return `?${q.toString()}`;
+}
+
+function trackPack(deck) {
+  return tracks.get(deckCacheId(deck));
+}
 let last = null, receivedAt = 0;
 let maxDecks = (+localStorage.getItem('maxDecks') || 4) >= 4 ? 4 : 2;
 
@@ -443,6 +469,17 @@ function setPlayheadMode(mode) {
   for (const d of decks.values()) {
     d.detailKey = null;
     d.detailOff = null;
+  }
+}
+
+function setShowPhrases(on, persist = true) {
+  showPhrases = !!on;
+  if (persist) localStorage.setItem('showPhrases', showPhrases ? '1' : '0');
+  document.querySelectorAll('#phrase-switch button').forEach(b => {
+    b.classList.toggle('on', (b.dataset.ph === '1') === showPhrases);
+  });
+  for (const d of decks.values()) {
+    d.phrasesWrap.classList.toggle('on', showPhrases);
   }
 }
 
@@ -680,15 +717,19 @@ function fillWave(ctx, x, mid, amp, src, wave, span, colW) {
   fillMirrored(ctx, x, mid, drawAmp, colW);
 }
 
-async function loadTrack(id) {
-  if (tracks.has(id) || pending.has(id)) return;
-  pending.add(id);
+async function loadTrack(deck) {
+  const id = deck.track_id;
+  const cacheId = deckCacheId(deck);
+  if (!id || !cacheId || tracks.has(cacheId) || pending.has(cacheId)) return;
+  pending.add(cacheId);
+  const qs = trackApiQuery(deck);
   try {
     const [meta, buf] = await Promise.all([
-      fetch(`/api/track/${id}`).then(r => r.ok ? r.json() : null),
-      fetch(`/api/waveform/${id}`).then(r => r.ok ? r.arrayBuffer() : null)
+      fetch(`/api/track/${id}${qs}`).then(r => r.ok ? r.json() : null),
+      fetch(`/api/waveform/${id}${qs}`).then(r => r.ok ? r.arrayBuffer() : null)
     ]);
     if (!meta) return;
+    if (deck.track_key && meta.track_key && meta.track_key !== deck.track_key) return;
     let detail = null, overview = null;
     if (buf) {
       detail = readWaveform(buf, 0);
@@ -701,8 +742,8 @@ async function loadTrack(id) {
       attachBlue(detail, blue1);
       if (blue1) attachBlue(overview, readBlue(buf, blue1.end));
     }
-    tracks.set(id, {meta, detail, overview});
-  } finally { pending.delete(id); }
+    tracks.set(cacheId, {meta, detail, overview, track_id: id});
+  } finally { pending.delete(cacheId); }
 }
 
 /* ------------------------------------------------------------ deck creation */
@@ -722,6 +763,7 @@ function createDeck(n) {
     </div>
     <div class="canvases">
       <div class="overview"><canvas data-cv-overview></canvas></div>
+      <div class="phrases" data-phrases><canvas data-cv-phrases></canvas></div>
       <div class="detail"><canvas data-cv-detail></canvas><div class="no-wave" data-nowave></div></div>
       <div class="scrub" data-scrub></div>
     </div>
@@ -758,10 +800,12 @@ function createDeck(n) {
     loopBadge: q('[data-loop]'), loopLen: q('[data-loop-len]'),
     barDots: [...q('[data-bar]').children],
     cvOverview: q('[data-cv-overview]'), cvDetail: q('[data-cv-detail]'),
-    trackId: 0, metaId: 0, artId: 0, lastBar: 0
+    phrasesWrap: q('[data-phrases]'), cvPhrases: q('[data-cv-phrases]'),
+    trackId: 0, trackKey: '', metaKey: '', artKey: '', lastBar: 0
   };
   d.ctxOverview = d.cvOverview.getContext('2d');
   d.ctxDetail = d.cvDetail.getContext('2d');
+  d.ctxPhrases = d.cvPhrases.getContext('2d');
   d.scrub = q('[data-scrub]');
   d.cueMs = null;
   d.posMs = 0;
@@ -772,7 +816,7 @@ function createDeck(n) {
   function msAt(cv, ev, kind) {
     const rect = cv.getBoundingClientRect();
     const x = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
-    const track = tracks.get(d.trackId);
+    const track = tracks.get(d.trackKey || (d.trackId ? `id:${d.trackId}` : ''));
     const dur = track && track.meta ? (track.meta.duration_ms || 0) : 0;
     if (kind === 'overview') {
       if (!dur) return null;
@@ -837,36 +881,51 @@ function sortDecks() {
 
 /* --------------------------------------------------------------------- info */
 function drawInfo(d, s) {
-  const track = tracks.get(s.track_id);
+  const cacheId = deckCacheId(s);
+  const track = cacheId ? tracks.get(cacheId) : null;
   const m = track && track.meta;
+  const keyOk = !m || !s.track_key || m.track_key === s.track_key;
   d.el.classList.toggle('empty', !s.track_id);
   d.el.classList.toggle('onair', !!s.on_air);
   d.el.classList.toggle('offair', !!s.track_id && !s.on_air);
 
-  // repaint on track change, and again once its metadata arrives
-  if (d.trackId !== s.track_id || (m && d.metaId !== s.track_id)) {
+  const trackChanged = d.trackId !== s.track_id || d.trackKey !== (s.track_key || '');
+  if (trackChanged) {
     d.trackId = s.track_id;
-    if (m) d.metaId = s.track_id;
-    d.title.textContent = m ? (m.title || '—') : (s.track_id ? T('loading') : '—');
-    d.artist.textContent = m ? m.artist : '';
-    d.meta.textContent = m
-      ? [m.album, m.genre, m.label, m.year || ''].filter(Boolean).join(' · ')
-      : (s.track_id ? '' : T('noTrackLoaded'));
-    d.key.textContent = m ? m.key : '';
-    d.noWave.textContent = T('noTrack');
-    d.noWave.style.display = s.track_id ? 'none' : 'flex';
-    if (s.track_id && m && m.has_artwork) {
-      if (d.artId !== s.track_id) {
-        d.artId = s.track_id;
-        const img = new Image();
-        img.onload = () => { d.art.replaceWith(img); img.className = 'art'; d.art = img; };
-        img.src = `/api/artwork/${s.track_id}`;
-      }
-    } else if (d.art.tagName === 'IMG') {
+    d.trackKey = s.track_key || '';
+    d.metaKey = '';
+    d.artKey = '';
+    d.title.textContent = s.track_id ? T('loading') : '—';
+    d.artist.textContent = '';
+    d.meta.textContent = s.track_id ? '' : T('noTrackLoaded');
+    d.key.textContent = '';
+    if (d.art.tagName === 'IMG') {
       const blank = document.createElement('div');
       blank.className = 'art blank'; blank.innerHTML = '&#9834;';
-      d.art.replaceWith(blank); d.art = blank; d.artId = 0;
+      d.art.replaceWith(blank); d.art = blank;
     }
+  }
+  if (m && keyOk && d.metaKey !== cacheId) {
+    d.metaKey = cacheId;
+    d.title.textContent = m.title || '—';
+    d.artist.textContent = m.artist || '';
+    d.meta.textContent = [m.album, m.genre, m.label, m.year || ''].filter(Boolean).join(' · ');
+    d.key.textContent = m.key || '';
+  }
+  d.noWave.textContent = T('noTrack');
+  d.noWave.style.display = s.track_id ? 'none' : 'flex';
+  if (s.track_id && m && keyOk && m.has_artwork) {
+    const artToken = `${s.track_id}:${s.track_key || m.track_key || ''}`;
+    if (d.artKey !== artToken) {
+      d.artKey = artToken;
+      const img = new Image();
+      img.onload = () => { d.art.replaceWith(img); img.className = 'art'; d.art = img; };
+      img.src = `/api/artwork/${s.track_id}${trackApiQuery(s)}`;
+    }
+  } else if (s.track_id && trackChanged && d.art.tagName === 'IMG') {
+    const blank = document.createElement('div');
+    blank.className = 'art blank'; blank.innerHTML = '&#9834;';
+    d.art.replaceWith(blank); d.art = blank;
   }
 
   const tags = [];
@@ -908,6 +967,60 @@ function drawLoopRegion(ctx, x0, y0, w, h, r) {
   ctx.fillStyle = 'rgba(46, 232, 154, 0.85)';
   ctx.fillRect(x0, y0, Math.max(1, Math.round(r)), h);
   ctx.fillRect(x0 + w - Math.max(1, Math.round(r)), y0, Math.max(1, Math.round(r)), h);
+}
+
+function phraseColor(label) {
+  const t = String(label || '').toLowerCase();
+  if (t.startsWith('intro')) return 'rgba(120,180,255,.92)';
+  if (t.startsWith('verse')) return 'rgba(160,220,120,.92)';
+  if (t.startsWith('bridge')) return 'rgba(200,160,255,.92)';
+  if (t.startsWith('chorus') || t.startsWith('drop')) return 'rgba(255,120,90,.92)';
+  if (t.startsWith('up')) return 'rgba(255,190,80,.92)';
+  if (t.startsWith('outro')) return 'rgba(160,160,180,.92)';
+  return 'rgba(200,200,210,.88)';
+}
+
+function drawPhrases(d, track, pos) {
+  const wrap = d.phrasesWrap;
+  const cv = d.cvPhrases;
+  const ctx = d.ctxPhrases;
+  const on = showPhrases && track && track.meta && (track.meta.phrases || []).length;
+  wrap.classList.toggle('on', !!on);
+  if (!on) { ctx.clearRect(0, 0, cv.width, cv.height); return; }
+  fitCanvas(cv);
+  const r = window.devicePixelRatio || 1;
+  const W = cv.width, H = cv.height;
+  const cssW = Math.max(1, Math.round(cv.clientWidth));
+  ctx.clearRect(0, 0, W, H);
+  const dur = track.meta.duration_ms || (track.overview && track.overview.dur) || 1;
+  const beats = track.meta.beats || [];
+  const phrases = track.meta.phrases || [];
+  const starts = [];
+  for (const ph of phrases) {
+    const bi = (ph.beat | 0) - 1;
+    if (bi < 0 || bi >= beats.length) continue;
+    starts.push({t: beats[bi][0], ph});
+  }
+  starts.sort((a, b) => a.t - b.t);
+  for (let i = 0; i < starts.length; i++) {
+    const start = starts[i].t;
+    const end = i + 1 < starts.length ? starts[i + 1].t : dur;
+    const x1 = (start / dur) * cssW * r;
+    const x2 = (end / dur) * cssW * r;
+    ctx.fillStyle = phraseColor(starts[i].ph.text);
+    ctx.fillRect(x1, 0, Math.max(1, x2 - x1), H);
+    const label = starts[i].ph.text || '';
+    if (label && x2 - x1 > 36 * r) {
+      ctx.font = `700 ${7 * r}px Chakra Petch, monospace`;
+      ctx.fillStyle = 'rgba(244,246,251,.95)';
+      ctx.fillText(label, x1 + 4 * r, H - 3 * r);
+    }
+  }
+  const px = Math.max(0, Math.min(W, (pos / dur) * W));
+  if (px < W) {
+    ctx.fillStyle = 'rgba(8,10,12,.35)';
+    ctx.fillRect(px, 0, W - px, H);
+  }
 }
 
 function drawOverview(d, track, pos, looping) {
@@ -1100,36 +1213,6 @@ function drawDetail(d, track, pos, playing, looping, anchor) {
     drawLoopRegion(ctx, x0, 0, Math.max(1, x1 - x0), H, r);
   }
 
-  // Phrase markers (PSSI) — live overlay so they stay sharp while scrolling.
-  const phrases = (track.meta && track.meta.phrases) || [];
-  const beats = (track.meta && track.meta.beats) || [];
-  if (phrases.length && beats.length) {
-    for (const ph of phrases) {
-      const bi = (ph.beat | 0) - 1;
-      if (bi < 0 || bi >= beats.length) continue;
-      const t = beats[bi][0];
-      const x = ((t / 1000) * cps - start) * pxPerCol * r;
-      if (x < -40 * r || x > W + 40 * r) continue;
-      const label = (ph.text || '').toLowerCase();
-      let col = 'rgba(200,200,210,.85)';
-      if (label.startsWith('intro')) col = 'rgba(120,180,255,.9)';
-      else if (label.startsWith('verse')) col = 'rgba(160,220,120,.9)';
-      else if (label.startsWith('bridge')) col = 'rgba(200,160,255,.9)';
-      else if (label.startsWith('chorus') || label.startsWith('drop')) col = 'rgba(255,120,90,.9)';
-      else if (label.startsWith('up')) col = 'rgba(255,190,80,.9)';
-      else if (label.startsWith('outro')) col = 'rgba(160,160,180,.9)';
-      ctx.fillStyle = col;
-      ctx.fillRect(x, 0, Math.max(1, r), H);
-      ctx.fillRect(x - r, 0, 3 * r, 3 * r);
-      ctx.fillRect(x - r, H - 3 * r, 3 * r, 3 * r);
-      if (ph.text) {
-        ctx.font = `700 ${8 * r}px Chakra Petch, monospace`;
-        ctx.textAlign = 'left';
-        ctx.fillText(ph.text, x + 3 * r, H - 4 * r);
-      }
-    }
-  }
-
   // Needle stays put (centre, or the left quarter). The wave scrolls under it.
   const px = W * needle;
   ctx.fillStyle = getComputedStyle(d.el).getPropertyValue('--c').trim();
@@ -1154,8 +1237,8 @@ function render() {
     }
 
     // extrapolate the playhead from the last state we received
-    const track = tracks.get(s.track_id);
-    if (s.track_id && !track) loadTrack(s.track_id);
+    const track = trackPack(s);
+    if (s.track_id && !track) loadTrack(s);
     const dur = durationMs(s, track);
     let pos = s.position_ms + (s.playing ? dt * 1000 * s.speed : 0);
     if (dur) pos = Math.min(pos, dur);
@@ -1188,6 +1271,7 @@ function render() {
     d.lastBar = s.bar;
 
     drawOverview(d, track, pos, looping);
+    drawPhrases(d, track, pos);
     drawDetail(d, track, pos, s.playing, looping, playheadAnchor(s));
   }
 }
@@ -1212,6 +1296,9 @@ function applyState(e) {
     return;
   }
   last = e; receivedAt = performance.now();
+  if (e.display && typeof e.display.show_phrases === 'boolean') {
+    setShowPhrases(e.display.show_phrases, false);
+  }
 
   const modeName = e.mode_kind === 'vcdj' ? T('modeVcdj')
                  : e.mode_kind === 'sniffer' ? T('modeSniffer') : (e.mode || '—');
@@ -1304,6 +1391,8 @@ document.querySelectorAll('#zoom-switch button').forEach(
   b => b.addEventListener('click', () => setZoom(+b.dataset.b)));
 document.querySelectorAll('#wave-switch button').forEach(
   b => b.addEventListener('click', () => setWaveStyle(b.dataset.w)));
+document.querySelectorAll('#phrase-switch button').forEach(
+  b => b.addEventListener('click', () => setShowPhrases(b.dataset.ph === '1')));
 document.querySelectorAll('#needle-switch button').forEach(
   b => b.addEventListener('click', () => setPlayheadMode(b.dataset.p)));
 document.getElementById('rec-btn').addEventListener('click', toggleSession);
@@ -1316,6 +1405,7 @@ document.addEventListener('keydown', ev => {
 setDeckCount(maxDecks);
 setZoom(zoomBars);
 setWaveStyle(waveStyle);
+setShowPhrases(showPhrases, false);
 setPlayheadMode(playheadMode);
 applyStrings();
 connect();

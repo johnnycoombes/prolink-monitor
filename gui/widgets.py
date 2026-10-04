@@ -99,24 +99,54 @@ def phrase_time_ms(phrase: dict, meta: dict | None) -> float | None:
     return float(beats[beat - 1][0])
 
 
-def _draw_phrase_marker(p: QPainter, x: int, y0: int, h: int, phrase: dict,
-                        *, labeled: bool = True) -> None:
-    color = _phrase_color(phrase)
-    # Dashed-feel: short ticks top + bottom with a thin centre line.
-    p.fillRect(x, y0, 1, h, QColor(color.red(), color.green(), color.blue(), 160))
-    p.fillRect(x - 1, y0, 3, 3, color)
-    p.fillRect(x - 1, y0 + h - 3, 3, 3, color)
-    if not labeled:
+def _phrase_segments(meta: dict | None, duration_ms: float) -> list[tuple[float, float, dict]]:
+    """Return [(start_ms, end_ms, phrase), ...] covering the track timeline."""
+    phrases = list((meta or {}).get("phrases") or [])
+    if not phrases or duration_ms <= 0:
+        return []
+    starts: list[tuple[float, dict]] = []
+    for phrase in phrases:
+        t = phrase_time_ms(phrase, meta)
+        if t is None:
+            continue
+        starts.append((max(0.0, float(t)), phrase))
+    if not starts:
+        return []
+    starts.sort(key=lambda row: row[0])
+    out: list[tuple[float, float, dict]] = []
+    for i, (start, phrase) in enumerate(starts):
+        end = starts[i + 1][0] if i + 1 < len(starts) else duration_ms
+        if end <= start:
+            continue
+        out.append((start, min(duration_ms, end), phrase))
+    return out
+
+
+def _draw_phrase_strip(p: QPainter, x0: int, y0: int, w: int, h: int,
+                       meta: dict | None, duration_ms: float) -> None:
+    """Coloured phrase band (Rekordbox-style), drawn beneath the overview."""
+    segments = _phrase_segments(meta, duration_ms)
+    if not segments or w <= 0 or h <= 0:
+        p.fillRect(x0, y0, w, h, QColor("#0a0c0f"))
         return
-    label = str(phrase.get("text") or "")
-    if not label:
-        return
+    dur = max(1.0, duration_ms)
     font = QFont("DejaVu Sans Mono", 7)
     font.setBold(True)
     p.setFont(font)
-    p.setPen(color)
-    # Sit label near the bottom so it doesn't collide with hot-cue badges.
-    p.drawText(x + 3, y0 + h - 4, label)
+    for start, end, phrase in segments:
+        x1 = x0 + int((start / dur) * w)
+        x2 = x0 + int((end / dur) * w)
+        if x2 <= x1:
+            x2 = x1 + 1
+        color = _phrase_color(phrase)
+        fill = QColor(color.red(), color.green(), color.blue(), 200)
+        p.fillRect(x1, y0, x2 - x1, h, fill)
+        label = str(phrase.get("text") or "")
+        if label and x2 - x1 > 28:
+            p.setPen(QColor(8, 10, 12, 220))
+            p.drawText(x1 + 4, y0, x2 - x1 - 6, h, Qt.AlignVCenter, label)
+            p.setPen(QColor(244, 246, 251))
+            p.drawText(x1 + 3, y0 - 1, x2 - x1 - 6, h, Qt.AlignVCenter, label)
 
 
 def _draw_cue_marker(p: QPainter, x: int, y0: int, h: int, cue: dict,
@@ -411,6 +441,15 @@ class WaveformView(QWidget):
         self._hover_x: int | None = None
         self._hover_ms: float | None = None
         self._overview_h = 36
+        self._phrase_h = 0
+        self._show_phrases = True
+
+    def set_show_phrases(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if enabled == self._show_phrases:
+            return
+        self._show_phrases = enabled
+        self.update()
 
     def _visible_seconds(self) -> float:
         return bars_to_seconds(self._zoom_bars, self._bpm)
@@ -560,15 +599,30 @@ class WaveformView(QWidget):
         w, h = self.width(), self.height()
         overview_h = max(28, min(48, int(h * 0.14)))
         self._overview_h = overview_h
-        detail_h = max(1, h - overview_h - 1)
+        dur = self._duration_ms()
+        phrase_segments = _phrase_segments(self._meta, dur) if self._show_phrases else []
+        phrase_h = 16 if phrase_segments else 0
+        self._phrase_h = phrase_h
+        gap = 1
+        y_detail = overview_h + gap + phrase_h + (gap if phrase_h else 0)
+        detail_h = max(1, h - y_detail)
 
         p.fillRect(0, 0, w, overview_h, QColor("#0b0d10"))
-        p.fillRect(0, overview_h + 1, w, detail_h, QColor("#080a0c"))
+        if phrase_h:
+            p.fillRect(0, overview_h + gap, w, phrase_h, QColor("#0a0c0f"))
+        p.fillRect(0, y_detail, w, detail_h, QColor("#080a0c"))
         p.setPen(QColor(COLORS["line"]))
         p.drawLine(0, overview_h, w, overview_h)
+        if phrase_h:
+            p.drawLine(0, overview_h + gap + phrase_h, w, overview_h + gap + phrase_h)
 
         self._blit_overview(p, 0, 0, w, overview_h)
-        self._blit_detail(p, 0, overview_h + 1, w, detail_h)
+        if phrase_h:
+            _draw_phrase_strip(p, 0, overview_h + gap, w, phrase_h, self._meta, dur)
+            px = max(0, min(w, int((self._pos_ms / max(1, dur)) * w)))
+            if px < w:
+                p.fillRect(px, overview_h + gap, w - px, phrase_h, QColor(8, 10, 12, 120))
+        self._blit_detail(p, 0, y_detail, w, detail_h)
 
         # Hover scrub line + time badge.
         if self._hover_x is not None and self._hover_ms is not None:
@@ -611,7 +665,6 @@ class WaveformView(QWidget):
             p.fillRect(x0 + max(lx0, lx1 - 2), y0, 2, h, QColor(46, 232, 154, 220))
         # Cue markers drawn live so they appear as soon as meta arrives.
         self._draw_overview_cues(p, x0, y0, w, h)
-        self._draw_overview_phrases(p, x0, y0, w, h)
         px = max(0, min(w, int((self._pos_ms / max(1, dur)) * w)))
         if px < w:
             p.fillRect(x0 + px, y0, w - px, h, QColor(8, 10, 12, 150))
@@ -639,18 +692,6 @@ class WaveformView(QWidget):
         for cue in (self._meta or {}).get("cues") or []:
             cx = x0 + int((cue.get("t", 0) / max(1, dur)) * w)
             _draw_cue_marker(p, cx, y0, h, cue, labeled=True)
-
-    def _draw_overview_phrases(self, p: QPainter, x0, y0, w, h) -> None:
-        ov = self._overview
-        if not ov or not ov["n"]:
-            return
-        dur = (self._meta or {}).get("duration_ms") or ov.get("dur") or 1
-        for phrase in (self._meta or {}).get("phrases") or []:
-            t = phrase_time_ms(phrase, self._meta)
-            if t is None:
-                continue
-            cx = x0 + int((t / max(1, dur)) * w)
-            _draw_phrase_marker(p, cx, y0, h, phrase, labeled=False)
 
     def _draw_overview_wave(self, p: QPainter, x0, y0, w, h) -> None:
         ov = self._overview
@@ -701,14 +742,6 @@ class WaveformView(QWidget):
                 if x < -20 or x > w + 20:
                     continue
                 _draw_cue_marker(p, x0 + x, y0, h, cue, labeled=True)
-            for phrase in (self._meta or {}).get("phrases") or []:
-                t = phrase_time_ms(phrase, self._meta)
-                if t is None:
-                    continue
-                x = int(((t / 1000.0) * cps - start) * px_per_col)
-                if x < -40 or x > w + 40:
-                    continue
-                _draw_phrase_marker(p, x0 + x, y0, h, phrase, labeled=True)
 
         # Needle stays put; the wave scrolls under it. Centre is the middle,
         # Left is the left quarter (PLAYHEAD_LEFT_FRACTION).
@@ -846,11 +879,14 @@ class DeckCard(QFrame):
         self._i18n = i18n
         self._color = DECK_COLORS.get(number, COLORS["accent"])
         self._track_id = 0
+        self._track_key = ""
         self._meta = None
         self._detail = None
         self._overview = None
         self._art_id = 0
+        self._art_key = ""
         self._wave_track_id = 0
+        self._wave_track_key = ""
         self._last_offair: bool | None = None
         self._last_tags = ""
         self._elements = deck_elements_from()
@@ -1136,6 +1172,9 @@ class DeckCard(QFrame):
     def set_wave_style(self, style: str) -> None:
         self.wave.set_style(style)
 
+    def set_show_phrases(self, enabled: bool) -> None:
+        self.wave.set_show_phrases(enabled)
+
     def set_playhead_mode(self, mode: str) -> None:
         """User override (auto / centre / left). Applies immediately."""
         self._playhead_mode = mode or "auto"
@@ -1151,11 +1190,15 @@ class DeckCard(QFrame):
         self.wave.set_playhead_position(position)
 
     def set_track_data(self, meta: dict | None, detail, overview, art: bytes | None) -> None:
+        if meta and self._track_key and meta.get("track_key") != self._track_key:
+            return
         self._meta = meta
         self._detail = detail
         self._overview = overview
+        token = (meta or {}).get("track_key") or ""
         if detail is not None or overview is not None:
             self._wave_track_id = (meta or {}).get("id") or self._track_id
+            self._wave_track_key = token
         self.wave.set_track(detail, overview, meta)
         if meta:
             self.title.setText(meta.get("title") or "—")
@@ -1164,7 +1207,7 @@ class DeckCard(QFrame):
                     str(meta.get("year") or "") or None]
             self.meta_line.setText(" · ".join(b for b in bits if b))
             self.key.setText(meta.get("key") or "")
-        if art and self._art_id != (meta or {}).get("id"):
+        if art and self._art_key != token:
             img = QImage.fromData(art)
             if not img.isNull():
                 pix = QPixmap.fromImage(img).scaled(
@@ -1172,10 +1215,14 @@ class DeckCard(QFrame):
                 self.art.setPixmap(pix)
                 self.art.setText("")
                 self._art_id = (meta or {}).get("id", 0)
+                self._art_key = token
 
-    def needs_waveform(self, track_id: int) -> bool:
+    def needs_waveform(self, track_id: int, track_key: str = "") -> bool:
+        key = track_key or ""
         return bool(track_id) and (
-            self._wave_track_id != track_id or self._detail is None
+            self._wave_track_id != track_id
+            or self._wave_track_key != key
+            or self._detail is None
         )
 
     def advance_playhead(self, pos_ms: float, playing: bool, duration_ms: float = 0,
@@ -1245,13 +1292,17 @@ class DeckCard(QFrame):
 
     def update_deck(self, deck: dict, pos_ms: float) -> None:
         tid = deck.get("track_id") or 0
-        if tid != self._track_id:
+        tkey = deck.get("track_key") or ""
+        if tid != self._track_id or tkey != self._track_key:
             self._track_id = tid
+            self._track_key = tkey
             self._meta = None
             self._detail = None
             self._overview = None
             self._wave_track_id = 0
+            self._wave_track_key = ""
             self._art_id = 0
+            self._art_key = ""
             self._last_offair = None
             self._last_tags = ""
             if not tid:

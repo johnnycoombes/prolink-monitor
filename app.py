@@ -11,6 +11,7 @@ Typical use:
 from __future__ import annotations
 
 import argparse
+from typing import Any
 import json
 import os
 import struct
@@ -28,6 +29,7 @@ from prolink.library import Library                       # noqa: E402
 from prolink import onelibrary                            # noqa: E402
 from prolink.mixstatus import MixStatus, MixStatusConfig  # noqa: E402
 from prolink.session import SessionRecorder               # noqa: E402
+from prolink.track_key import keys_match, track_cache_key, track_key_token  # noqa: E402
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
@@ -44,13 +46,12 @@ class Monitor:
         self.engine = link.ProLink(source)
         self.library = Library(cache_dir)
         self.engine.on_track_change = self._on_track_change
-        # Keyed by (host, export, pdb fingerprint, track_id) so a stick swap
-        # that reuses player track IDs cannot serve the previous USB's waves.
+        # Keyed by device + export + PDB fingerprint + slot + track_id.
         self._waveforms: dict[tuple, bytes] = {}
         self._meta: dict[tuple, dict] = {}
-        # which player each track was read from: with separate CDJs the track
-        # loaded on one deck often lives on another deck's USB drive
-        self._track_host: dict[int, str] = {}
+        # Latest resolved medium for each deck (see track_cache_key).
+        self._deck_keys: dict[int, tuple] = {}
+        self.show_phrases = True
         self._lock = threading.RLock()
         self.mixstatus = MixStatus(MixStatusConfig())
         self.session = SessionRecorder()
@@ -58,9 +59,33 @@ class Monitor:
         self._library_cache_key: tuple | None = None
         self._library_cache: tuple[dict | None, str | None, dict | None] = (None, None, None)
 
-    def _cache_key(self, host: str, media, track_id: int) -> tuple:
-        fp = getattr(media, "_pdb_fingerprint", None) or (0, 0)
-        return (host, getattr(media, "export", "") or "", fp, track_id)
+    def _cache_key(self, host: str, media, track_id: int, slot: str = "") -> tuple:
+        fp = getattr(media, "_pdb_fingerprint", None)
+        return track_cache_key(
+            host,
+            getattr(media, "export", "") or "",
+            fp,
+            slot,
+            track_id,
+        )
+
+    def _resolve_key(self, track_id: int, deck: int | None = None) -> tuple | None:
+        """Pick the cache key for a loaded track, preferring the deck binding."""
+        deck_keys = getattr(self, "_deck_keys", {})
+        if deck is not None:
+            bound = deck_keys.get(int(deck))
+            if keys_match(bound, track_id):
+                return bound
+        if not track_id:
+            return None
+        with self._lock:
+            for key in deck_keys.values():
+                if keys_match(key, track_id):
+                    return key
+        host, media = self._media_for_legacy(track_id)
+        if not host or media is None:
+            return None
+        return self._cache_key(host, media, track_id)
     def start(self) -> None:
         self.engine.start()
         threading.Thread(target=self._preload, daemon=True).start()
@@ -106,6 +131,8 @@ class Monitor:
     def _on_track_change(self, deck: link.Deck, track_id: int) -> None:
         """A track was loaded: fetch its beat grid for the playhead and its waveform."""
         if not track_id:
+            with self._lock:
+                self._deck_keys.pop(deck.number, None)
             return
         status = deck.status
         if status is not None and status.slot == "rekordbox":
@@ -119,8 +146,10 @@ class Monitor:
             media = self.library.get(host)
         if media is None:
             return
+        slot = (status.slot if status else "") or ""
+        key = self._cache_key(host, media, track_id, slot)
         with self._lock:
-            self._track_host[track_id] = host
+            self._deck_keys[deck.number] = key
         try:
             a = media.analysis(track_id)
         except Exception:
@@ -131,16 +160,17 @@ class Monitor:
         # another track's grid to the current one.
         current = deck.status
         if current is None or current.track_id != track_id:
-            self._build(host, media, track_id, a, media.track(track_id))
+            self._build(host, media, track_id, a, media.track(track_id), slot=slot)
             return
         t = media.track(track_id)
         length = a.duration_ms or ((t.duration * 1000) if t else 0)
         deck.set_beat_grid([b.time for b in a.beats], length)
-        self._build(host, media, track_id, a, t)
+        self._build(host, media, track_id, a, t, slot=slot)
 
-    def _build(self, host: str, media, track_id: int, a: anlz.Analysis, t) -> None:
+    def _build(self, host: str, media, track_id: int, a: anlz.Analysis, t,
+               *, slot: str = "") -> None:
         """Prepare and cache the binary waveform and metadata of a track."""
-        key = self._cache_key(host, media, track_id)
+        key = self._cache_key(host, media, track_id, slot)
         with self._lock:
             if key in self._waveforms:
                 return
@@ -169,8 +199,10 @@ class Monitor:
                    + _pack_blue(blue_h, blue_rgb, cps, length)
                    + _pack_blue(ov_blue_h, ov_blue_rgb, 0.0, length))
 
+        token = track_key_token(key)
         meta = {
             "id": track_id,
+            "track_key": token,
             "title": (t.title if t else "") or "",
             "artist": t.artist if t else "",
             "album": t.album if t else "",
@@ -201,48 +233,73 @@ class Monitor:
                 self._waveforms.pop(oldest, None)
                 self._meta.pop(oldest, None)
 
-    def _media_for(self, track_id: int):
-        """The medium a track lives on, from whichever player supplied it."""
+    def _media_for_legacy(self, track_id: int):
+        """Best-effort medium lookup when no deck binding exists (library API)."""
         with self._lock:
-            host = self._track_host.get(track_id) or self.host
+            for key in self._deck_keys.values():
+                if keys_match(key, track_id):
+                    host = key[0]
+                    media = self.library.get(host)
+                    if media is not None:
+                        return host, media
+        host = self.host
         return (host, self.library.get(host)) if host else (None, None)
 
-    def ensure(self, track_id: int) -> None:
+    def _media_for_key(self, key: tuple) -> tuple[str | None, Any]:
+        host = key[0] if key else None
+        if not host:
+            return None, None
+        return host, self.library.get(host)
+
+    def ensure(self, track_id: int, *, deck: int | None = None) -> None:
         """Load a track on demand when it has not been prepared yet."""
-        host, media = self._media_for(track_id)
-        if not host or media is None:
+        key = self._resolve_key(track_id, deck)
+        if key is None:
             return
-        key = self._cache_key(host, media, track_id)
         with self._lock:
             if key in self._meta:
                 return
+        host, media = self._media_for_key(key)
+        if not host or media is None:
+            return
         a = media.analysis(track_id)
         if a is not None:
-            self._build(host, media, track_id, a, media.track(track_id))
+            slot = str(key[3]) if len(key) > 3 else ""
+            self._build(host, media, track_id, a, media.track(track_id), slot=slot)
 
-    def waveform(self, track_id: int) -> bytes | None:
-        self.ensure(track_id)
-        host, media = self._media_for(track_id)
-        if not host or media is None:
+    def waveform(self, track_id: int, *, deck: int | None = None) -> bytes | None:
+        self.ensure(track_id, deck=deck)
+        key = self._resolve_key(track_id, deck)
+        if key is None:
             return None
-        key = self._cache_key(host, media, track_id)
         with self._lock:
             return self._waveforms.get(key)
 
-    def meta(self, track_id: int, *, load: bool = True) -> dict | None:
+    def meta(self, track_id: int, *, deck: int | None = None, load: bool = True) -> dict | None:
         """Return cached track metadata. With load=True, may hit NFS once."""
         if load:
-            self.ensure(track_id)
-        host, media = self._media_for(track_id)
-        if not host or media is None:
+            self.ensure(track_id, deck=deck)
+        key = self._resolve_key(track_id, deck)
+        if key is None:
             return None
-        key = self._cache_key(host, media, track_id)
         with self._lock:
             return self._meta.get(key)
 
-    def artwork(self, track_id: int) -> bytes | None:
-        _host, media = self._media_for(track_id)
+    def artwork(self, track_id: int, *, deck: int | None = None) -> bytes | None:
+        key = self._resolve_key(track_id, deck)
+        if key is None:
+            return None
+        _host, media = self._media_for_key(key)
         return media.artwork(track_id) if media else None
+
+    def deck_track_key(self, deck_number: int, track_id: int) -> str:
+        if not track_id:
+            return ""
+        deck_keys = getattr(self, "_deck_keys", {})
+        bound = deck_keys.get(int(deck_number))
+        if keys_match(bound, track_id):
+            return track_key_token(bound)
+        return ""
 
     def browse_tracks(self, query: str = "", *, limit: int = 100,
                       offset: int = 0) -> dict:
@@ -323,10 +380,11 @@ class Monitor:
             if s is None or not s.track_id or s.track_id in seen:
                 continue
             seen.add(s.track_id)
-            meta = self.meta(s.track_id) or {}
+            meta = self.meta(s.track_id, deck=d.number) or {}
             rows.append({
                 "id": s.track_id,
                 "deck": d.number,
+                "track_key": meta.get("track_key") or self.deck_track_key(d.number, s.track_id),
                 "title": meta.get("title") or "",
                 "artist": meta.get("artist") or "",
                 "key": meta.get("key") or "",
@@ -400,9 +458,11 @@ class Monitor:
             s = d.status
             if s is None:
                 continue
+            tid = s.track_id
             decks.append({
                 "number": d.number,
-                "track_id": s.track_id,
+                "track_id": tid,
+                "track_key": self.deck_track_key(d.number, tid) if tid else "",
                 "playing": d.is_playing,
                 "bpm": round(s.effective_bpm, 2),
                 "track_bpm": round(s.bpm, 2),
@@ -427,11 +487,13 @@ class Monitor:
             s = d.status
             if s is None:
                 continue
+            tid = s.track_id
             decks.append({
                 "number": d.number,
                 "name": s.name,
                 "firmware": s.firmware,
-                "track_id": s.track_id,
+                "track_id": tid,
+                "track_key": self.deck_track_key(d.number, tid) if tid else "",
                 "slot": s.slot,
                 "track_type": s.track_type,
                 "loaded_from": s.loaded_from,
@@ -457,11 +519,16 @@ class Monitor:
         # Enrich from cache only — never NFS on the hot path (ensure runs on track change).
         for snap in decks:
             tid = snap.get("track_id") or 0
-            meta = self.meta(tid, load=False) if tid else None
-            if meta:
+            deck_no = int(snap.get("number") or 0)
+            meta = self.meta(tid, deck=deck_no, load=False) if tid else None
+            if meta and meta.get("track_key") == snap.get("track_key"):
                 snap["title"] = meta.get("title") or ""
                 snap["artist"] = meta.get("artist") or ""
                 snap["key"] = meta.get("key") or ""
+            elif tid:
+                snap.pop("title", None)
+                snap.pop("artist", None)
+                snap.pop("key", None)
             self.mixstatus.handle(snap)
         # One observe pass: set-clock pause/resume + track logging.
         self.session.observe(decks)
@@ -492,6 +559,7 @@ class Monitor:
             "t": time.time(),
             "paint": False,
             "decks": decks,
+            "display": {"show_phrases": bool(getattr(self, "show_phrases", True))},
             "devices": devices,
             "packets": self.engine.packets,
             "mode": getattr(self.engine.source, "description", ""),
@@ -636,21 +704,29 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/events":
                 return self._events()
             if path.startswith("/api/track/"):
-                track_id = int(path.rsplit("/", 1)[1])
-                meta = self.monitor.meta(track_id)
+                track_id, deck, want_key = self._parse_track_request(parsed)
+                meta = self.monitor.meta(track_id, deck=deck)
+                if meta and want_key and meta.get("track_key") != want_key:
+                    meta = None
                 return self._json(meta or {"error": "no_analysis"}, 200 if meta else 404)
             if path.startswith("/api/waveform/"):
-                track_id = int(path.rsplit("/", 1)[1])
-                data = self.monitor.waveform(track_id)
+                track_id, deck, want_key = self._parse_track_request(parsed)
+                meta = self.monitor.meta(track_id, deck=deck, load=False)
+                if want_key and (not meta or meta.get("track_key") != want_key):
+                    return self._json({"error": "no_waveform"}, 404)
+                data = self.monitor.waveform(track_id, deck=deck)
                 if not data:
                     return self._json({"error": "no_waveform"}, 404)
-                return self._send(200, data, "application/octet-stream", "max-age=3600")
+                return self._send(200, data, "application/octet-stream", "no-store")
             if path.startswith("/api/artwork/"):
-                track_id = int(path.rsplit("/", 1)[1])
-                art = self.monitor.artwork(track_id)
+                track_id, deck, want_key = self._parse_track_request(parsed)
+                meta = self.monitor.meta(track_id, deck=deck, load=False)
+                if want_key and (not meta or meta.get("track_key") != want_key):
+                    return self._json({"error": "no_artwork"}, 404)
+                art = self.monitor.artwork(track_id, deck=deck)
                 if not art:
                     return self._json({"error": "no_artwork"}, 404)
-                return self._send(200, art, "image/jpeg", "max-age=3600")
+                return self._send(200, art, "image/jpeg", "no-store")
             if not path.startswith("/api/"):
                 return self._static(path)
             return self._json({"error": "not_found"}, 404)
@@ -675,6 +751,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, f.read(), ctype)
         except OSError:
             self._json({"error": "not_found"}, 404)
+
+    @staticmethod
+    def _parse_track_request(parsed) -> tuple[int, int | None, str | None]:
+        from urllib.parse import parse_qs
+
+        track_id = int(parsed.path.rsplit("/", 1)[1])
+        qs = parse_qs(parsed.query)
+        raw_deck = (qs.get("deck") or [None])[0]
+        deck: int | None
+        try:
+            deck = int(raw_deck) if raw_deck not in (None, "") else None
+        except (TypeError, ValueError):
+            deck = None
+        want_key = (qs.get("key") or [None])[0]
+        want_key = str(want_key).strip() if want_key else None
+        return track_id, deck, want_key
 
     def _events(self) -> None:
         """SSE: fat state ~15 Hz, lightweight playhead paint at 60 Hz.
@@ -847,6 +939,12 @@ def main() -> int:
         return 1
 
     monitor = Monitor(host, source, args.cache, local_ip=net.ip)
+    try:
+        from gui.settings import load_settings
+
+        monitor.show_phrases = bool(load_settings().get("show_phrases", True))
+    except Exception:
+        pass
     Handler.monitor = monitor
     try:
         monitor.start()

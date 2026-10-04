@@ -454,6 +454,9 @@ class MainWindow(QMainWindow):
         self.page_settings.load_settings(self.settings)
         self.page_overlay.load_prefs(self.settings, port=int(self.settings.get("port", 8777)))
         self.set_sidebar_visible(bool(self.settings.get("sidebar_visible", True)), persist=False)
+        if self.backend.monitor is not None:
+            self.backend.monitor.show_phrases = bool(
+                self.settings.get("show_phrases", True))
         if reconnect:
             self.connect_backend()
         else:

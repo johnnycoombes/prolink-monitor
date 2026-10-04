@@ -177,6 +177,7 @@ class MonitorPage(Page):
         self.set_max_decks(4)
         self.set_wave_style("rgb")
         self.set_playhead_mode("auto")
+        self._show_phrases = True
 
     def apply_prefs(self, settings: dict) -> None:
         self.set_zoom(int(settings.get("zoom_bars", DEFAULT_ZOOM_BARS)))
@@ -191,6 +192,7 @@ class MonitorPage(Page):
         self.set_wave_style(str(settings.get("waveform_style") or "rgb"))
         self.set_playhead_mode(str(settings.get("playhead_position") or "auto"))
         self._show_empty = bool(settings.get("show_empty_decks", True))
+        self.set_show_phrases(bool(settings.get("show_phrases", True)))
         self.set_elements(settings)
 
     def set_elements(self, settings: dict | None) -> None:
@@ -258,6 +260,14 @@ class MonitorPage(Page):
         for card in self._cards.values():
             card.set_wave_style(self._wave_style)
 
+    def set_show_phrases(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if getattr(self, "_show_phrases", True) == enabled:
+            return
+        self._show_phrases = enabled
+        for card in self._cards.values():
+            card.set_show_phrases(enabled)
+
     def set_playhead_mode(self, mode: str) -> None:
         mode = normalize_playhead_mode(mode)
         self._playhead_mode = mode
@@ -275,6 +285,7 @@ class MonitorPage(Page):
             "max_decks": self._max_decks,
             "waveform_style": self._wave_style,
             "playhead_position": self._playhead_mode,
+            "show_phrases": bool(getattr(self, "_show_phrases", True)),
             **self._elements,
         }
 
@@ -372,6 +383,7 @@ class MonitorPage(Page):
                     card.set_zoom(self._zoom, override=False)
                 card.set_wave_style(self._wave_style)
                 card.set_playhead_mode(self._playhead_mode)
+                card.set_show_phrases(bool(getattr(self, "_show_phrases", True)))
                 card.apply_elements(self._elements)
                 card.focused.connect(self._on_deck_focus)
                 card.zoom_override_changed.connect(self._on_deck_zoom_override)
@@ -389,20 +401,26 @@ class MonitorPage(Page):
                 pos = min(pos, dur)
 
             tid = d.get("track_id") or 0
+            tkey = d.get("track_key") or ""
+            deck_no = int(d.get("number") or 0)
             if tid:
-                meta = self.backend.meta(tid)
+                meta = self.backend.meta(tid, deck=deck_no, track_key=tkey or None)
+                if meta and tkey and meta.get("track_key") != tkey:
+                    meta = None
                 if meta:
-                    if card.needs_waveform(tid):
+                    if card.needs_waveform(tid, tkey):
                         detail = overview = None
                         wave = None
                         if self._elements.get("deck_show_waveform", True):
-                            wave = self.backend.waveform(tid)
+                            wave = self.backend.waveform(
+                                tid, deck=deck_no, track_key=tkey or None)
                         if wave:
                             detail, overview = parse_waveform(wave)
                         art = None
                         if (self._elements.get("deck_show_artwork", True)
                                 and meta.get("has_artwork")):
-                            art = self.backend.artwork(tid)
+                            art = self.backend.artwork(
+                                tid, deck=deck_no, track_key=tkey or None)
                         # Only attach when we have a wave, or when titles are still empty.
                         if wave or card._meta is None:
                             card.set_track_data(meta, detail, overview, art)
@@ -410,7 +428,8 @@ class MonitorPage(Page):
                         art = None
                         if (self._elements.get("deck_show_artwork", True)
                                 and meta.get("has_artwork")):
-                            art = self.backend.artwork(tid)
+                            art = self.backend.artwork(
+                                tid, deck=deck_no, track_key=tkey or None)
                         card.set_track_data(meta, card._detail, card._overview, art)
             card.update_deck(d, pos)
 
@@ -1515,6 +1534,8 @@ class SettingsPage(Page):
         self.playhead.addItem(i18n.t("playhead_centre"), "centre")
         self.playhead.addItem(i18n.t("playhead_left"), "left")
         self.playhead.setToolTip(i18n.t("playhead_tip"))
+        self.show_phrases = QCheckBox(i18n.t("show_phrases"))
+        self.show_phrases.setToolTip(i18n.t("show_phrases_tip"))
         self.show_empty = QCheckBox(i18n.t("show_empty"))
         self.poll_hz = QSpinBox()
         self.poll_hz.setRange(5, 60)
@@ -1522,6 +1543,7 @@ class SettingsPage(Page):
         disp.addRow(i18n.t("zoom"), self.zoom)
         disp.addRow(i18n.t("wave"), self.wave_style)
         disp.addRow(i18n.t("playhead"), self.playhead)
+        disp.addRow("", self.show_phrases)
         disp.addRow(i18n.t("poll_hz"), self.poll_hz)
         disp.addRow("", self.show_empty)
 
@@ -1642,6 +1664,7 @@ class SettingsPage(Page):
         self.wave_style.setCurrentIndex(max(0, idx))
         idx = self.playhead.findData(normalize_playhead_mode(data.get("playhead_position")))
         self.playhead.setCurrentIndex(max(0, idx))
+        self.show_phrases.setChecked(bool(data.get("show_phrases", True)))
         self.show_empty.setChecked(bool(data.get("show_empty_decks", True)))
         self.poll_hz.setValue(int(data.get("poll_hz", 60)))
         for key, cb in self.deck_checks.items():
@@ -1679,6 +1702,7 @@ class SettingsPage(Page):
             "zoom_bars": self.zoom.currentData(),
             "waveform_style": self.wave_style.currentData(),
             "playhead_position": self.playhead.currentData(),
+            "show_phrases": self.show_phrases.isChecked(),
             "show_empty_decks": self.show_empty.isChecked(),
             "poll_hz": self.poll_hz.value(),
             "overlay_layout": self.overlay_layout.currentData(),

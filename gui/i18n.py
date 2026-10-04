@@ -149,6 +149,10 @@ STRINGS = {
         "Waveform Current Position. If the player does not report it, XDJ-AZ "
         "and Opus Quad fall back to the left; every other model stays centred."
     ),
+    "show_phrases": "Phrase strip under waveform",
+    "show_phrases_tip": "Show Rekordbox-style coloured phrase segments beneath the overview (not on the wave).",
+    "show_phrases": "Phrase strip under waveform",
+    "show_phrases_tip": "Show Rekordbox-style coloured phrase segments beneath the overview (not on the wave).",
     "wave_rgb": "RGB",
     "wave_3band": "3-Band",
     "wave_blue": "Blue",

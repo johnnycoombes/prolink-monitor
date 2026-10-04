@@ -83,6 +83,36 @@ body.preview{
   min-width:0;
 }
 
+.now-card{
+  display:flex;flex-direction:column;align-items:center;text-align:center;
+  padding:calc(28px * var(--scale)) calc(32px * var(--scale)) calc(22px * var(--scale));
+  min-width:min(calc(640px * var(--scale)),94vw);
+  max-width:min(calc(920px * var(--scale)),96vw);
+}
+.now-card .art{
+  width:min(calc(300px * var(--scale)),40vw);
+  height:min(calc(300px * var(--scale)),40vw);
+  border-radius:calc(18px * var(--scale));
+  margin:0 auto calc(16px * var(--scale));
+  font-size:calc(72px * var(--scale));
+}
+.now-card .meta{width:100%;min-width:0}
+.now-card .tags{justify-content:center;margin-bottom:calc(10px * var(--scale))}
+.now-card .title{
+  font-size:clamp(calc(28px * var(--scale)),3.4vw,calc(44px * var(--scale)));
+  white-space:normal;line-height:1.12;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+}
+.now-card .artist{
+  margin-top:calc(8px * var(--scale));
+  font-size:clamp(calc(16px * var(--scale)),1.8vw,calc(22px * var(--scale)));
+}
+.now-card .readouts{justify-content:center;margin-top:calc(14px * var(--scale));gap:18px}
+.now-card .bpm{font-size:calc(26px * var(--scale))}
+.now-card .key{font-size:calc(17px * var(--scale))}
+.now-card .progress{margin-top:calc(14px * var(--scale));height:5px;max-width:min(520px,92%)}
+.now-card .wave{margin-top:calc(12px * var(--scale));height:calc(44px * var(--scale));max-width:min(640px,96%)}
+
 .now{
   display:grid;
   grid-template-columns:108px 1fr;
@@ -326,8 +356,27 @@ if (accent) {
   DECK_COLORS[1] = accent;
 }
 
-const tracks = new Map();   // id -> {meta, overview}
+const tracks = new Map();   // cacheId -> {meta, overview, track_id}
 const pending = new Set();
+
+function deckCacheId(deck) {
+  if (deck && deck.track_key) return String(deck.track_key);
+  const id = deck && deck.track_id;
+  return id ? `id:${id}` : '';
+}
+
+function trackApiQuery(deck) {
+  const id = deck.track_id || 0;
+  if (!id) return '';
+  const q = new URLSearchParams();
+  q.set('deck', String(deck.number));
+  if (deck.track_key) q.set('key', deck.track_key);
+  return `?${q.toString()}`;
+}
+
+function trackPack(deck) {
+  return tracks.get(deckCacheId(deck));
+}
 let last = null;
 let receivedAt = 0;
 
@@ -450,15 +499,19 @@ function attachBlue(wave, blue){
   wave.blueH = blue.h; wave.blueRgb = blue.rgb;
 }
 
-async function loadTrack(id){
-  if (!id || tracks.has(id) || pending.has(id)) return;
-  pending.add(id);
+async function loadTrack(deck){
+  const id = deck.track_id;
+  const cacheId = deckCacheId(deck);
+  if (!id || !cacheId || tracks.has(cacheId) || pending.has(cacheId)) return;
+  pending.add(cacheId);
+  const qs = trackApiQuery(deck);
   try{
     const [meta, buf] = await Promise.all([
-      fetch(`/api/track/${id}`).then(r => r.ok ? r.json() : null),
-      fetch(`/api/waveform/${id}`).then(r => r.ok ? r.arrayBuffer() : null),
+      fetch(`/api/track/${id}${qs}`).then(r => r.ok ? r.json() : null),
+      fetch(`/api/waveform/${id}${qs}`).then(r => r.ok ? r.arrayBuffer() : null),
     ]);
     if (!meta) return;
+    if (deck.track_key && meta.track_key && meta.track_key !== deck.track_key) return;
     let overview = null;
     if (buf) {
       const detail = readWaveform(buf, 0);
@@ -469,14 +522,15 @@ async function loadTrack(id){
       const blue1 = readBlue(buf, b2 ? b2.end : (b1 ? b1.end : overview.end));
       if (blue1) attachBlue(overview, readBlue(buf, blue1.end));
     }
-    tracks.set(id, {meta, overview});
-  } finally { pending.delete(id); }
+    tracks.set(cacheId, {meta, overview, track_id: id});
+  } finally { pending.delete(cacheId); }
 }
 
-function artHtml(trackId, pack){
+function artHtml(deck, pack){
+  const trackId = deck && deck.track_id;
   const meta = pack && pack.meta;
   if (trackId && meta && meta.has_artwork)
-    return `<div class="art"><img alt="" src="/api/artwork/${trackId}"></div>`;
+    return `<div class="art"><img alt="" src="/api/artwork/${trackId}${trackApiQuery(deck)}"></div>`;
   return `<div class="art">♪</div>`;
 }
 
@@ -621,17 +675,15 @@ function fillOverlayColumn(ctx, x, mid, amp, src, wave, span, colW){
   fillMirrored(ctx, x, mid, drawAmp, colW);
 }
 
-function renderNow(deck, pos){
-  const pack = tracks.get(deck.track_id);
+function renderNow(deck, pos, compact=false){
+  const pack = trackPack(deck);
   const meta = pack && pack.meta;
-  const title = meta ? (meta.title || '—') : (deck.track_id ? 'loading…' : 'no track');
-  const artist = meta ? (meta.artist || '') : '';
-  const key = meta ? (meta.key || '') : '';
+  const keyOk = !meta || !deck.track_key || meta.track_key === deck.track_key;
+  const title = (meta && keyOk) ? (meta.title || '—') : (deck.track_id ? 'loading…' : 'no track');
+  const artist = (meta && keyOk) ? (meta.artist || '') : '';
+  const key = (meta && keyOk) ? (meta.key || '') : '';
   const color = DECK_COLORS[deck.number] || '#22d3ee';
-  return `
-    <div class="now" style="--deck:${color}">
-      ${artHtml(deck.track_id, pack)}
-      <div class="meta">
+  const inner = `
         ${tagsHtml(deck, pack, pos)}
         <div class="title">${escapeHtml(title)}</div>
         <div class="artist">${escapeHtml(artist)}</div>
@@ -640,21 +692,31 @@ function renderNow(deck, pos){
           ${key ? `<div class="key">${escapeHtml(key)}</div>` : ''}
           <div class="time" data-time>${timeHtml(pos, overlayDuration(deck, pack))}</div>
         </div>
-        ${waveHtml(deck.track_id)}
-        <div class="progress"><i style="width:${progressPct(pos, overlayDuration(deck, pack))}%"></i></div>
-      </div>
+        ${compact ? waveHtml(deck.track_id) : ''}
+        <div class="progress"><i style="width:${progressPct(pos, overlayDuration(deck, pack))}%"></i></div>`;
+  if (compact) {
+    return `
+    <div class="now" style="--deck:${color}">
+      ${artHtml(deck, pack)}
+      <div class="meta">${inner}</div>
+    </div>`;
+  }
+  return `
+    <div class="now-card" style="--deck:${color}">
+      ${artHtml(deck, pack)}
+      <div class="meta">${inner}${waveHtml(deck.track_id)}</div>
     </div>`;
 }
 
 function renderMinimal(deck, pos){
-  const pack = tracks.get(deck.track_id);
+  const pack = trackPack(deck);
   const meta = pack && pack.meta;
   const title = meta ? (meta.title || '—') : (deck.track_id ? 'loading…' : 'no track');
   const artist = meta ? (meta.artist || '') : '';
   const color = DECK_COLORS[deck.number] || '#22d3ee';
   return `
     <div class="minimal" style="--deck:${color}">
-      ${artHtml(deck.track_id, pack)}
+      ${artHtml(deck, pack)}
       <div class="meta" style="min-width:0">
         <div class="title">${escapeHtml(title)}</div>
         <div class="artist">${escapeHtml(artist)}</div>
@@ -685,15 +747,16 @@ function renderSetlistHistory(entries, current){
     </div></div>`;
   }
   return `<div class="setlist-history">${hist.map((e, i) => {
-    const pack = tracks.get(e.track_id);
+    const histDeck = {track_id: e.track_id, number: e.deck || 1, track_key: e.track_key || ''};
+    const pack = trackPack(histDeck);
     const meta = pack && pack.meta;
     const title = (meta && meta.title) || e.title || '—';
     const artist = (meta && meta.artist) || e.artist || '';
     const color = DECK_COLORS[e.deck] || '#22d3ee';
     const when = setlistClock(e.reported_at || e.started_at);
-    if (e.track_id) loadTrack(e.track_id);
+    if (e.track_id) loadTrack(histDeck);
     return `<div class="setlist-row" style="--deck:${color};animation-delay:${Math.min(i, 6) * 0.04}s">
-      ${artHtml(e.track_id, pack)}
+      ${artHtml(histDeck, pack)}
       <div class="meta">
         <div class="title">${escapeHtml(title)}</div>
         <div class="artist">${escapeHtml(artist)}${e.deck ? ` · D${e.deck}` : ''}</div>
@@ -705,7 +768,7 @@ function renderSetlistHistory(entries, current){
 
 function renderSetlist(deck, pos, setlist){
   return `<div class="setlist-layout">
-    ${renderNow(deck, pos)}
+    ${renderNow(deck, pos, true)}
     ${renderSetlistHistory(setlist, deck)}
   </div>`;
 }
@@ -713,13 +776,13 @@ function renderSetlist(deck, pos, setlist){
 function renderDual(decks, positions){
   const cols = maxDecks >= 4 ? 4 : 2;
   return `<div class="dual decks-${cols}">${decks.map((d,i)=>{
-    const pack = tracks.get(d.track_id);
+    const pack = trackPack(d);
     const meta = pack && pack.meta;
     const title = meta ? (meta.title || '—') : (d.track_id ? 'loading…' : 'no track');
     const artist = meta ? (meta.artist || '') : '';
     return `
     <div class="slot" style="--deck:${DECK_COLORS[d.number]||'#22d3ee'}">
-      ${artHtml(d.track_id, pack)}
+      ${artHtml(d, pack)}
       <div class="meta">
         ${tagsHtml(d, pack, positions[i])}
         <div class="title">${escapeHtml(title)}</div>
@@ -749,8 +812,13 @@ function renderNextThird(pending){
     el.innerHTML = '';
     return;
   }
-  if (pending.track_id) loadTrack(pending.track_id);
-  const pack = tracks.get(pending.track_id);
+  const pendDeck = {
+    track_id: pending.track_id,
+    number: pending.deck || 1,
+    track_key: pending.track_key || '',
+  };
+  if (pending.track_id) loadTrack(pendDeck);
+  const pack = trackPack(pendDeck);
   const meta = pack && pack.meta;
   const title = (meta && meta.title) || pending.title || '—';
   const artist = (meta && meta.artist) || pending.artist || '';
@@ -772,7 +840,7 @@ function paintWaves(decks, positions){
     if (!d) return;
     paintWaveCanvas(
       cv,
-      tracks.get(d.track_id),
+      trackPack(d),
       positions[i] ?? positions[0],
       DECK_COLORS[d.number],
       d.state === 'looping'
@@ -799,13 +867,13 @@ function paint(){
   }
   idle.classList.remove('show');
   const positions = decks.map(d => {
-    const pack = tracks.get(d.track_id);
+    const pack = trackPack(d);
     const dur = overlayDuration(d, pack);
     let pos = +(d.position_ms||0) + (d.playing ? dt*1000*(d.speed||1) : 0);
     if (dur) pos = Math.min(pos, dur);
     return pos;
   });
-  for (const d of decks) if (d.track_id) loadTrack(d.track_id);
+  for (const d of decks) if (d.track_id) loadTrack(d);
 
   let html = '';
   if (layout === 'dual') html = renderDual(decks, positions);
@@ -819,15 +887,15 @@ function paint(){
     ? ':sl' + (last.setlist || []).map(e => `${e.deck}:${e.track_id}`).join(',')
     : '';
   const waveSig = decks.map(d => {
-    const p = tracks.get(d.track_id);
-    return `${d.number}:${d.track_id||0}:${!!(p&&p.meta)}:${!!(p&&p.overview)}:${d.state||''}`;
+    const p = trackPack(d);
+    return `${d.number}:${d.track_id||0}:${d.track_key||''}:${!!(p&&p.meta)}:${!!(p&&p.overview)}:${d.state||''}`;
   }).join('|');
   // Include whether history track packs loaded so art/titles refresh.
   let histSig = '';
   if (layout === 'setlist') {
     histSig = (last.setlist || []).slice(-SETLIST_MAX).map(e => {
-      const p = tracks.get(e.track_id);
-      return `${e.track_id}:${!!(p&&p.meta)}`;
+      const p = trackPack({track_id: e.track_id, number: e.deck || 1, track_key: e.track_key || ''});
+      return `${e.track_id}:${e.track_key||''}:${!!(p&&p.meta)}`;
     }).join(',');
   }
   const sig = waveSig + '|' + layout + mixSig + setlistSig + '|' + histSig + `|d${maxDecks}`;
@@ -838,12 +906,12 @@ function paint(){
   } else {
     card.querySelectorAll('.progress > i').forEach((el,i)=>{
       const d = decks[i] || decks[0];
-      const pack = tracks.get(d.track_id);
+      const pack = trackPack(d);
       el.style.width = progressPct(positions[i] ?? positions[0], overlayDuration(d, pack)) + '%';
     });
     card.querySelectorAll('[data-time]').forEach((el,i)=>{
       const d = decks[i] || decks[0];
-      const pack = tracks.get(d.track_id);
+      const pack = trackPack(d);
       const pos = positions[i] ?? positions[0];
       el.innerHTML = timeHtml(pos, overlayDuration(d, pack));
     });

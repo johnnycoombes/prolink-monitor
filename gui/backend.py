@@ -42,11 +42,11 @@ class Backend(QObject):
         self._lock = threading.RLock()
         self._status = "idle"
         self._detail = ""
-        self._meta_cache: dict[int, dict] = {}
-        self._wave_cache: dict[int, bytes] = {}
-        self._art_cache: dict[int, bytes] = {}
-        self._fetching: set[int] = set()
-        self._meta_miss: dict[int, float] = {}
+        self._meta_cache: dict[str, dict] = {}
+        self._wave_cache: dict[str, bytes] = {}
+        self._art_cache: dict[str, bytes] = {}
+        self._fetching: set[str] = set()
+        self._meta_miss: dict[str, float] = {}
 
         self._state_timer = QTimer(self)
         self._state_timer.timeout.connect(self._tick)
@@ -111,42 +111,60 @@ class Backend(QObject):
     def open_overlay(self, url: str | None = None) -> None:
         webbrowser.open(url or f"http://127.0.0.1:{self.port}/overlay?preview=1")
 
-    def meta(self, track_id: int) -> dict | None:
+    @staticmethod
+    def _track_cache_id(track_id: int, track_key: str | None) -> str:
+        key = (track_key or "").strip()
+        return key if key else str(int(track_id))
+
+    def meta(self, track_id: int, *, deck: int | None = None,
+             track_key: str | None = None) -> dict | None:
         if not track_id or self._monitor is None:
             return None
+        cache_id = self._track_cache_id(track_id, track_key)
         with self._lock:
-            if track_id in self._meta_cache:
-                return self._meta_cache[track_id]
-        meta = self._monitor.meta(track_id)
+            if cache_id in self._meta_cache:
+                return self._meta_cache[cache_id]
+        meta = self._monitor.meta(track_id, deck=deck)
         if meta:
+            token = meta.get("track_key") or ""
+            if track_key and token and token != track_key:
+                return None
             with self._lock:
-                self._meta_cache[track_id] = meta
+                self._meta_cache[self._track_cache_id(track_id, token or track_key)] = meta
             self.track_ready.emit(track_id)
         return meta
 
-    def waveform(self, track_id: int) -> bytes | None:
+    def waveform(self, track_id: int, *, deck: int | None = None,
+                 track_key: str | None = None) -> bytes | None:
         if not track_id or self._monitor is None:
             return None
+        cache_id = self._track_cache_id(track_id, track_key)
         with self._lock:
-            if track_id in self._wave_cache:
-                return self._wave_cache[track_id]
-        data = self._monitor.waveform(track_id)
+            if cache_id in self._wave_cache:
+                return self._wave_cache[cache_id]
+        data = self._monitor.waveform(track_id, deck=deck)
         if data:
+            meta = self._monitor.meta(track_id, deck=deck, load=False)
+            token = (meta or {}).get("track_key") or track_key
             with self._lock:
-                self._wave_cache[track_id] = data
+                self._wave_cache[self._track_cache_id(track_id, token)] = data
             self.track_ready.emit(track_id)
         return data
 
-    def artwork(self, track_id: int) -> bytes | None:
+    def artwork(self, track_id: int, *, deck: int | None = None,
+                track_key: str | None = None) -> bytes | None:
         if not track_id or self._monitor is None:
             return None
+        cache_id = self._track_cache_id(track_id, track_key)
         with self._lock:
-            if track_id in self._art_cache:
-                return self._art_cache[track_id]
-        data = self._monitor.artwork(track_id)
+            if cache_id in self._art_cache:
+                return self._art_cache[cache_id]
+        data = self._monitor.artwork(track_id, deck=deck)
         if data:
+            meta = self._monitor.meta(track_id, deck=deck, load=False)
+            token = (meta or {}).get("track_key") or track_key
             with self._lock:
-                self._art_cache[track_id] = data
+                self._art_cache[self._track_cache_id(track_id, token)] = data
         return data
 
     def browse_tracks(self, query: str = "", *, limit: int = 100,
@@ -251,6 +269,7 @@ class Backend(QObject):
             net = link.local_net(host or "255.255.255.255")
             source = build_source(args, net)
             monitor = Monitor(host, source, args.cache, local_ip=net.ip)
+            monitor.show_phrases = bool(settings.get("show_phrases", True))
             monitor.start()
 
             server = None
@@ -321,26 +340,30 @@ class Backend(QObject):
             tid = deck.get("track_id") or 0
             if not tid:
                 continue
+            tkey = deck.get("track_key") or ""
+            cache_id = self._track_cache_id(tid, tkey)
+            deck_no = int(deck.get("number") or 0) or None
             with self._lock:
-                if tid in self._meta_cache or tid in self._fetching:
+                if cache_id in self._meta_cache or cache_id in self._fetching:
                     continue
-                miss_at = self._meta_miss.get(tid)
+                miss_at = self._meta_miss.get(cache_id)
                 if miss_at is not None and now - miss_at < 10.0:
                     continue
-                self._fetching.add(tid)
+                self._fetching.add(cache_id)
 
-            def _warm(track_id: int = tid) -> None:
+            def _warm(track_id: int = tid, track_key: str = tkey,
+                      deck_number: int | None = deck_no, cid: str = cache_id) -> None:
                 try:
-                    meta = self.meta(track_id)
+                    meta = self.meta(track_id, deck=deck_number, track_key=track_key or None)
                     if not meta:
                         with self._lock:
-                            self._meta_miss[track_id] = time.time()
+                            self._meta_miss[cid] = time.time()
                     else:
                         with self._lock:
-                            self._meta_miss.pop(track_id, None)
+                            self._meta_miss.pop(cid, None)
                 finally:
                     with self._lock:
-                        self._fetching.discard(track_id)
+                        self._fetching.discard(cid)
 
             threading.Thread(target=_warm, daemon=True).start()
 
