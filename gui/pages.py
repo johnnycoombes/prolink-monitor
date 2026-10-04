@@ -624,9 +624,13 @@ class HealthPage(Page):
         self._lib_src_val = QLabel("—")
         self._lib_src_val.setWordWrap(True)
         self._lib_src_val.setStyleSheet("font-family:monospace; font-size:13px;")
+        self._art_src_val = QLabel("—")
+        self._art_src_val.setWordWrap(True)
+        self._art_src_val.setStyleSheet("font-family:monospace; font-size:13px;")
         for col, (title, value) in enumerate((
             (i18n.t("health_onelibrary_status"), self._ol_status_val),
             (i18n.t("health_library_source"), self._lib_src_val),
+            (i18n.t("health_artwork_source"), self._art_src_val),
             (i18n.t("health_onelibrary_pyrekordbox"), self._ol_pkg_val),
             (i18n.t("health_onelibrary_path"), self._ol_path_val),
         )):
@@ -714,6 +718,7 @@ class HealthPage(Page):
         ol_titles = (
             self._i18n.t("health_onelibrary_status"),
             self._i18n.t("health_library_source"),
+            self._i18n.t("health_artwork_source"),
             self._i18n.t("health_onelibrary_pyrekordbox"),
             self._i18n.t("health_onelibrary_path"),
         )
@@ -789,6 +794,13 @@ class HealthPage(Page):
             src_text = self._i18n.t("library_source_none")
         detail = src.get("detail") or src.get("remotedb_error") or ""
         self._lib_src_val.setText(f"{src_text}\n{detail}" if detail else src_text)
+        art_by_deck = state.get("artwork_sources") or {}
+        last_art = str(state.get("artwork_source_last") or "none")
+        if art_by_deck:
+            parts = [f"D{k}: {v}" for k, v in sorted(art_by_deck.items(), key=lambda x: x[0])]
+            self._art_src_val.setText("\n".join(parts))
+        else:
+            self._art_src_val.setText(last_art if last_art != "none" else "—")
         if ol.get("present"):
             if ol.get("readable"):
                 status = ol.get("detail") or "readable"
@@ -1698,6 +1710,9 @@ class SettingsPage(Page):
         self.iface = QLineEdit()
         self.tshark = QLineEdit()
         self.cache = QLineEdit()
+        self.local_music_root = QLineEdit()
+        self.local_music_root.setPlaceholderText("/path/to/rekordbox/USB mirror")
+        self.local_music_root.setToolTip(i18n.t("local_music_root_tip"))
         conn.addRow(i18n.t("mode"), self.mode)
         conn.addRow(i18n.t("host"), self.host)
         conn.addRow(i18n.t("device_number"), self.number)
@@ -1707,6 +1722,7 @@ class SettingsPage(Page):
         conn.addRow(i18n.t("iface"), self.iface)
         conn.addRow(i18n.t("tshark"), self.tshark)
         conn.addRow(i18n.t("cache"), self.cache)
+        conn.addRow(i18n.t("local_music_root"), self.local_music_root)
 
         disp = section("section_display")
         self.max_decks = QComboBox()
@@ -1894,6 +1910,7 @@ class SettingsPage(Page):
         self.iface.setText(data.get("iface") or "")
         self.tshark.setText(data.get("tshark") or "")
         self.cache.setText(data.get("cache") or "")
+        self.local_music_root.setText(data.get("local_music_root") or "")
         idx = self.max_decks.findData(normalize_max_decks(data.get("max_decks", 4)))
         self.max_decks.setCurrentIndex(max(0, idx))
         idx = self.zoom.findData(int(data.get("zoom_bars", DEFAULT_ZOOM_BARS)))
@@ -1945,6 +1962,7 @@ class SettingsPage(Page):
             "iface": self.iface.text().strip(),
             "tshark": self.tshark.text().strip(),
             "cache": self.cache.text().strip(),
+            "local_music_root": self.local_music_root.text().strip(),
             "max_decks": self.max_decks.currentData(),
             "zoom_bars": self.zoom.currentData(),
             "waveform_style": self.wave_style.currentData(),

@@ -21,6 +21,7 @@ DEFAULTS: dict[str, Any] = {
     "iface": "",
     "tshark": "",
     "cache": "",
+    "local_music_root": "",  # optional mirror of USB library for embedded cover art
     "max_decks": 4,
     "zoom_bars": 4,                # 4/4 bars shown in the detail waveform
     "zoom_bars_by_deck": {},        # optional per-deck overrides { "1": 8, ... }
@@ -265,6 +266,7 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     out["session_autosave_dir"] = str(data.get("session_autosave_dir") or "").strip()
     out["minimize_to_tray"] = bool(data.get("minimize_to_tray", True))
     out["close_to_tray"] = bool(data.get("close_to_tray", True))
+    out["local_music_root"] = str(data.get("local_music_root") or "").strip()
     return out
 
 

@@ -162,6 +162,28 @@ class RemoteDbBrowser:
         count = int(avail.args[1]) if len(avail.args) > 1 else 0
         return [wire.menu_item_row(m) for m in self._render_all(count)]
 
+    def album_art(self, artwork_id: int, *, high_res: bool = True) -> bytes | None:
+        """Fetch album art bytes via dbserver (high-res when *high_res* and player supports it)."""
+        if self._sock is None:
+            raise wire.DbServerError("not connected")
+        if not artwork_id:
+            return None
+        tx = self._next_tx()
+        pkt = wire.encode_album_art_request(
+            tx, self.requesting_player, self.slot, int(artwork_id), high_res=high_res)
+        self._sock.sendall(pkt)
+        resp = wire.read_message(self._sock)
+        if resp.tx_id != tx:
+            raise wire.DbServerError("transaction id mismatch")
+        if resp.msg_type != wire.TYPE_ALBUM_ART_RESP:
+            return None
+        if len(resp.args) < 4:
+            return None
+        blob = resp.args[3]
+        if isinstance(blob, (bytes, bytearray)) and blob:
+            return bytes(blob)
+        return None
+
     def track_search_page(self, offset: int = 0, limit: int = 64) -> list[dict]:
         """First page of all tracks (live export.pdb equivalent ordering)."""
         avail = self._menu_request(wire.TYPE_TRACK_MENU, 0)

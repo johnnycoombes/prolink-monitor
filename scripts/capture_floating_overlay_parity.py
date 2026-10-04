@@ -26,10 +26,29 @@ class _DummySource:
         pass
 
 
+def _seed_demo_artwork(monitor) -> None:
+    """Sharp cover for mock overlay screenshots (/api/artwork/1)."""
+    fixture = os.path.join(ROOT, "tests", "fixtures", "sharp_cover.jpg")
+    if not os.path.isfile(fixture):
+        return
+    try:
+        from prolink.track_key import track_cache_key
+
+        with open(fixture, "rb") as f:
+            data = f.read()
+        key = track_cache_key("127.0.0.1", "/export/USB", (1, 1), "usb", 1)
+        monitor._art_cache[key] = (data, "nfs-hires")
+        monitor._last_art_source = "nfs-hires"
+        monitor._art_source_by_deck[1] = "nfs-hires"
+    except Exception:
+        pass
+
+
 def _start_doc_server() -> tuple[object, int]:
     from app import Handler, Monitor, open_http_server
 
     monitor = Monitor("127.0.0.1", _DummySource(), cache_dir=os.path.join(ROOT, ".cache"))
+    _seed_demo_artwork(monitor)
     Handler.monitor = monitor
     server, port = open_http_server(0, handler=Handler, host="127.0.0.1")
     thread = threading.Thread(target=server.serve_forever, daemon=True)

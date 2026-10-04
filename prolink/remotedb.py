@@ -27,13 +27,16 @@ TYPE_HISTORY_MENU = 0x1012
 TYPE_PLAYLIST = 0x1105
 TYPE_TRACK_MENU = 0x1004
 TYPE_REKORDBOX_METADATA = 0x2002
+TYPE_ALBUM_ART = 0x2003
 TYPE_RENDER_MENU = 0x3000
+TYPE_ALBUM_ART_RESP = 0x4002
 TYPE_MENU_AVAILABLE = 0x4000
 TYPE_MENU_HEADER = 0x4001
 TYPE_MENU_ITEM = 0x4101
 TYPE_MENU_FOOTER = 0x4201
 
 MENU_MAIN = 1
+MENU_DATA = 8
 TRACK_REKORDBOX = 1
 SLOT_USB = 3
 SLOT_SD = 2
@@ -295,6 +298,24 @@ def encode_menu_request(
     for n in extra_nums:
         args.append((TAG_NUM, encode_number_arg(n)))
     return encode_message(tx_id, req_type, args)
+
+
+def encode_album_art_request(
+    tx_id: int,
+    requesting_player: int,
+    slot: int,
+    artwork_id: int,
+    *,
+    high_res: bool = False,
+) -> bytes:
+    rmst = encode_number_arg(build_rmst(requesting_player, MENU_DATA, slot))
+    args: list[tuple[int, bytes]] = [
+        (TAG_NUM, rmst),
+        (TAG_NUM, encode_number_arg(artwork_id)),
+    ]
+    if high_res:
+        args.append((TAG_NUM, encode_number_arg(1)))
+    return encode_message(tx_id, TYPE_ALBUM_ART, args)
 
 
 def encode_render_menu(
