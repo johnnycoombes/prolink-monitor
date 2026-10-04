@@ -88,8 +88,13 @@ class MonitorHealthStateTests(unittest.TestCase):
         }
         mon.library.media = {"192.168.1.10": media}
         mon._library_snapshot = MagicMock(return_value=(None, None, None))
+        from prolink.audience_deck import AudienceDeckTracker
+
+        mon.audience = AudienceDeckTracker()
+        mon.meta = MagicMock(return_value=None)
 
         out = Monitor.state(mon)
+        self.assertIn("audience_deck", out)
         self.assertIn("nfs", out)
         self.assertEqual(len(out["nfs"]), 1)
         self.assertEqual(out["nfs"][0]["host"], "192.168.1.10")

@@ -9,28 +9,28 @@ from gui.settings import load_settings, save_settings, _sanitize
 
 
 class PickNowDeckTests(unittest.TestCase):
-    def test_mix_now_playing_wins(self):
+    def test_audience_deck_wins_over_mix(self):
         state = {
+            "audience_deck": {"number": 1, "track_id": 5, "title": "Live"},
             "now_playing": {"number": 2, "track_id": 99, "title": "NP"},
             "decks": [
-                {"number": 1, "track_id": 1, "playing": True},
+                {"number": 1, "track_id": 5, "playing": True, "bpm": 130.0},
                 {"number": 2, "track_id": 99, "playing": True, "bpm": 128.0},
             ],
         }
-        deck = pick_now_deck(state, use_mix=True)
-        self.assertEqual(deck["number"], 2)
-        self.assertEqual(deck["track_id"], 99)
-        self.assertEqual(deck["bpm"], 128.0)
+        deck = pick_now_deck(state)
+        self.assertEqual(deck["number"], 1)
+        self.assertEqual(deck["track_id"], 5)
+        self.assertEqual(deck["bpm"], 130.0)
 
-    def test_without_mix_first_active_deck(self):
+    def test_falls_back_to_playing_deck(self):
         state = {
-            "now_playing": {"number": 2, "track_id": 99},
             "decks": [
                 {"number": 1, "track_id": 5, "playing": True},
                 {"number": 2, "track_id": 99, "playing": False},
             ],
         }
-        deck = pick_now_deck(state, use_mix=False)
+        deck = pick_now_deck(state)
         self.assertEqual(deck["number"], 1)
 
 

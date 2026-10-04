@@ -121,6 +121,14 @@ class MixStatusTests(unittest.TestCase):
         mix.handle(_snap(1, on_air=False, track_id=3), now=10.0)
         self.assertIsNotNone(mix.now_playing)
 
+    def test_same_deck_track_change_updates_now_playing(self):
+        t0 = 1_000.0
+        self.mix.handle(_snap(1, track_id=10, title="First"), now=t0)
+        self.assertEqual(self.mix.now_playing["track_id"], 10)
+        self.mix.handle(_snap(1, track_id=11, title="Second"), now=t0 + 0.5)
+        self.assertEqual(self.mix.now_playing["track_id"], 11)
+        self.assertEqual(self.mix.now_playing["title"], "Second")
+
 
 if __name__ == "__main__":
     unittest.main()

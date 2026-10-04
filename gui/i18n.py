@@ -75,7 +75,7 @@ STRINGS = {
     "tray_floating_now": "Floating now playing",
     "hotkey_floating_now": "Ctrl+Shift+N",
     "overlay_playing": "Only decks with a track",
-    "overlay_mix": "SmartTiming now-playing (audience track)",
+    "overlay_mix": "SmartTiming setlist / next-track teaser (not Now Playing deck)",
     "overlay_decks": "Decks shown",
     "overlay_wave": "Overlay waveform colour",
     "overlay_preview": "Preview background",

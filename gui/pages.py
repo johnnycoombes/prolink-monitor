@@ -50,6 +50,15 @@ def _repopulate_overlay_now_pos(combo: QComboBox, i18n, style: str, pos=None) ->
     combo.blockSignals(False)
 
 
+def _overlay_asset_version() -> str:
+    """Cache-bust OBS browser sources when overlay.html changes."""
+    root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "overlay.html")
+    try:
+        return str(int(os.path.getmtime(root)))
+    except OSError:
+        return "0"
+
+
 def normalize_max_decks(n: int) -> int:
     """Only 2- and 4-deck layouts are supported."""
     try:
@@ -1512,6 +1521,7 @@ class OverlayPage(Page):
         use_preview = self.preview.isChecked() if preview is None else preview
         if use_preview:
             qs.append("preview=1")
+        qs.append(f"v={_overlay_asset_version()}")
         return f"http://127.0.0.1:{self._port}/overlay?{'&'.join(qs)}"
 
     def _maybe_bump_decks(self) -> None:
