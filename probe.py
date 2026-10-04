@@ -6,6 +6,7 @@ prints each byte that changes, naming the field it belongs to.
 
     python probe.py                 watch everything
     python probe.py --all           do not discard the fields that move on their own
+    python probe.py --replay f.plc  replay a Health-page capture, sending nothing
 
 To check whether the channel faders are transmitted: start it, wait for the
 "ready" notice, and move the faders. If nothing shows up, that data does not
@@ -23,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app import build_source                          # noqa: E402
 from prolink import link, proto                       # noqa: E402
+from prolink.capture import ReplaySource              # noqa: E402
 
 # A byte that was already moving during the learning phase is a counter, the
 # beat, the pitch... and would drown out any finding. They are discarded by
@@ -115,11 +117,20 @@ def main() -> int:
     p.add_argument("--iface", default=None)
     p.add_argument("--all", action="store_true",
                    help="do not discard the fields that move on their own")
+    p.add_argument("--replay", metavar="FILE", default=None,
+                   help="replay a .plc capture from the Health page instead of the network")
     args = p.parse_args()
     sys.stdout.reconfigure(line_buffering=True)   # show output as it happens
 
-    net = link.local_net(args.host or "255.255.255.255")
-    source = build_source(args, net)
+    if args.replay:
+        try:
+            source = ReplaySource(args.replay)
+        except (OSError, ValueError) as exc:
+            print(f"Could not read capture: {exc}", file=sys.stderr)
+            return 1
+    else:
+        net = link.local_net(args.host or "255.255.255.255")
+        source = build_source(args, net)
 
     seen: dict[tuple, dict[int, set]] = {}
     stable: dict[tuple, set[int]] = {}

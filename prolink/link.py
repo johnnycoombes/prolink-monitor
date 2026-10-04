@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from . import proto
+from .capture import PacketCapture
+from .link_timing import LinkTiming
 
 Handler = Callable[[bytes, str, float], None]
 
@@ -525,6 +527,9 @@ class ProLink:
         self._last_track: dict[int, int] = {}
         self.packets = 0
         self.started_at = 0.0
+        # Health diagnostics. Both only look at packets already received.
+        self.link_timing = LinkTiming()
+        self.capture = PacketCapture()
         self._saw_az = False
         self._az_on_air_at: float | None = None
 
@@ -544,6 +549,8 @@ class ProLink:
 
     def _on_packet(self, data: bytes, src_ip: str, now: float) -> None:
         """`now` is when the packet arrived, not when we got round to it."""
+        # Capture is listen-only: it records this datagram and sends nothing.
+        self.capture.observe(data, src_ip, now)
         pkt = proto.parse(data)
         if pkt is None:
             return
@@ -562,6 +569,8 @@ class ProLink:
                 self._note_player_name(pkt.name)
                 deck = self._deck(pkt.device_number)
                 deck.on_status(pkt, now)
+                self.link_timing.observe(
+                    pkt.device_number, now, data, ip=src_ip, name=pkt.name)
                 before = self._last_track.get(pkt.device_number)
                 if before != pkt.track_id:
                     self._last_track[pkt.device_number] = pkt.track_id

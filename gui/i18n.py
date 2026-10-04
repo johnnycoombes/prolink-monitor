@@ -19,7 +19,7 @@ STRINGS = {
     "devices_title": "Network devices",
     "devices_sub": "Players and mixers seen on Pro DJ Link",
     "health_title": "Connection health",
-    "health_sub": "Packet rates, position source, NFS latency and What's Now Playing",
+    "health_sub": "Packet rates, link timing, NFS latency and What's Now Playing",
     "library_title": "Library",
     "library_sub": "Browse USB tracks, OneLibrary playlists and history",
     "library_search": "Search title / artist / album…",
@@ -258,6 +258,31 @@ STRINGS = {
         "players. Beat-grid position is estimated from beat packets when AP is absent. "
         "NFS RTT is the UDP round-trip to read export.pdb / analysis files."
     ),
+    "health_timing": "LINK TIMING",
+    "health_timing_hint": (
+        "Measured on status packets over the last 30 seconds. "
+        "A gap longer than 400 ms counts as late. "
+        "Sequence holes use the counter at bytes 0xC8–0xCB, and stay blank "
+        "until that counter is seen stepping by one — CDJ-3000-class players "
+        "usually leave it at zero."
+    ),
+    "health_no_timing": "No status packets yet.",
+    "health_col_last": "LAST STATUS",
+    "health_col_interval": "INTERVAL",
+    "health_col_jitter": "JITTER",
+    "health_col_gap": "MAX GAP",
+    "health_col_late": "LATE",
+    "health_col_holes": "SEQ HOLES",
+    "health_capture": "Capture",
+    "health_capture_duration": "Duration",
+    "health_capture_idle": "Records received packets only. Nothing is sent on the network.",
+    "health_capture_busy": "A capture is already running.",
+    "health_capture_offline": "Connect to a player before capturing.",
+    "health_capture_running": "Capturing… {left}s left · {packets} packets",
+    "health_capture_saving": "Saving {packets} packets…",
+    "health_capture_saved": "Saved {packets} packets to {path}",
+    "health_capture_truncated": "Saved {packets} packets (limit reached) to {path}",
+    "health_capture_failed": "Could not save the capture: {error}",
     "poll_hz": "Playhead refresh rate (Hz, default 60)",
     "health_wnp": "WHAT'S NOW PLAYING",
     "section_wnp": "WHAT'S NOW PLAYING",
