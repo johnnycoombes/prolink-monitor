@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
+from gui.overlay_now import migrate_now_pos_for_style, normalize_now_pos, normalize_now_style
 from gui.theme import COLORS
 from gui.widgets import DeckCard, parse_waveform
 from gui.settings import deck_elements_from
@@ -25,6 +26,28 @@ DECK_LAYOUT = {
     2: (1, 2),
     4: (3, 1, 2, 4),
 }
+
+
+def _repopulate_overlay_now_pos(combo: QComboBox, i18n, style: str, pos=None) -> None:
+    style = normalize_now_style(style)
+    pos = normalize_now_pos(style, pos)
+    combo.blockSignals(True)
+    combo.clear()
+    if style == "panel":
+        opts = (
+            ("overlay_now_pos_bottom", "bottom"),
+            ("overlay_now_pos_top", "top"),
+        )
+    else:
+        opts = (
+            ("overlay_now_pos_left", "left"),
+            ("overlay_now_pos_right", "right"),
+        )
+    for key, data in opts:
+        combo.addItem(i18n.t(key), data)
+    idx = combo.findData(pos)
+    combo.setCurrentIndex(max(0, idx))
+    combo.blockSignals(False)
 
 
 def normalize_max_decks(n: int) -> int:
@@ -1264,9 +1287,12 @@ class OverlayPage(Page):
         self.layout_box.addItem(i18n.t("overlay_layout_dual"), "dual")
         self.layout_box.addItem(i18n.t("overlay_layout_min"), "minimal")
         self.layout_box.addItem(i18n.t("overlay_layout_setlist"), "setlist")
+        self.now_style_box = QComboBox()
+        self.now_style_box.addItem(i18n.t("overlay_now_style_card"), "card")
+        self.now_style_box.addItem(i18n.t("overlay_now_style_panel"), "panel")
         self.now_pos_box = QComboBox()
-        self.now_pos_box.addItem(i18n.t("overlay_now_pos_left"), "left")
-        self.now_pos_box.addItem(i18n.t("overlay_now_pos_right"), "right")
+        _repopulate_overlay_now_pos(self.now_pos_box, i18n, "card", "left")
+        self._overlay_now_style = "card"
         self.corner_box = QComboBox()
         for key, label in (
             ("bl", "overlay_corner_bl"),
@@ -1277,6 +1303,7 @@ class OverlayPage(Page):
         ):
             self.corner_box.addItem(i18n.t(label), key)
         self.corner_label = QLabel(i18n.t("overlay_corner"))
+        self.now_style_label = QLabel(i18n.t("overlay_now_style"))
         self.now_pos_label = QLabel(i18n.t("overlay_now_pos"))
         self.decks_box = QComboBox()
         for n in (1, 2, 3, 4):
@@ -1303,6 +1330,7 @@ class OverlayPage(Page):
         self.preview = QCheckBox(i18n.t("overlay_preview"))
 
         form.addRow(i18n.t("overlay_layout"), self.layout_box)
+        form.addRow(self.now_style_label, self.now_style_box)
         form.addRow(self.now_pos_label, self.now_pos_box)
         form.addRow(self.corner_label, self.corner_box)
         self.floating_now_btn = QPushButton(i18n.t("open_floating_now"))
@@ -1352,10 +1380,11 @@ class OverlayPage(Page):
         self.layout_root.addWidget(url_box)
         self.layout_root.addStretch(1)
 
-        for w in (self.layout_box, self.corner_box, self.now_pos_box, self.decks_box,
-                  self.wave_box, self.scale_box):
+        for w in (self.layout_box, self.corner_box, self.now_style_box, self.now_pos_box,
+                  self.decks_box, self.wave_box, self.scale_box):
             w.currentIndexChanged.connect(self._on_change)
         self.layout_box.currentIndexChanged.connect(self._sync_overlay_layout_rows)
+        self.now_style_box.currentIndexChanged.connect(self._on_now_style_changed)
         self.playing_only.toggled.connect(self._on_change)
         self.use_mix.toggled.connect(self._on_change)
         self.show_tags.toggled.connect(self._on_change)
@@ -1369,8 +1398,18 @@ class OverlayPage(Page):
     def set_floating_now_handler(self, slot) -> None:
         self.floating_now_btn.clicked.connect(slot)
 
+    def _on_now_style_changed(self) -> None:
+        new_style = normalize_now_style(self.now_style_box.currentData())
+        pos = self.now_pos_box.currentData()
+        migrated = migrate_now_pos_for_style(self._overlay_now_style, new_style, pos)
+        self._overlay_now_style = new_style
+        _repopulate_overlay_now_pos(self.now_pos_box, self._i18n, new_style, migrated)
+        self._on_change()
+
     def _sync_overlay_layout_rows(self) -> None:
         now = self.layout_box.currentData() == "nowplaying"
+        self.now_style_label.setVisible(now)
+        self.now_style_box.setVisible(now)
         self.now_pos_label.setVisible(now)
         self.now_pos_box.setVisible(now)
         self.corner_label.setVisible(not now)
@@ -1383,8 +1422,12 @@ class OverlayPage(Page):
         self.layout_box.setCurrentIndex(max(0, idx))
         idx = self.corner_box.findData(data.get("overlay_corner", "bl"))
         self.corner_box.setCurrentIndex(max(0, idx))
-        idx = self.now_pos_box.findData(data.get("overlay_now_pos", "left"))
-        self.now_pos_box.setCurrentIndex(max(0, idx))
+        style = normalize_now_style(data.get("overlay_now_style", "card"))
+        self._overlay_now_style = style
+        idx = self.now_style_box.findData(style)
+        self.now_style_box.setCurrentIndex(max(0, idx))
+        _repopulate_overlay_now_pos(
+            self.now_pos_box, self._i18n, style, data.get("overlay_now_pos", "left"))
         self._sync_overlay_layout_rows()
         decks = int(data.get("overlay_decks", 1))
         if self.layout_box.currentData() == "dual" and decks < 2:
@@ -1408,6 +1451,7 @@ class OverlayPage(Page):
     def collect(self) -> dict:
         return {
             "overlay_layout": self.layout_box.currentData(),
+            "overlay_now_style": self.now_style_box.currentData(),
             "overlay_now_pos": self.now_pos_box.currentData(),
             "overlay_corner": self.corner_box.currentData(),
             "overlay_decks": self.decks_box.currentData(),
@@ -1441,7 +1485,12 @@ class OverlayPage(Page):
             f"wave={self.wave_box.currentData()}",
         ]
         if layout == "nowplaying":
-            qs.append(f"pos={self.now_pos_box.currentData() or 'left'}")
+            style = normalize_now_style(self.now_style_box.currentData())
+            if style == "panel":
+                qs.append("style=panel")
+            pos = self.now_pos_box.currentData() or (
+                "bottom" if style == "panel" else "left")
+            qs.append(f"pos={pos}")
         else:
             qs.append(f"corner={self.corner_box.currentData()}")
         scale = self.scale_box.currentData() or "1"
@@ -1624,16 +1673,29 @@ class SettingsPage(Page):
         self.overlay_wave.addItem(i18n.t("wave_rgb"), "rgb")
         self.overlay_wave.addItem(i18n.t("wave_3band"), "3band")
         self.overlay_wave.addItem(i18n.t("wave_blue"), "blue")
+        self.settings_now_style = QComboBox()
+        self.settings_now_style.addItem(i18n.t("overlay_now_style_card"), "card")
+        self.settings_now_style.addItem(i18n.t("overlay_now_style_panel"), "panel")
         self.settings_now_pos = QComboBox()
-        self.settings_now_pos.addItem(i18n.t("overlay_now_pos_left"), "left")
-        self.settings_now_pos.addItem(i18n.t("overlay_now_pos_right"), "right")
+        _repopulate_overlay_now_pos(self.settings_now_pos, i18n, "card", "left")
+        self._settings_now_style = "card"
+        self.settings_now_pos_doc = QLabel(i18n.t("floating_now_panel_pos_doc"))
+        self.settings_now_pos_doc.setWordWrap(True)
+        self.settings_now_pos_doc.setObjectName("Dim")
+        self.settings_now_pos_doc.setStyleSheet(f"color:{COLORS['dim']}; font-size:12px;")
         self.floating_now_topmost = QCheckBox(i18n.t("floating_now_topmost"))
         self.floating_now_transparent = QCheckBox(i18n.t("floating_now_transparent"))
         self.settings_floating_btn = QPushButton(i18n.t("open_floating_now"))
         self.settings_floating_btn.setCursor(Qt.PointingHandCursor)
         ov.addRow(i18n.t("overlay_layout"), self.overlay_layout)
+        ov.addRow(i18n.t("overlay_now_style"), self.settings_now_style)
         ov.addRow(i18n.t("overlay_now_pos"), self.settings_now_pos)
-        ov.addRow(i18n.t("overlay_corner"), self.overlay_corner)
+        ov.addRow("", self.settings_now_pos_doc)
+        self.settings_corner_label = QLabel(i18n.t("overlay_corner"))
+        ov.addRow(self.settings_corner_label, self.overlay_corner)
+        self.overlay_layout.currentIndexChanged.connect(self._sync_settings_overlay_rows)
+        self.settings_now_style.currentIndexChanged.connect(self._on_settings_now_style_changed)
+        self._sync_settings_overlay_rows()
         ov.addRow("", self.floating_now_topmost)
         ov.addRow("", self.floating_now_transparent)
         ov.addRow(i18n.t("floating_now"), self.settings_floating_btn)
@@ -1685,6 +1747,27 @@ class SettingsPage(Page):
             "host": conn.labelForField(self.host),
         }
 
+    def _on_settings_now_style_changed(self) -> None:
+        new_style = normalize_now_style(self.settings_now_style.currentData())
+        pos = self.settings_now_pos.currentData()
+        migrated = migrate_now_pos_for_style(self._settings_now_style, new_style, pos)
+        self._settings_now_style = new_style
+        _repopulate_overlay_now_pos(self.settings_now_pos, self._i18n, new_style, migrated)
+        self._sync_settings_overlay_rows()
+
+    def _sync_settings_overlay_rows(self) -> None:
+        now = self.overlay_layout.currentData() == "nowplaying"
+        for w in (
+            self.settings_now_style,
+            self.settings_now_pos,
+            self.settings_now_pos_doc,
+        ):
+            w.setVisible(now)
+        self.settings_corner_label.setVisible(not now)
+        self.overlay_corner.setVisible(not now)
+        self.settings_now_pos_doc.setVisible(
+            now and normalize_now_style(self.settings_now_style.currentData()) == "panel")
+
     def load_settings(self, data: dict) -> None:
         idx = self.mode.findData(data.get("mode", "auto"))
         self.mode.setCurrentIndex(max(0, idx))
@@ -1713,8 +1796,13 @@ class SettingsPage(Page):
         self.overlay_layout.setCurrentIndex(max(0, idx))
         idx = self.overlay_corner.findData(data.get("overlay_corner", "bl"))
         self.overlay_corner.setCurrentIndex(max(0, idx))
-        idx = self.settings_now_pos.findData(data.get("overlay_now_pos", "left"))
-        self.settings_now_pos.setCurrentIndex(max(0, idx))
+        style = normalize_now_style(data.get("overlay_now_style", "card"))
+        self._settings_now_style = style
+        idx = self.settings_now_style.findData(style)
+        self.settings_now_style.setCurrentIndex(max(0, idx))
+        _repopulate_overlay_now_pos(
+            self.settings_now_pos, self._i18n, style, data.get("overlay_now_pos", "left"))
+        self._sync_settings_overlay_rows()
         self.floating_now_topmost.setChecked(bool(data.get("floating_now_topmost", True)))
         self.floating_now_transparent.setChecked(bool(data.get("floating_now_transparent", True)))
         idx = self.overlay_decks.findData(int(data.get("overlay_decks", 1)))
@@ -1750,6 +1838,7 @@ class SettingsPage(Page):
             "show_empty_decks": self.show_empty.isChecked(),
             "poll_hz": self.poll_hz.value(),
             "overlay_layout": self.overlay_layout.currentData(),
+            "overlay_now_style": self.settings_now_style.currentData(),
             "overlay_now_pos": self.settings_now_pos.currentData(),
             "overlay_corner": self.overlay_corner.currentData(),
             "overlay_decks": self.overlay_decks.currentData(),

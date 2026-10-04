@@ -54,9 +54,17 @@ STRINGS = {
     "copied": "Copied to clipboard",
     "overlay_url": "Browser Source URL",
     "overlay_layout": "Layout",
-    "overlay_now_pos": "Now playing card side",
+    "overlay_now_style": "Now playing style",
+    "overlay_now_style_card": "Card (artwork + overview wave)",
+    "overlay_now_style_panel": "Panel (full-width scrolling wave)",
+    "overlay_now_pos": "Now playing position",
     "overlay_now_pos_left": "Left (bottom)",
     "overlay_now_pos_right": "Right (bottom)",
+    "overlay_now_pos_bottom": "Bottom (full width)",
+    "overlay_now_pos_top": "Top (full width)",
+    "floating_now_panel_pos_doc": (
+        "Panel style: Bottom puts track info above the waveform; Top puts the waveform above the info."
+    ),
     "overlay_corner": "Corner",
     "floating_now": "Floating now playing",
     "floating_now_title": "Now playing",

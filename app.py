@@ -452,6 +452,27 @@ class Monitor:
             "waveform_color": color if color in ("blue", "rgb", "3band") else None,
         }
 
+    def _display_prefs(self) -> dict:
+        """GUI display prefs pushed to web clients (overlay + panel)."""
+        show_phrases = bool(getattr(self, "show_phrases", True))
+        zoom_bars = 4
+        playhead_position = "auto"
+        try:
+            from gui.settings import load_settings
+
+            prefs = load_settings()
+            zoom_bars = int(prefs.get("zoom_bars") or 4)
+            if zoom_bars not in (1, 2, 4, 8, 16):
+                zoom_bars = 4
+            playhead_position = str(prefs.get("playhead_position") or "auto")
+        except Exception:
+            pass
+        return {
+            "show_phrases": show_phrases,
+            "zoom_bars": zoom_bars,
+            "playhead_position": playhead_position,
+        }
+
     def paint_state(self) -> dict:
         """Lightweight playhead snapshot for high-rate SSE / paint clients."""
         decks = []
@@ -560,7 +581,7 @@ class Monitor:
             "t": time.time(),
             "paint": False,
             "decks": decks,
-            "display": {"show_phrases": bool(getattr(self, "show_phrases", True))},
+            "display": self._display_prefs(),
             "devices": devices,
             "packets": self.engine.packets,
             "mode": getattr(self.engine.source, "description", ""),
