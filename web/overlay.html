@@ -325,6 +325,8 @@ const layout = ['nowplaying','dual','minimal','setlist'].includes(params.get('la
   ? params.get('layout') : 'nowplaying';
 const corner = ['bl','br','tl','tr','center'].includes(params.get('corner'))
   ? params.get('corner') : 'bl';
+const nowPosRaw = (params.get('pos') || 'left').toLowerCase();
+const nowPos = nowPosRaw === 'right' ? 'right' : 'left';
 const onlyPlaying = params.get('playing') !== '0';
 const preview = params.get('preview') === '1';
 const useMix = params.get('mix') !== '0';
@@ -346,7 +348,13 @@ const accent = /^#?[0-9a-fA-F]{6}$/.test(accentParam)
 
 if (preview) document.body.classList.add('preview');
 const root = document.getElementById('root');
-root.classList.add('corner-' + corner);
+if (layout === 'nowplaying') {
+  // Bottom-aligned; card hugs the left or right edge of the canvas.
+  root.classList.add(nowPos === 'right' ? 'corner-br' : 'corner-bl');
+  root.classList.add('now-pos-' + nowPos);
+} else {
+  root.classList.add('corner-' + corner);
+}
 if (spread) root.classList.add('spread');
 if (!showTags) root.classList.add('hide-tags');
 if (!showBpm) root.classList.add('hide-bpm');
