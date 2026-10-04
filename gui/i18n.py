@@ -203,6 +203,17 @@ STRINGS = {
     "health_onelibrary_path": "Cached DB",
     "health_onelibrary_pyrekordbox": "pyrekordbox",
     "health_library_source": "Library source",
+    "health_artwork_source": "Artwork source",
+    "health_artwork_hint": (
+        "Per-deck source for the last fetched cover: embedded (audio file), "
+        "remotedb-hires / remotedb (live dbserver), nfs-hires (_m.jpg), or thumbnail."
+    ),
+    "local_music_root": "Local music library folder",
+    "local_music_root_tip": (
+        "Optional folder on this PC that mirrors the player USB layout "
+        "(e.g. contents/…). Used to read embedded ID3/FLAC cover art without "
+        "copying the full audio file from the player."
+    ),
     "health_onelibrary_hint": (
         "Prefer live Pro DJ Link dbserver (TCP port from 12523) for playlists and track lists. "
         "When that fails, the app falls back to NFS-cached export.pdb / exportLibrary.db "

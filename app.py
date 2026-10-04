@@ -63,6 +63,9 @@ class Monitor:
         self._library_cache_key: tuple | None = None
         self._library_cache: tuple[dict | None, str | None, dict | None] = (None, None, None)
         self._remotedb_fail: dict[str, str] = {}
+        self._art_cache: dict[tuple, tuple[bytes, str]] = {}
+        self._art_source_by_deck: dict[int, str] = {}
+        self._last_art_source: str = "none"
 
     def _device_number_for_host(self, host: str) -> int | None:
         with self.engine.lock:
@@ -254,7 +257,8 @@ class Monitor:
             "track_bpm": t.tempo if t else 0.0,
             "duration_ms": length,
             "bitrate": t.bitrate if t else 0,
-            "has_artwork": bool(t and t.artwork_path),
+            "has_artwork": bool(
+                t and (t.artwork_path or t.artwork_id or t.file_path)),
             "beats": [[b.time, b.number] for b in a.beats],
             "cues": [{"hot": c.hot_cue, "type": c.type, "t": c.time,
                       "end": c.loop_time, "color": c.color, "text": c.comment}
@@ -326,11 +330,56 @@ class Monitor:
             return self._meta.get(key)
 
     def artwork(self, track_id: int, *, deck: int | None = None) -> bytes | None:
+        from prolink.artwork import resolve_artwork
+
         key = self._resolve_key(track_id, deck)
         if key is None:
             return None
-        _host, media = self._media_for_key(key)
-        return media.artwork(track_id) if media else None
+        with self._lock:
+            cached = self._art_cache.get(key)
+            if cached is not None:
+                self._last_art_source = cached[1]
+                if deck is not None:
+                    self._art_source_by_deck[int(deck)] = cached[1]
+                return cached[0]
+        host, media = self._media_for_key(key)
+        if not media:
+            return None
+        track = media.track(track_id)
+        slot = str(key[3]) if len(key) > 3 else ""
+        local_root = ""
+        try:
+            from gui.settings import load_settings
+
+            local_root = str(load_settings().get("local_music_root") or "")
+        except Exception:
+            pass
+        open_db = (lambda h=host: self._open_remotedb(h)) if host else None
+        data, source = resolve_artwork(
+            track,
+            media,
+            host=host or "",
+            slot=slot,
+            open_remotedb=open_db,
+            local_music_root=local_root,
+        )
+        if data:
+            with self._lock:
+                self._art_cache[key] = (data, source)
+                self._last_art_source = source
+                if deck is not None:
+                    self._art_source_by_deck[int(deck)] = source
+                while len(self._art_cache) > 48:
+                    self._art_cache.pop(next(iter(self._art_cache)))
+        return data
+
+    def artwork_source(self, *, deck: int | None = None) -> str:
+        if deck is not None:
+            with self._lock:
+                if int(deck) in self._art_source_by_deck:
+                    return self._art_source_by_deck[int(deck)]
+        with self._lock:
+            return self._last_art_source or "none"
 
     def deck_track_key(self, deck_number: int, track_id: int) -> str:
         if not track_id:
@@ -789,6 +838,15 @@ class Monitor:
         remotedb_fail = getattr(self, "_remotedb_fail", None) or {}
         if remotedb_fail and library_source.get("source") != "remotedb":
             library_source["remotedb_error"] = next(iter(remotedb_fail.values()))
+        art_sources: dict[str, str] = {}
+        lock = getattr(self, "_lock", None)
+        if lock is not None:
+            with lock:
+                for dnum, src in getattr(self, "_art_source_by_deck", {}).items():
+                    art_sources[str(dnum)] = src
+                last_art = getattr(self, "_last_art_source", "none") or "none"
+        else:
+            last_art = "none"
         mix = self.mixstatus.as_state()
         nfs_health: list[dict] = []
         with self.library.lock:
@@ -820,6 +878,8 @@ class Monitor:
             "library": totals,
             "library_error": library_error,
             "library_source": library_source,
+            "artwork_sources": art_sources,
+            "artwork_source_last": last_art,
             "onelibrary": onelibrary_info,
             "nfs": nfs_health,
             "mix": mix,
