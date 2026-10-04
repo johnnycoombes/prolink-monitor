@@ -36,6 +36,41 @@ from prolink.track_key import keys_match, track_cache_key, track_key_token  # no
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
+
+def _az_mode_value(engine) -> str | None:
+    """Health-page value. Ignores stand-ins that are not a real mode string."""
+    fn = getattr(engine, "az_mode", None)
+    mode = fn() if callable(fn) else None
+    if mode in ("pro_dj_link", "four_deck"):
+        return mode
+    return None
+
+
+def _fields_from_track(track) -> dict:
+    """Copy display fields off a pdb or OneLibrary track."""
+    if track is None:
+        return {}
+    return {
+        "title": getattr(track, "title", "") or "",
+        "artist": getattr(track, "artist", "") or "",
+        "album": getattr(track, "album", "") or "",
+        "genre": getattr(track, "genre", "") or "",
+        "key": getattr(track, "key", "") or "",
+        "label": getattr(track, "label", "") or "",
+        "comment": getattr(track, "comment", "") or "",
+        "year": int(getattr(track, "year", 0) or 0),
+        "rating": int(getattr(track, "rating", 0) or 0),
+        "tempo": float(getattr(track, "tempo", 0) or 0),
+        "duration_s": int(getattr(track, "duration", 0) or 0),
+        "bitrate": int(getattr(track, "bitrate", 0) or 0),
+        "artwork_id": int(getattr(track, "artwork_id", 0) or 0),
+        "has_artwork": bool(
+            getattr(track, "artwork_path", "")
+            or getattr(track, "artwork_id", 0)
+            or getattr(track, "file_path", "")
+        ),
+    }
+
 OVERVIEW_COLUMNS = 1600          # resolution of the track overview we send
 
 
@@ -79,26 +114,35 @@ class Monitor:
         vn = getattr(src, "device_number", None)
         return choose_requesting_player(vn)
 
-    def _media_slot_for_db(self) -> int:
-        for d in self.engine.active_decks():
-            s = d.status
-            if s is None:
-                continue
-            if s.slot == "usb":
-                return remotedb_wire.SLOT_USB
-            if s.slot == "sd":
-                return remotedb_wire.SLOT_SD
-        return remotedb_wire.SLOT_USB
+    def _db_slot_for_status(self, status) -> int:
+        """Sr byte for this deck's loaded track, not for some other deck."""
+        if status is None:
+            return 0
+        return remotedb_wire.slot_byte(
+            getattr(status, "slot", "") or "",
+            int(getattr(status, "slot_raw", 0) or 0),
+        )
 
-    def _open_remotedb(self, host: str) -> RemoteDbBrowser | None:
+    def _library_db_slots(self) -> list[int]:
+        """Every SD/USB slot currently loaded, in deck order. Defaults to USB."""
+        found: list[int] = []
+        for d in self.engine.active_decks():
+            byte = self._db_slot_for_status(getattr(d, "status", None))
+            if byte in remotedb_wire.LIBRARY_SLOTS and byte not in found:
+                found.append(byte)
+        return found or [remotedb_wire.SLOT_USB]
+
+    def _open_remotedb(self, host: str, slot: int | None = None) -> RemoteDbBrowser | None:
         target = self._device_number_for_host(host)
         if target is None:
             return None
+        if slot is None:
+            slot = self._library_db_slots()[0]
         return RemoteDbBrowser(
             host=host,
             target_player=target,
             requesting_player=self._requesting_player_for_db(),
-            slot=self._media_slot_for_db(),
+            slot=int(slot),
         )
 
     def _cache_key(self, host: str, media, track_id: int, slot: str = "") -> tuple:
@@ -170,44 +214,155 @@ class Monitor:
                 return device.ip
         return self.host
 
+    def _fetch_live_metadata(self, host: str, track_id: int, slot_name: str,
+                             slot_raw: int, type_name: str, type_raw: int) -> dict | None:
+        """Read-only dbserver metadata for this deck's slot. None on any failure."""
+        slot = remotedb_wire.slot_byte(slot_name, slot_raw)
+        if slot <= 0 or not host or not track_id:
+            return None
+        track_type = remotedb_wire.track_type_byte(type_name, type_raw)
+        browser = self._open_remotedb(host, slot=slot)
+        if browser is None:
+            return None
+        try:
+            with browser:
+                meta = browser.track_metadata(track_id, track_type=track_type)
+        except Exception:
+            return None
+        if not meta:
+            return None
+        if not (str(meta.get("title") or "").strip() or str(meta.get("artist") or "").strip()):
+            return None
+        meta["library_source"] = "remotedb"
+        return meta
+
     def _on_track_change(self, deck: link.Deck, track_id: int) -> None:
-        """A track was loaded: fetch its beat grid for the playhead and its waveform."""
+        """A track was loaded: metadata for this deck's slot, then its waveform."""
         if not track_id:
             with self._lock:
                 self._deck_keys.pop(deck.number, None)
             return
         status = deck.status
-        if status is not None and status.slot == "rekordbox":
-            return                       # streamed from rekordbox, not on any medium
-        host = self._host_for(status)
-        if not host:
-            return
-        media = self.library.get(host)
-        if media is None:
-            self.library.retry(host)
-            media = self.library.get(host)
-        if media is None:
-            return
         slot = (status.slot if status else "") or ""
-        key = self._cache_key(host, media, track_id, slot)
+        slot_raw = int(getattr(status, "slot_raw", 0) or 0) if status else 0
+        type_name = (status.track_type if status else "") or ""
+        type_raw = int(getattr(status, "track_type_raw", 0) or 0) if status else 0
+        player_name = (status.name if status else "") or ""
+        host = self._host_for(status) or ""
+
+        live = None
+        if host:
+            live = self._fetch_live_metadata(
+                host, track_id, slot, slot_raw, type_name, type_raw)
+
+        remote_only = slot in ("rekordbox", "beatport", "direct_play", "streaming")
+        media = None
+        copied = None
+        copied_src = ""
+        if host and not remote_only:
+            media = self.library.get(host)
+            if media is None:
+                self.library.retry(host)
+                media = self.library.get(host)
+            if media is not None:
+                copied, copied_src = media.copied_track(
+                    track_id, prefer_onelibrary=proto.is_xdj_az(player_name))
+
+        key = self._key_for(host, media, track_id, slot)
+        # The dbserver query above can outlive the track. Only bind the deck
+        # when it is still on this id; the cache entry is kept either way.
+        if self._deck_still_on(deck, track_id):
+            with self._lock:
+                self._deck_keys[deck.number] = key
+
+        analysis = None
+        if media is not None and copied is not None:
+            try:
+                analysis = media.analysis(track_id, track=copied)
+            except Exception:
+                analysis = None
+        if analysis is not None and copied is not None and media is not None:
+            if self._deck_still_on(deck, track_id):
+                length = analysis.duration_ms or ((copied.duration * 1000) if copied else 0)
+                deck.set_beat_grid([b.time for b in analysis.beats], length)
+            self._build(host, media, track_id, analysis, copied, slot=slot)
+            self._finish_meta(
+                key, live, slot=slot, track_type=type_name, fallback_source=copied_src)
+            return
+
+        fields: dict = {}
+        if live:
+            fields.update(live)
+        elif copied is not None:
+            fields.update(_fields_from_track(copied))
+            fields["library_source"] = copied_src
+        self._publish_basic(
+            key, track_id, fields, slot=slot, track_type=type_name,
+            fallback_source=copied_src if not live else "remotedb")
+
+    @staticmethod
+    def _deck_still_on(deck, track_id: int) -> bool:
+        current = getattr(deck, "status", None)
+        return current is not None and getattr(current, "track_id", None) == track_id
+
+    def _key_for(self, host: str, media, track_id: int, slot: str) -> tuple:
+        if media is not None:
+            return self._cache_key(host, media, track_id, slot)
+        return track_cache_key(host or "", "", None, slot, track_id)
+
+    def _finish_meta(self, key: tuple, live: dict | None, *, slot: str,
+                     track_type: str, fallback_source: str) -> None:
+        """Prefer live dbserver fields. Label a stream when the title is blank."""
         with self._lock:
-            self._deck_keys[deck.number] = key
-        try:
-            a = media.analysis(track_id)
-        except Exception:
-            return
-        if a is None:
-            return
-        # Fast loads can finish after the deck already moved on — never attach
-        # another track's grid to the current one.
-        current = deck.status
-        if current is None or current.track_id != track_id:
-            self._build(host, media, track_id, a, media.track(track_id), slot=slot)
-            return
-        t = media.track(track_id)
-        length = a.duration_ms or ((t.duration * 1000) if t else 0)
-        deck.set_beat_grid([b.time for b in a.beats], length)
-        self._build(host, media, track_id, a, t, slot=slot)
+            meta = self._meta.get(key)
+            if meta is None:
+                return
+            if live:
+                for field in ("title", "artist", "album", "genre", "key", "label", "comment"):
+                    text = str(live.get(field) or "").strip()
+                    if text:
+                        meta[field] = text
+                art_id = int(live.get("artwork_id") or 0)
+                if art_id:
+                    meta["artwork_id"] = art_id
+                    meta["has_artwork"] = True
+                if live.get("tempo"):
+                    meta["track_bpm"] = float(live["tempo"])
+                meta["library_source"] = "remotedb"
+            else:
+                meta["library_source"] = fallback_source or meta.get("library_source") or ""
+            self._meta[key] = proto.apply_source_label(meta, slot, track_type)
+
+    def _publish_basic(self, key: tuple, track_id: int, fields: dict, *,
+                       slot: str, track_type: str, fallback_source: str) -> None:
+        duration_s = int(fields.get("duration_s") or 0)
+        meta = {
+            "id": track_id,
+            "track_key": track_key_token(key),
+            "title": str(fields.get("title") or ""),
+            "artist": str(fields.get("artist") or ""),
+            "album": str(fields.get("album") or ""),
+            "genre": str(fields.get("genre") or ""),
+            "key": str(fields.get("key") or ""),
+            "label": str(fields.get("label") or ""),
+            "comment": str(fields.get("comment") or ""),
+            "year": int(fields.get("year") or 0),
+            "rating": int(fields.get("rating") or 0),
+            "track_bpm": float(fields.get("tempo") or fields.get("track_bpm") or 0),
+            "duration_ms": int(fields.get("duration_ms") or (duration_s * 1000)),
+            "bitrate": int(fields.get("bitrate") or 0),
+            "artwork_id": int(fields.get("artwork_id") or 0),
+            "has_artwork": bool(fields.get("artwork_id") or fields.get("has_artwork")),
+            "library_source": fields.get("library_source") or fallback_source or "",
+            "beats": [],
+            "cues": [],
+            "phrases": [],
+            "detail_columns": 0,
+            "overview_columns": 0,
+        }
+        meta = proto.apply_source_label(meta, slot, track_type)
+        with self._lock:
+            self._meta[key] = meta
 
     def _build(self, host: str, media, track_id: int, a: anlz.Analysis, t,
                *, slot: str = "") -> None:
@@ -306,10 +461,16 @@ class Monitor:
         host, media = self._media_for_key(key)
         if not host or media is None:
             return
-        a = media.analysis(track_id)
+        prefer = False
+        if deck is not None:
+            holder = self.engine.decks.get(int(deck))
+            status = holder.status if holder is not None else None
+            prefer = proto.is_xdj_az(getattr(status, "name", "") or "")
+        copied, _src = media.copied_track(track_id, prefer_onelibrary=prefer)
+        a = media.analysis(track_id, track=copied)
         if a is not None:
             slot = str(key[3]) if len(key) > 3 else ""
-            self._build(host, media, track_id, a, media.track(track_id), slot=slot)
+            self._build(host, media, track_id, a, copied, slot=slot)
 
     def waveform(self, track_id: int, *, deck: int | None = None) -> bytes | None:
         self.ensure(track_id, deck=deck)
@@ -343,10 +504,33 @@ class Monitor:
                     self._art_source_by_deck[int(deck)] = cached[1]
                 return cached[0]
         host, media = self._media_for_key(key)
-        if not media:
-            return None
-        track = media.track(track_id)
         slot = str(key[3]) if len(key) > 3 else ""
+        status = None
+        if deck is not None:
+            holder = self.engine.decks.get(int(deck))
+            status = holder.status if holder is not None else None
+        raw = 0
+        if status is not None and (not slot or getattr(status, "slot", "") == slot):
+            raw = int(getattr(status, "slot_raw", 0) or 0)
+        byte = remotedb_wire.slot_byte(slot, raw) or remotedb_wire.SLOT_USB
+        cached_meta = self.meta(track_id, deck=deck, load=False) or {}
+        art_id = int(cached_meta.get("artwork_id") or 0)
+        if not media:
+            data = self._artwork_from_db(host or "", art_id, byte) if host and art_id else None
+            if data:
+                with self._lock:
+                    self._art_cache[key] = (data, "remotedb")
+                    self._last_art_source = "remotedb"
+                    if deck is not None:
+                        self._art_source_by_deck[int(deck)] = "remotedb"
+            return data
+        prefer = proto.is_xdj_az(getattr(status, "name", "") or "")
+        track, _src = media.copied_track(track_id, prefer_onelibrary=prefer)
+        if track is not None and art_id and not track.artwork_id:
+            track.artwork_id = art_id
+        elif track is None and art_id:
+            from prolink.pdb import Track
+            track = Track(id=track_id, artwork_id=art_id)
         local_root = ""
         try:
             from gui.settings import load_settings
@@ -354,7 +538,7 @@ class Monitor:
             local_root = str(load_settings().get("local_music_root") or "")
         except Exception:
             pass
-        open_db = (lambda h=host: self._open_remotedb(h)) if host else None
+        open_db = (lambda h=host, b=byte: self._open_remotedb(h, slot=b)) if host else None
         data, source = resolve_artwork(
             track,
             media,
@@ -372,6 +556,26 @@ class Monitor:
                 while len(self._art_cache) > 48:
                     self._art_cache.pop(next(iter(self._art_cache)))
         return data
+
+    def _artwork_from_db(self, host: str, artwork_id: int, slot: int) -> bytes | None:
+        """Read-only album-art query when the NFS copy of the track is unavailable."""
+        if not host or not artwork_id:
+            return None
+        browser = self._open_remotedb(host, slot=slot)
+        if browser is None:
+            return None
+        from prolink.artwork_util import looks_like_image, normalize_artwork_jpeg
+
+        try:
+            with browser:
+                raw = browser.album_art(int(artwork_id), high_res=True)
+                if not raw:
+                    raw = browser.album_art(int(artwork_id), high_res=False)
+        except Exception:
+            return None
+        if raw and looks_like_image(raw):
+            return normalize_artwork_jpeg(raw)
+        return None
 
     def artwork_source(self, *, deck: int | None = None) -> str:
         if deck is not None:
@@ -405,16 +609,18 @@ class Monitor:
             hosts.append(host)
             media.refresh_if_stale()
             live_rows: list[dict] | None = None
-            browser = self._open_remotedb(host)
-            if browser is not None:
+            slots_ok: list[int] = []
+            player_detail = ""
+            for slot in self._library_db_slots():
+                browser = self._open_remotedb(host, slot=slot)
+                if browser is None:
+                    continue
                 try:
                     with browser:
-                        detail = (
-                            f"TCP dbserver · player {browser.target_player} "
-                            f"as client #{browser.requesting_player} slot {browser.slot}"
+                        player_detail = (
+                            f"player {browser.target_player} "
+                            f"as client #{browser.requesting_player}"
                         )
-                        media.set_library_source("remotedb", detail)
-                        source = "remotedb"
                         self._remotedb_fail.pop(host, None)
                         chunk: list[dict] = []
                         off = 0
@@ -426,23 +632,30 @@ class Monitor:
                             if len(page) < 64:
                                 break
                             off += 64
-                        live_rows = []
+                        if live_rows is None:
+                            live_rows = []
+                        slots_ok.append(int(browser.slot))
                         for row in chunk:
                             tid = int(row.get("id") or 0)
                             if not tid:
                                 continue
-                            title = str(row.get("name") or "")
-                            artist = str(row.get("subtitle") or "")
                             live_rows.append({
                                 "id": tid,
-                                "title": title,
-                                "artist": artist,
+                                "title": str(row.get("name") or ""),
+                                "artist": str(row.get("subtitle") or ""),
                                 "host": host,
+                                "slot": int(browser.slot),
                                 "source": "remotedb",
                             })
                 except Exception as exc:
                     self._remotedb_fail[host] = str(exc)
-                    live_rows = None
+            if live_rows is not None:
+                slot_text = ",".join(str(s) for s in slots_ok) or "?"
+                media.set_library_source(
+                    "remotedb",
+                    f"TCP dbserver · {player_detail} slots {slot_text}".strip(),
+                )
+                source = "remotedb"
             if live_rows is not None:
                 if q:
                     live_rows = [
@@ -491,17 +704,21 @@ class Monitor:
         library_source = "none"
         for host, media in media_list:
             media.refresh_if_stale()
-            browser = self._open_remotedb(host)
-            if browser is not None:
+            live_ok = False
+            for slot in self._library_db_slots():
+                browser = self._open_remotedb(host, slot=slot)
+                if browser is None:
+                    continue
                 try:
                     with browser:
                         detail = (
                             f"TCP dbserver · player {browser.target_player} "
-                            f"as client #{browser.requesting_player}"
+                            f"as client #{browser.requesting_player} slot {browser.slot}"
                         )
                         media.set_library_source("remotedb", detail)
                         library_source = "remotedb"
                         any_present = True
+                        live_ok = True
                         for row in browser.playlist_folder(0):
                             if row.get("folder"):
                                 continue
@@ -512,6 +729,7 @@ class Monitor:
                                 "id": pid,
                                 "name": row.get("name") or f"#{pid}",
                                 "host": host,
+                                "slot": int(browser.slot),
                                 "source": "remotedb",
                             })
                         for row in browser.history_entries():
@@ -522,13 +740,15 @@ class Monitor:
                                 "id": hid,
                                 "name": row.get("name") or f"#{hid}",
                                 "host": host,
+                                "slot": int(browser.slot),
                                 "source": "remotedb",
                             })
                         self._remotedb_fail.pop(host, None)
-                        continue
                 except Exception as exc:
                     self._remotedb_fail[host] = str(exc)
-                    errors.append({"host": host, "error": f"remotedb: {exc}"})
+                    errors.append({"host": host, "error": f"remotedb slot {slot}: {exc}"})
+            if live_ok:
+                continue
             summary = getattr(media, "onelibrary", None)
             if summary is not None and summary.present:
                 any_present = True
@@ -581,11 +801,15 @@ class Monitor:
             if host and h != host:
                 continue
             media.refresh_if_stale()
-            browser = self._open_remotedb(h)
-            if browser is not None:
+            for slot in self._library_db_slots():
+                browser = self._open_remotedb(h, slot=slot)
+                if browser is None:
+                    continue
                 try:
                     with browser:
                         rows = browser.playlist_tracks(playlist_id)[:limit]
+                        if not rows:
+                            continue
                         tracks = []
                         for row in rows:
                             tid = int(row.get("id") or 0)
@@ -596,8 +820,11 @@ class Monitor:
                                 "title": row.get("name") or "",
                                 "artist": row.get("subtitle") or "",
                                 "host": h,
+                                "slot": int(browser.slot),
                                 "source": "remotedb",
                             })
+                        if not tracks:
+                            continue
                         media.set_library_source("remotedb", browser.last_status.detail or "")
                         return {
                             "id": playlist_id,
@@ -874,6 +1101,7 @@ class Monitor:
             "mode": getattr(self.engine.source, "description", ""),
             "mode_kind": getattr(self.engine.source, "kind", ""),
             "mode_detail": getattr(self.engine.source, "detail", ""),
+            "az_mode": _az_mode_value(self.engine),
             "host": self.host or "",
             "library": totals,
             "library_error": library_error,

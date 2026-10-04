@@ -561,6 +561,17 @@ _POSITION_SOURCE_KEYS = {
     "none": "health_source_none",
 }
 
+_AZ_MODE_KEYS = {
+    "pro_dj_link": "health_az_pro",
+    "four_deck": "health_az_four",
+}
+
+
+def az_mode_label(i18n, mode: str | None) -> str:
+    """Health-page text for the detected XDJ-AZ link mode."""
+    key = _AZ_MODE_KEYS.get(str(mode or ""), "health_az_none")
+    return i18n.t(key)
+
 
 class HealthPage(Page):
     """Packet rates, AP vs beat-grid position source, and NFS RTT."""
@@ -602,6 +613,14 @@ class HealthPage(Page):
             grid.addWidget(lbl, 0, col)
             grid.addWidget(value, 1, col)
         ov_l.addLayout(grid)
+        self._az_lbl = QLabel(i18n.t("health_az_mode"))
+        self._az_lbl.setObjectName("Dim")
+        self._az_lbl.setStyleSheet(f"color:{COLORS['dim']}; font-size:11px;")
+        self._az_val = QLabel(i18n.t("health_az_none"))
+        self._az_val.setStyleSheet("font-family:monospace; font-size:14px; font-weight:600;")
+        self._az_val.setToolTip(i18n.t("health_az_hint"))
+        ov_l.addWidget(self._az_lbl)
+        ov_l.addWidget(self._az_val)
         self.layout_root.addWidget(overview)
 
         ol_frame = QFrame()
@@ -712,6 +731,8 @@ class HealthPage(Page):
         )
         for lbl, text in zip(self._overview_labels, titles):
             lbl.setText(text)
+        self._az_lbl.setText(self._i18n.t("health_az_mode"))
+        self._az_val.setToolTip(self._i18n.t("health_az_hint"))
         self._hint.setText(self._i18n.t("health_hint"))
         self._ol_title.setText(self._i18n.t("health_onelibrary"))
         self._ol_hint.setText(self._i18n.t("health_onelibrary_hint"))
@@ -769,6 +790,7 @@ class HealthPage(Page):
         host = state.get("host") or "—"
         self._mode_val.setText(str(mode))
         self._host_val.setText(str(host))
+        self._az_val.setText(az_mode_label(self._i18n, state.get("az_mode")))
         self._pkts_val.setText(f"{packets:,}")
 
         rate: float | None = None

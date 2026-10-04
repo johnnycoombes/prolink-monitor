@@ -19,6 +19,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import pdb
+
 ONE_LIBRARY_PATH = "PIONEER/rekordbox/exportLibrary.db"
 
 
@@ -143,6 +145,27 @@ def track_from_content(content: Any) -> OneLibraryTrack:
         year=int(getattr(content, "releaseYear", 0) or 0),
         bitrate=int(getattr(content, "bitrate", 0) or 0),
         comment=getattr(content, "djComment", "") or "",
+    )
+
+
+def as_pdb_track(track: OneLibraryTrack) -> pdb.Track:
+    """Same shape as an export.pdb row so callers can share one code path."""
+    return pdb.Track(
+        id=int(track.id or 0),
+        title=track.title or "",
+        artist=track.artist or "",
+        album=track.album or "",
+        genre=track.genre or "",
+        key=track.key or "",
+        label=track.label or "",
+        comment=track.comment or "",
+        duration=int((track.duration_ms or 0) / 1000),
+        tempo=float(track.tempo or 0),
+        rating=int(track.rating or 0),
+        year=int(track.year or 0),
+        bitrate=int(track.bitrate or 0),
+        analyze_path=track.analyze_path or "",
+        artwork_path=track.artwork_path or "",
     )
 
 
