@@ -202,12 +202,17 @@ STRINGS = {
     "health_onelibrary_status": "Status",
     "health_onelibrary_path": "Cached DB",
     "health_onelibrary_pyrekordbox": "pyrekordbox",
+    "health_library_source": "Library source",
     "health_onelibrary_hint": (
-        "Playlists on the player USB live in PIONEER/rekordbox/exportLibrary.db (SQLCipher). "
-        "Track browse still uses export.pdb. Install pyrekordbox @ GitHub master "
-        "(requirements-onelibrary.txt). This app only reads and caches the DB locally — "
-        "never writes to the USB."
+        "Prefer live Pro DJ Link dbserver (TCP port from 12523) for playlists and track lists. "
+        "When that fails, the app falls back to NFS-cached export.pdb / exportLibrary.db "
+        "(never written back to the player). OneLibrary still needs pyrekordbox for the "
+        "encrypted USB file when dbserver is unavailable."
     ),
+    "library_source_label": "Source",
+    "library_source_remotedb": "Live (dbserver / ProLink)",
+    "library_source_nfs": "Fallback (NFS file cache)",
+    "library_source_none": "Not connected",
     "health_nfs": "NFS LATENCY",
     "health_packets_total": "Status packets",
     "health_packet_rate": "Packet rate",

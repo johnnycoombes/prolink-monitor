@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
 
 from PySide6.QtCore import QObject, QPoint, Qt, QTimer, QUrl, Slot
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QSizeGrip, QVBoxLayout, QWidget
+
+_log = logging.getLogger(__name__)
 
 from gui.overlay_now import normalize_now_style
 from prolink.audience_deck import merge_live_deck
@@ -54,6 +57,29 @@ def webengine_available() -> bool:
     return _HAS_WEBENGINE
 
 
+class _FloatingDragHandle(QWidget):
+    """Native drag strip — uses OS window move (works when WebEngine swallows events)."""
+
+    def __init__(self, window: "FloatingNowPlayingWindow", parent=None) -> None:
+        super().__init__(parent)
+        self._window = window
+        self.setObjectName("FloatingDragHandle")
+        self.setFixedHeight(10)
+        self.setCursor(Qt.SizeAllCursor)
+        self.setToolTip("Drag to move")
+        self.setStyleSheet(
+            "#FloatingDragHandle{background:rgba(255,255,255,0.06);}"
+            "#FloatingDragHandle:hover{background:rgba(255,255,255,0.18);}"
+        )
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton:
+            self._window._begin_system_drag("handle")
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
 class _FloatingDragBridge(QObject):
     """JS → Qt drag bridge (Chromium eats mouse events before Qt event filters)."""
 
@@ -63,7 +89,7 @@ class _FloatingDragBridge(QObject):
 
     @Slot(int, int)
     def dragStart(self, global_x: int, global_y: int) -> None:
-        self._window._begin_drag(global_x, global_y)
+        self._window._begin_drag(global_x, global_y, origin="bridge")
 
     @Slot(int, int)
     def dragMove(self, global_x: int, global_y: int) -> None:
@@ -109,6 +135,9 @@ class FloatingNowPlayingWindow(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
+        self._drag_handle = _FloatingDragHandle(self)
+        outer.addWidget(self._drag_handle, 0)
+
         self._web = QWebEngineView(self)
         self._web.setContextMenuPolicy(Qt.NoContextMenu)
         self._web.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -144,12 +173,31 @@ class FloatingNowPlayingWindow(QWidget):
         self._apply_transparency()
         self._apply_mode_visibility()
 
-    def _begin_drag(self, global_x: int, global_y: int) -> None:
+    def _begin_system_drag(self, origin: str) -> None:
+        """Ask the window manager to move the frameless window (Qt 5.15+ / 6)."""
+        wh = self.windowHandle()
+        if wh is not None and hasattr(wh, "startSystemMove"):
+            _log.info("floating now playing: startSystemMove (%s)", origin)
+            wh.startSystemMove()
+            self._dragging = True
+            return
+        _log.warning("floating now playing: startSystemMove unavailable (%s)", origin)
+
+    def _begin_drag(self, global_x: int, global_y: int, *, origin: str = "bridge") -> None:
+        wh = self.windowHandle()
+        if wh is not None and hasattr(wh, "startSystemMove"):
+            _log.info("floating now playing: startSystemMove (%s)", origin)
+            wh.startSystemMove()
+            self._dragging = True
+            return
+        _log.info("floating now playing: manual grabMouse drag (%s)", origin)
         self._drag_offset = QPoint(global_x, global_y) - self.frameGeometry().topLeft()
         self._dragging = True
         self.grabMouse()
 
     def _drag_to(self, global_x: int, global_y: int) -> None:
+        if self._drag_offset is None:
+            return
         if self._drag_offset is None:
             return
         self.move(QPoint(global_x, global_y) - self._drag_offset)

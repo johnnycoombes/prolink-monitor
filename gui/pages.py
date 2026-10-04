@@ -621,8 +621,12 @@ class HealthPage(Page):
             w.setWordWrap(True)
             w.setStyleSheet("font-family:monospace; font-size:13px;")
         self._ol_labels = []
+        self._lib_src_val = QLabel("—")
+        self._lib_src_val.setWordWrap(True)
+        self._lib_src_val.setStyleSheet("font-family:monospace; font-size:13px;")
         for col, (title, value) in enumerate((
             (i18n.t("health_onelibrary_status"), self._ol_status_val),
+            (i18n.t("health_library_source"), self._lib_src_val),
             (i18n.t("health_onelibrary_pyrekordbox"), self._ol_pkg_val),
             (i18n.t("health_onelibrary_path"), self._ol_path_val),
         )):
@@ -709,6 +713,7 @@ class HealthPage(Page):
         self._ol_hint.setText(self._i18n.t("health_onelibrary_hint"))
         ol_titles = (
             self._i18n.t("health_onelibrary_status"),
+            self._i18n.t("health_library_source"),
             self._i18n.t("health_onelibrary_pyrekordbox"),
             self._i18n.t("health_onelibrary_path"),
         )
@@ -774,6 +779,16 @@ class HealthPage(Page):
 
         ol = state.get("onelibrary") or {}
         lib_err = state.get("library_error")
+        src = state.get("library_source") or {}
+        src_name = str(src.get("source") or "none")
+        if src_name == "remotedb":
+            src_text = self._i18n.t("library_source_remotedb")
+        elif src_name == "nfs-cache":
+            src_text = self._i18n.t("library_source_nfs")
+        else:
+            src_text = self._i18n.t("library_source_none")
+        detail = src.get("detail") or src.get("remotedb_error") or ""
+        self._lib_src_val.setText(f"{src_text}\n{detail}" if detail else src_text)
         if ol.get("present"):
             if ol.get("readable"):
                 status = ol.get("detail") or "readable"
@@ -882,11 +897,14 @@ class LibraryPage(Page):
         self.host_label.setObjectName("Dim")
         self.onelibrary_label = QLabel("")
         self.onelibrary_label.setObjectName("Dim")
+        self.source_label = QLabel("")
+        self.source_label.setObjectName("Dim")
         self.multi_label = QLabel("")
         self.multi_label.setStyleSheet(f"color:{COLORS['accent']}; font-size:12px;")
         self.error_label = QLabel("")
         self.error_label.setStyleSheet(f"color:{COLORS['danger']};")
-        for w in (self.host_label, self.onelibrary_label, self.multi_label, self.error_label):
+        for w in (self.host_label, self.source_label, self.onelibrary_label,
+                  self.multi_label, self.error_label):
             self.layout_root.addWidget(w)
 
         tools = QHBoxLayout()
@@ -1111,6 +1129,15 @@ class LibraryPage(Page):
             label.setText(str(lib.get(key, "—")) if lib else "—")
         host = state.get("host") or ""
         self.host_label.setText(host)
+        src = state.get("library_source") or {}
+        src_name = str(src.get("source") or "none")
+        if src_name == "remotedb":
+            src_text = self._i18n.t("library_source_remotedb")
+        elif src_name == "nfs-cache":
+            src_text = self._i18n.t("library_source_nfs")
+        else:
+            src_text = self._i18n.t("library_source_none")
+        self.source_label.setText(src_text)
         ol = state.get("onelibrary")
         if ol and ol.get("present"):
             if ol.get("readable"):
