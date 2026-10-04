@@ -28,6 +28,7 @@ class Backend(QObject):
     status_changed = Signal(str, str)   # status key, detail message
     track_ready = Signal(int)           # track id whose meta/waveform is ready
     port_changed = Signal(int)          # actual bound HTTP port (may differ from settings)
+    wnp_test_finished = Signal(bool, str)
 
     # Full Monitor.state() + Devices/Library refresh; paint runs separately.
     STATE_HZ = 20
@@ -284,6 +285,8 @@ class Backend(QObject):
             source = build_source(args, net)
             monitor = Monitor(host, source, args.cache, local_ip=net.ip)
             monitor.show_phrases = bool(settings.get("show_phrases", True))
+            if getattr(monitor, "wnp", None) is not None:
+                monitor.wnp.configure(settings)
             monitor.start()
 
             server = None
@@ -385,6 +388,47 @@ class Backend(QObject):
         if self._monitor is None:
             return
         self.paint_tick.emit()
+
+    def test_wnp(self, settings: dict[str, Any]) -> None:
+        """Check What's Now Playing without blocking the UI thread."""
+
+        def run() -> None:
+            from prolink.wnp import audience_token, test_connection
+
+            deck, meta = self._audience_for_wnp()
+            result = test_connection(settings, deck, meta)
+            token = audience_token(deck) if result.ok else None
+            with self._lock:
+                mon = self._monitor
+            publisher = getattr(mon, "wnp", None) if mon is not None else None
+            if publisher is not None:
+                try:
+                    # An unsaved host or secret must not overwrite the live
+                    # Health line for the endpoint that is actually in use.
+                    if publisher.same_saved_target(settings):
+                        publisher.note(result, token=token)
+                except Exception:
+                    pass
+            self.wnp_test_finished.emit(bool(result.ok), result.detail)
+
+        threading.Thread(target=run, name="wnp-test", daemon=True).start()
+
+    def _audience_for_wnp(self) -> tuple[dict | None, dict | None]:
+        with self._lock:
+            mon = self._monitor
+        if mon is None:
+            return None, None
+        try:
+            deck = mon.state(notify_wnp=False).get("audience_deck")
+        except Exception:
+            return None, None
+        if not isinstance(deck, dict):
+            return None, None
+        try:
+            meta = mon._audience_meta(deck)
+        except Exception:
+            meta = None
+        return deck, meta
 
     def _set_status(self, status: str, detail: str) -> None:
         self._status = status

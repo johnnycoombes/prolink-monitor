@@ -67,10 +67,11 @@ def resolve_artwork(
     artwork_id = int(getattr(track, "artwork_id", 0) or 0)
     slot_byte = _slot_byte(slot)
 
-    # 3) dbserver high-res album art (Beat Link: ALBUM_ART_REQ + extra arg 1)
+    # 3) dbserver high-res album art (type 0x2003, extra arg 1 for high-res)
     if artwork_id and open_remotedb is not None:
         browser = open_remotedb()
         if browser is not None:
+            browser.slot = slot_byte
             try:
                 with browser:
                     raw = browser.album_art(artwork_id, high_res=True)
@@ -91,6 +92,7 @@ def resolve_artwork(
     if artwork_id and open_remotedb is not None:
         browser = open_remotedb()
         if browser is not None:
+            browser.slot = slot_byte
             try:
                 with browser:
                     raw = browser.album_art(artwork_id, high_res=False)
@@ -110,12 +112,9 @@ def resolve_artwork(
 
 
 def _slot_byte(slot: str) -> int:
-    s = (slot or "").lower()
-    if s == "sd":
-        return wire.SLOT_SD
-    if s in ("usb", "device"):
-        return wire.SLOT_USB
-    return wire.SLOT_USB
+    """Sr byte for this track. Unknown names stay on USB so older callers keep working."""
+    byte = wire.slot_byte(slot, 0)
+    return byte or wire.SLOT_USB
 
 
 def _cache_name(prefix: str, remote: str, suffix: str) -> str:

@@ -562,6 +562,17 @@ _POSITION_SOURCE_KEYS = {
     "none": "health_source_none",
 }
 
+_AZ_MODE_KEYS = {
+    "pro_dj_link": "health_az_pro",
+    "four_deck": "health_az_four",
+}
+
+
+def az_mode_label(i18n, mode: str | None) -> str:
+    """Health-page text for the detected XDJ-AZ link mode."""
+    key = _AZ_MODE_KEYS.get(str(mode or ""), "health_az_none")
+    return i18n.t(key)
+
 
 class HealthPage(Page):
     """Packet rates, AP vs beat-grid position source, and NFS RTT."""
@@ -604,11 +615,32 @@ class HealthPage(Page):
             grid.addWidget(lbl, 0, col)
             grid.addWidget(value, 1, col)
         ov_l.addLayout(grid)
+        self._az_lbl = QLabel(i18n.t("health_az_mode"))
+        self._az_lbl.setObjectName("Dim")
+        self._az_lbl.setStyleSheet(f"color:{COLORS['dim']}; font-size:11px;")
+        self._az_val = QLabel(i18n.t("health_az_none"))
+        self._az_val.setStyleSheet("font-family:monospace; font-size:14px; font-weight:600;")
+        self._az_val.setToolTip(i18n.t("health_az_hint"))
+        ov_l.addWidget(self._az_lbl)
+        ov_l.addWidget(self._az_val)
         self.layout_root.addWidget(overview)
 
         self.link_panel = LinkHealthPanel(i18n)
         self.link_panel.capture_requested.connect(self._start_capture)
         self.layout_root.addWidget(self.link_panel)
+
+        wnp_frame = QFrame()
+        wnp_frame.setObjectName("Card")
+        wnp_l = QVBoxLayout(wnp_frame)
+        wnp_l.setContentsMargins(18, 14, 18, 14)
+        self._wnp_title = QLabel(i18n.t("health_wnp"))
+        self._wnp_title.setObjectName("SectionTitle")
+        wnp_l.addWidget(self._wnp_title)
+        self._wnp_val = QLabel("Off")
+        self._wnp_val.setWordWrap(True)
+        self._wnp_val.setStyleSheet("font-family:monospace; font-size:13px;")
+        wnp_l.addWidget(self._wnp_val)
+        self.layout_root.addWidget(wnp_frame)
 
         ol_frame = QFrame()
         ol_frame.setObjectName("Card")
@@ -727,7 +759,10 @@ class HealthPage(Page):
         )
         for lbl, text in zip(self._overview_labels, titles):
             lbl.setText(text)
+        self._az_lbl.setText(self._i18n.t("health_az_mode"))
+        self._az_val.setToolTip(self._i18n.t("health_az_hint"))
         self._hint.setText(self._i18n.t("health_hint"))
+        self._wnp_title.setText(self._i18n.t("health_wnp"))
         self._ol_title.setText(self._i18n.t("health_onelibrary"))
         self._ol_hint.setText(self._i18n.t("health_onelibrary_hint"))
         ol_titles = (
@@ -760,6 +795,34 @@ class HealthPage(Page):
             self._i18n.t("health_col_nfs_timeouts"),
         ])
 
+    def _apply_wnp(self, wnp: dict) -> None:
+        status = str(wnp.get("status") or "disabled")
+        detail = str(wnp.get("detail") or "")
+        host = str(wnp.get("host") or "")
+        port = wnp.get("port") or ""
+        track = str(wnp.get("track") or "")
+        if status == "disabled" or not detail:
+            text = "Off" if status == "disabled" else (detail or "—")
+        else:
+            where = f"{host}:{port}" if host else ""
+            text = detail
+            if where and where not in detail:
+                text = f"{where} — {detail}"
+            if track and track not in text:
+                text = f"{text}\n{track}"
+        if status == "error":
+            color = COLORS["danger"]
+        elif status == "ok":
+            color = COLORS["ok"]
+        elif status == "waiting":
+            color = COLORS["warn"]
+        else:
+            color = COLORS["text"]
+        self._wnp_val.setText(text)
+        self._wnp_val.setStyleSheet(
+            f"font-family:monospace; font-size:13px; color:{color};"
+        )
+
     def _source_label(self, raw: str) -> str:
         key = _POSITION_SOURCE_KEYS.get(str(raw or "none"), "health_source_none")
         return self._i18n.t(key)
@@ -785,6 +848,7 @@ class HealthPage(Page):
         host = state.get("host") or "—"
         self._mode_val.setText(str(mode))
         self._host_val.setText(str(host))
+        self._az_val.setText(az_mode_label(self._i18n, state.get("az_mode")))
         self._pkts_val.setText(f"{packets:,}")
 
         rate: float | None = None
@@ -797,6 +861,7 @@ class HealthPage(Page):
         )
         self._prev_packets = packets
         self._prev_t = now
+        self._apply_wnp(state.get("wnp") or {})
 
         ol = state.get("onelibrary") or {}
         lib_err = state.get("library_error")
@@ -1860,6 +1925,38 @@ class SettingsPage(Page):
         sess.addRow(self.session_autosave)
         sess.addRow(i18n.t("session_autosave_dir"), self.session_autosave_dir)
 
+        wnp = section("section_wnp")
+        wnp_hint = QLabel(i18n.t("wnp_hint"))
+        wnp_hint.setWordWrap(True)
+        wnp_hint.setObjectName("Dim")
+        wnp_hint.setStyleSheet(f"color:{COLORS['dim']}; font-size:12px;")
+        self.wnp_enabled = QCheckBox(i18n.t("wnp_enable"))
+        self.wnp_host = QLineEdit()
+        self.wnp_host.setPlaceholderText("localhost")
+        self.wnp_port = QSpinBox()
+        self.wnp_port.setRange(1, 65535)
+        self.wnp_port.setValue(8899)
+        self.wnp_secret = QLineEdit()
+        self.wnp_secret.setEchoMode(QLineEdit.EchoMode.Password)
+        self.wnp_secret.setPlaceholderText("leave blank if What's Now Playing has no secret")
+        self.wnp_test_btn = QPushButton(i18n.t("wnp_test"))
+        self.wnp_test_btn.setCursor(Qt.PointingHandCursor)
+        self.wnp_test_result = QLabel("")
+        self.wnp_test_result.setWordWrap(True)
+        self.wnp_test_result.setObjectName("Dim")
+        test_row = QWidget()
+        test_lay = QHBoxLayout(test_row)
+        test_lay.setContentsMargins(0, 0, 0, 0)
+        test_lay.setSpacing(12)
+        test_lay.addWidget(self.wnp_test_btn)
+        test_lay.addWidget(self.wnp_test_result, 1)
+        wnp.addRow(wnp_hint)
+        wnp.addRow(self.wnp_enabled)
+        wnp.addRow(i18n.t("wnp_host"), self.wnp_host)
+        wnp.addRow(i18n.t("wnp_port"), self.wnp_port)
+        wnp.addRow(i18n.t("wnp_secret"), self.wnp_secret)
+        wnp.addRow("", test_row)
+
         beh = section("section_behaviour")
         self.auto_connect = QCheckBox(i18n.t("auto_connect"))
         self.start_web = QCheckBox(i18n.t("start_web"))
@@ -1963,6 +2060,13 @@ class SettingsPage(Page):
         self.overlay_wave.setCurrentIndex(max(0, idx))
         self.session_autosave.setChecked(bool(data.get("session_autosave", False)))
         self.session_autosave_dir.setText(data.get("session_autosave_dir") or "")
+        self.wnp_enabled.setChecked(bool(data.get("wnp_enabled", False)))
+        self.wnp_host.setText(data.get("wnp_host") or "localhost")
+        try:
+            self.wnp_port.setValue(int(data.get("wnp_port", 8899)))
+        except (TypeError, ValueError):
+            self.wnp_port.setValue(8899)
+        self.wnp_secret.setText(data.get("wnp_secret") or "")
         self.auto_connect.setChecked(bool(data.get("auto_connect", True)))
         self.start_web.setChecked(bool(data.get("start_web_server", True)))
         self.show_sidebar.setChecked(bool(data.get("sidebar_visible", True)))
@@ -2000,6 +2104,10 @@ class SettingsPage(Page):
             "floating_now_transparent": self.floating_now_transparent.isChecked(),
             "session_autosave": self.session_autosave.isChecked(),
             "session_autosave_dir": self.session_autosave_dir.text().strip(),
+            "wnp_enabled": self.wnp_enabled.isChecked(),
+            "wnp_host": self.wnp_host.text().strip(),
+            "wnp_port": self.wnp_port.value(),
+            "wnp_secret": self.wnp_secret.text().strip(),
             "auto_connect": self.auto_connect.isChecked(),
             "start_web_server": self.start_web.isChecked(),
             "sidebar_visible": self.show_sidebar.isChecked(),
@@ -2009,6 +2117,18 @@ class SettingsPage(Page):
         for key, cb in self.deck_checks.items():
             data[key] = cb.isChecked()
         return data
+
+    def set_wnp_test_result(self, text: str, ok: bool | None) -> None:
+        self.wnp_test_btn.setEnabled(ok is not None)
+        self.wnp_test_result.setText(text or "")
+        if ok is True:
+            color = COLORS["ok"]
+        elif ok is False:
+            color = COLORS["danger"]
+        else:
+            color = COLORS["dim"]
+            self.wnp_test_btn.setEnabled(False)
+        self.wnp_test_result.setStyleSheet(f"color:{color}; font-size:12px;")
 
     def _emit(self, reconnect: bool) -> None:
         self.saved.emit(self.collect(), reconnect)

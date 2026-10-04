@@ -1,8 +1,8 @@
 """Pioneer dbserver (RemoteDB) wire format — read-only TCP client helpers.
 
 Protocol described at https://djl-analysis.deepsymmetry.org/djl-analysis/track_metadata.html
-Message layout follows Deep Symmetry Beat Link (MIT); this module is an independent
-Python implementation for prolink-monitor.
+Independent Python implementation. Queries only; nothing here writes to the player
+or to a rekordbox database.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ TYPE_HISTORY_MENU = 0x1012
 TYPE_PLAYLIST = 0x1105
 TYPE_TRACK_MENU = 0x1004
 TYPE_REKORDBOX_METADATA = 0x2002
+TYPE_GENERIC_METADATA = 0x2202   # unanalyzed files and audio CDs
 TYPE_ALBUM_ART = 0x2003
 TYPE_RENDER_MENU = 0x3000
 TYPE_ALBUM_ART_RESP = 0x4002
@@ -38,8 +39,37 @@ TYPE_MENU_FOOTER = 0x4201
 MENU_MAIN = 1
 MENU_DATA = 8
 TRACK_REKORDBOX = 1
-SLOT_USB = 3
+TRACK_UNANALYZED = 2
+TRACK_CD = 5
+TRACK_STREAMING = 6
+SLOT_CD = 1
 SLOT_SD = 2
+SLOT_USB = 3
+SLOT_REKORDBOX = 4
+SLOT_DIRECT_PLAY = 6
+SLOT_USB2 = 7
+SLOT_BEATPORT = 9
+
+# Sr values that address a mounted library (not a stream or a laptop collection).
+LIBRARY_SLOTS = (SLOT_SD, SLOT_USB, SLOT_USB2)
+
+_SLOT_BY_NAME = {
+    "cd": SLOT_CD,
+    "sd": SLOT_SD,
+    "usb": SLOT_USB,
+    "device": SLOT_USB,
+    "rekordbox": SLOT_REKORDBOX,
+    "direct_play": SLOT_DIRECT_PLAY,
+    "usb2": SLOT_USB2,
+    "beatport": SLOT_BEATPORT,
+}
+
+_TRACK_TYPE_BY_NAME = {
+    "rekordbox": TRACK_REKORDBOX,
+    "file": TRACK_UNANALYZED,
+    "cd": TRACK_CD,
+    "streaming": TRACK_STREAMING,
+}
 
 MENU_BATCH = 64
 
@@ -81,6 +111,38 @@ def discover_db_port(host: str, *, timeout: float = 3.0) -> int:
     if port <= 0 or port >= 65535:
         raise DbServerError(f"invalid dbserver port {port:#x} from {host}")
     return port
+
+
+def slot_byte(name: str, raw: int = 0) -> int:
+    """Dbserver Sr byte for a parsed slot name, falling back to the raw status byte."""
+    if name in _SLOT_BY_NAME:
+        return _SLOT_BY_NAME[name]
+    raw_b = int(raw or 0) & 0xFF
+    if name == "streaming" and raw_b:
+        return raw_b
+    if name in ("unknown", "") and raw_b:
+        return raw_b
+    return 0
+
+
+def track_type_byte(name: str, raw: int = 0) -> int:
+    """Dbserver Tr byte. Unknown with no raw byte stays the rekordbox type."""
+    if name in _TRACK_TYPE_BY_NAME:
+        return _TRACK_TYPE_BY_NAME[name]
+    raw_b = int(raw or 0) & 0xFF
+    if raw_b:
+        return raw_b
+    return TRACK_REKORDBOX
+
+
+def metadata_message_type(track_type: int) -> int:
+    """0x2002 for rekordbox and streaming; 0x2202 for unanalyzed files and CDs.
+
+    Streaming (Tr 0x06, including Beatport) answers the standard metadata query.
+    """
+    if int(track_type) in (TRACK_UNANALYZED, TRACK_CD):
+        return TYPE_GENERIC_METADATA
+    return TYPE_REKORDBOX_METADATA
 
 
 def build_rmst(
@@ -318,6 +380,80 @@ def encode_album_art_request(
     return encode_message(tx_id, TYPE_ALBUM_ART, args)
 
 
+def encode_metadata_request(
+    tx_id: int,
+    requesting_player: int,
+    slot: int,
+    track_type: int,
+    track_id: int,
+) -> bytes:
+    """Read-only track-metadata query (menu of title, artist, and so on)."""
+    rmst = encode_number_arg(build_rmst(requesting_player, MENU_MAIN, slot, track_type))
+    return encode_message(
+        tx_id,
+        metadata_message_type(track_type),
+        [
+            (TAG_NUM, rmst),
+            (TAG_NUM, encode_number_arg(track_id)),
+        ],
+    )
+
+
+def metadata_from_items(items: Iterable[DbMessage]) -> dict[str, object]:
+    """Collapse a metadata render (menu items) into title / artist / artwork id."""
+    out: dict[str, object] = {
+        "title": "",
+        "artist": "",
+        "album": "",
+        "genre": "",
+        "key": "",
+        "label": "",
+        "comment": "",
+        "duration_s": 0,
+        "tempo": 0.0,
+        "artwork_id": 0,
+        "year": 0,
+        "bitrate": 0,
+        "rating": 0,
+    }
+    for msg in items:
+        if msg.msg_type != TYPE_MENU_ITEM or len(msg.args) < 7:
+            continue
+        kind = int(msg.args[6]) & 0xFFFF
+        text = msg.args[3] if len(msg.args) > 3 and isinstance(msg.args[3], str) else ""
+        number = int(msg.args[1]) if isinstance(msg.args[1], int) else 0
+        if kind == 0x04:
+            out["title"] = text
+            if len(msg.args) > 8 and isinstance(msg.args[8], int):
+                out["artwork_id"] = int(msg.args[8])
+        elif kind == 0x07:
+            out["artist"] = text
+        elif kind == 0x02:
+            out["album"] = text
+        elif kind == 0x06:
+            out["genre"] = text
+        elif kind == 0x0F:
+            out["key"] = text
+        elif kind == 0x0E:
+            out["label"] = text
+        elif kind == 0x23:
+            out["comment"] = text
+        elif kind == 0x0B:
+            out["duration_s"] = number
+        elif kind == 0x0D:
+            out["tempo"] = (number / 100.0) if number else 0.0
+        elif kind == 0x0A:
+            out["rating"] = number
+        elif kind == 0x10:
+            out["bitrate"] = number
+        elif kind == 0x11:
+            if text.strip().isdigit():
+                out["year"] = int(text.strip())
+            elif number and number < 10000:
+                out["year"] = number
+    return out
+
+
 def encode_render_menu(
     tx_id: int,
     requesting_player: int,
@@ -325,8 +461,9 @@ def encode_render_menu(
     offset: int,
     limit: int,
     total: int,
+    track_type: int = TRACK_REKORDBOX,
 ) -> bytes:
-    rmst = encode_number_arg(build_rmst(requesting_player, MENU_MAIN, slot))
+    rmst = encode_number_arg(build_rmst(requesting_player, MENU_MAIN, slot, track_type))
     return encode_message(
         tx_id,
         TYPE_RENDER_MENU,

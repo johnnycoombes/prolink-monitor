@@ -19,7 +19,7 @@ STRINGS = {
     "devices_title": "Network devices",
     "devices_sub": "Players and mixers seen on Pro DJ Link",
     "health_title": "Connection health",
-    "health_sub": "Packet rates, link timing and NFS latency",
+    "health_sub": "Packet rates, link timing, NFS latency and What's Now Playing",
     "library_title": "Library",
     "library_sub": "Browse USB tracks, OneLibrary playlists and history",
     "library_search": "Search title / artist / album…",
@@ -229,6 +229,14 @@ STRINGS = {
     "health_packet_rate": "Packet rate",
     "health_mode": "Mode",
     "health_host": "Player",
+    "health_az_mode": "XDJ-AZ",
+    "health_az_pro": "Pro DJ Link",
+    "health_az_four": "4-deck",
+    "health_az_none": "—",
+    "health_az_hint": (
+        "Pro DJ Link while the XDJ-AZ has sent a Channels On-Air packet in the "
+        "last second. Otherwise 4-deck. Blank when no XDJ-AZ is on the network."
+    ),
     "health_no_decks": "No active decks yet — connect and load a track.",
     "health_no_nfs": "No NFS mounts yet — metadata loads when a track is on a deck.",
     "health_col_deck": "DECK",
@@ -276,6 +284,25 @@ STRINGS = {
     "health_capture_truncated": "Saved {packets} packets (limit reached) to {path}",
     "health_capture_failed": "Could not save the capture: {error}",
     "poll_hz": "Playhead refresh rate (Hz, default 60)",
+    "health_wnp": "WHAT'S NOW PLAYING",
+    "section_wnp": "WHAT'S NOW PLAYING",
+    "wnp_enable": "Send the audience track to What's Now Playing",
+    "wnp_host": "Host",
+    "wnp_port": "Port",
+    "wnp_secret": "Secret (optional)",
+    "wnp_test": "Test",
+    "wnp_testing": "Checking…",
+    "wnp_hint": (
+        "Off until you tick this and save. The master on-air deck — the same "
+        "track the overlay shows — is sent once each time that track changes. "
+        "Host defaults to localhost and the port defaults to 8899. "
+        "Paste a secret only if What's Now Playing has one set. "
+        "If it is closed or unreachable, listening continues and Health shows the error. "
+        "Test uses the host, port and secret in this form and, when a track is on "
+        "the audience deck, sends that track once. "
+        "Cover art is not sent: What's Now Playing drops image data on this input "
+        "and only downloads a cover from a public web address."
+    ),
     "section_connection": "CONNECTION",
     "section_display": "DISPLAY",
     "section_deck_elements": "DECK ELEMENTS",

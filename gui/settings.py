@@ -9,6 +9,7 @@ from typing import Any
 
 from gui.overlay_now import normalize_now_pos, normalize_now_style
 from prolink.proto import normalize_playhead_mode
+from prolink.wnp import normalize_target
 
 
 DEFAULTS: dict[str, Any] = {
@@ -75,6 +76,11 @@ DEFAULTS: dict[str, Any] = {
     "session_autosave_dir": "",       # empty → ~/.prolink-monitor/sessions
     "minimize_to_tray": True,         # when connected, minimize hides to tray
     "close_to_tray": True,            # when connected, window close hides to tray
+    # What's Now Playing remote input. Off until the user opts in.
+    "wnp_enabled": False,
+    "wnp_host": "localhost",
+    "wnp_port": 8899,
+    "wnp_secret": "",
 }
 
 # Keys that toggle individual pieces of each Monitor deck card.
@@ -267,6 +273,11 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     out["minimize_to_tray"] = bool(data.get("minimize_to_tray", True))
     out["close_to_tray"] = bool(data.get("close_to_tray", True))
     out["local_music_root"] = str(data.get("local_music_root") or "").strip()
+    out["wnp_enabled"] = bool(data.get("wnp_enabled", False))
+    host, port = normalize_target(data.get("wnp_host", "localhost"), data.get("wnp_port", 8899))
+    out["wnp_host"] = host
+    out["wnp_port"] = port
+    out["wnp_secret"] = str(data.get("wnp_secret") or "").strip()
     return out
 
 
