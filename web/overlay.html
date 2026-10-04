@@ -39,36 +39,47 @@ body.preview{
 body.embed{background:transparent !important}
 #root.embed-mode{
   padding:0;
+  height:100%;
+}
+#root.embed-mode.now-card-mode.corner-bl{align-items:flex-end;justify-content:flex-start}
+#root.embed-mode.now-card-mode.corner-br{align-items:flex-end;justify-content:flex-end}
+#root.embed-mode.now-card-mode.corner-tl{align-items:flex-start;justify-content:flex-start}
+#root.embed-mode.now-card-mode.corner-tr{align-items:flex-start;justify-content:flex-end}
+#root.embed-mode.now-panel-mode{
   align-items:stretch;
   justify-content:stretch;
 }
 #root.embed-mode #stack{
   width:100%;
-  height:100%;
+  height:auto;
   max-width:none;
   align-items:stretch;
-  flex:1;
+  flex:0 0 auto;
 }
 #root.embed-mode #next{display:none !important}
 #root.embed-mode .card{
   width:100%;
-  height:100%;
+  height:auto;
   max-width:none;
   min-width:0;
-  flex:1;
-  display:flex;
-  flex-direction:column;
+  flex:0 0 auto;
+  display:block;
   border-radius:calc(16px * var(--scale));
 }
 #root.embed-mode.now-panel-mode .card{border-radius:calc(10px * var(--scale))}
+#root.embed-mode.now-panel-mode #stack{height:100%;flex:1}
+#root.embed-mode.now-panel-mode .card{
+  height:100%;
+  display:flex;
+  flex-direction:column;
+  flex:1;
+}
 #root.embed-mode .card.show{transform:none}
-#root.embed-mode .now-card{flex:1;justify-content:flex-start}
+#root.embed-mode .now-card{flex:0 0 auto;justify-content:flex-start}
 #root.embed-mode .now-panel{flex:1;min-height:0}
 #root.embed-mode .panel-detail{flex:1;min-height:calc(72px * var(--scale));height:auto}
 body.float-window .card{-webkit-app-region:drag}
 body.float-window canvas{-webkit-app-region:no-drag}
-#root.now-card-mode:not(.embed-mode) .card{min-height:50vh;display:flex;flex-direction:column}
-#root.now-card-mode:not(.embed-mode) .now-card{flex:1;justify-content:flex-start}
 #root{
   width:100%;height:100%;
   display:flex;align-items:flex-end;justify-content:flex-start;
@@ -118,33 +129,35 @@ body.float-window canvas{-webkit-app-region:no-drag}
 
 .now-card{
   display:flex;flex-direction:column;align-items:center;text-align:center;
-  padding:calc(28px * var(--scale)) calc(32px * var(--scale)) calc(22px * var(--scale));
+  padding:calc(20px * var(--scale)) calc(24px * var(--scale)) calc(18px * var(--scale));
   min-width:min(calc(640px * var(--scale)),94vw);
   max-width:min(calc(920px * var(--scale)),96vw);
+  flex:0 0 auto;
 }
 .now-card .art{
   width:min(calc(380px * var(--scale)),44vw);
   height:min(calc(380px * var(--scale)),44vw);
   border-radius:calc(20px * var(--scale));
-  margin:0 auto calc(18px * var(--scale));
+  margin:0 auto calc(12px * var(--scale));
   font-size:calc(84px * var(--scale));
+  flex-shrink:0;
 }
-.now-card .meta{width:100%;min-width:0}
-.now-card .tags{justify-content:center;margin-bottom:calc(10px * var(--scale))}
+.now-card .meta{width:100%;min-width:0;flex:0 0 auto}
+.now-card .tags{justify-content:center;margin-bottom:calc(8px * var(--scale))}
 .now-card .title{
   font-size:clamp(calc(28px * var(--scale)),3.4vw,calc(44px * var(--scale)));
   white-space:normal;line-height:1.12;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
 }
 .now-card .artist{
-  margin-top:calc(8px * var(--scale));
+  margin-top:calc(6px * var(--scale));
   font-size:clamp(calc(16px * var(--scale)),1.8vw,calc(22px * var(--scale)));
 }
-.now-card .readouts{justify-content:center;margin-top:calc(14px * var(--scale));gap:18px}
+.now-card .readouts{justify-content:center;margin-top:calc(10px * var(--scale));gap:18px}
 .now-card .bpm{font-size:calc(26px * var(--scale))}
 .now-card .key{font-size:calc(17px * var(--scale))}
-.now-card .progress{margin-top:calc(14px * var(--scale));height:5px;max-width:min(520px,92%)}
-.now-card .wave{margin-top:calc(12px * var(--scale));height:calc(44px * var(--scale));max-width:min(640px,96%)}
+.now-card .progress{margin-top:calc(10px * var(--scale));height:5px;max-width:min(520px,92%)}
+.now-card .wave{margin-top:calc(8px * var(--scale));height:calc(44px * var(--scale));max-width:min(640px,96%)}
 
 #root.now-panel-mode{padding:0;align-items:stretch;justify-content:stretch}
 #root.now-panel-bottom{align-items:flex-end}

@@ -211,7 +211,7 @@ def main() -> int:
 
     card_settings = {**base, "overlay_now_style": "card", "overlay_now_pos": "left"}
     save_settings(card_settings)
-    card_meta = _pair(port, card_settings, os.path.join(out_dir, "parity-now-card.png"), 420, 520)
+    card_meta = _pair(port, card_settings, os.path.join(out_dir, "parity-now-card.png"), 520, 680)
 
     panel_settings = {**base, "overlay_now_style": "panel", "overlay_now_pos": "bottom"}
     save_settings(panel_settings)

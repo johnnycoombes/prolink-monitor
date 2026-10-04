@@ -247,11 +247,15 @@ class FloatingNowPlayingWindow(QWidget):
 
     @staticmethod
     def _default_card_size() -> tuple[int, int]:
+        """Default size hugs now-playing card content (large art + meta + wave), not half the screen."""
         screen = QApplication.primaryScreen()
+        content_w, content_h = 520, 680
         if screen is None:
-            return 420, 520
+            return content_w, content_h
         geo = screen.availableGeometry()
-        return max(380, min(920, int(geo.width() * 0.42))), max(360, int(geo.height() * 0.5))
+        w = max(380, min(920, min(content_w, int(geo.width() * 0.38))))
+        h = max(360, min(content_h, int(geo.height() * 0.72)))
+        return w, h
 
     @staticmethod
     def _default_panel_size() -> tuple[int, int]:

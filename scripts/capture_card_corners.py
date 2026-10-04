@@ -36,7 +36,7 @@ def main() -> int:
         url = build_parity_screenshot_url(port, settings)
         if "float=1" not in url:
             url += "&float=1"
-        w, h = 420, 520
+        w, h = 520, 680
         tmp_web = os.path.join(out_dir, f"_tmp-{corner}-web.png")
         tmp_float = os.path.join(out_dir, f"_tmp-{corner}-float.png")
         out = os.path.join(out_dir, f"parity-card-{corner}.png")
