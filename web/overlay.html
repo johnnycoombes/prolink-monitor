@@ -113,6 +113,49 @@ body.preview{
 .now-card .progress{margin-top:calc(14px * var(--scale));height:5px;max-width:min(520px,92%)}
 .now-card .wave{margin-top:calc(12px * var(--scale));height:calc(44px * var(--scale));max-width:min(640px,96%)}
 
+#root.now-panel-mode{padding:0;align-items:stretch;justify-content:stretch}
+#root.now-panel-bottom{align-items:flex-end}
+#root.now-panel-top{align-items:flex-start}
+#root.now-panel-mode #stack{width:100%;max-width:100%;align-items:stretch}
+#root.now-panel-mode .card{
+  min-width:0;max-width:none;width:100%;border-radius:0;border-left:none;border-right:none;
+  box-shadow:0 -8px 40px rgba(0,0,0,.35);
+}
+#root.now-panel-top .card{box-shadow:0 8px 40px rgba(0,0,0,.35)}
+.now-panel{
+  width:100%;padding:calc(14px * var(--scale)) calc(22px * var(--scale));
+  display:flex;flex-direction:column;gap:calc(10px * var(--scale));
+}
+.now-panel .panel-info{
+  display:flex;align-items:center;gap:calc(16px * var(--scale));min-width:0;
+}
+.now-panel .panel-info .art{
+  width:calc(72px * var(--scale));height:calc(72px * var(--scale));flex-shrink:0;
+  border-radius:calc(10px * var(--scale));font-size:calc(32px * var(--scale));
+}
+.now-panel .panel-info .copy{min-width:0;text-align:left;flex:1}
+.now-panel .panel-info .title{
+  font-size:calc(22px * var(--scale));font-weight:700;line-height:1.15;
+}
+.now-panel .panel-info .artist{font-size:calc(14px * var(--scale));color:var(--dim);margin-top:2px}
+.now-panel .panel-info .readouts{
+  display:flex;flex-wrap:wrap;gap:calc(12px * var(--scale));align-items:baseline;
+  font-family:var(--mono);margin-top:calc(6px * var(--scale));
+}
+.now-panel .panel-info .bpm{font-size:calc(20px * var(--scale));font-weight:700}
+.now-panel .panel-info .key{font-size:calc(15px * var(--scale));font-weight:700;color:var(--deck,var(--accent))}
+.now-panel .panel-info .deck-tag{
+  font-family:var(--mono);font-size:calc(11px * var(--scale));color:var(--deck,var(--accent));
+}
+.now-panel .panel-phrases{
+  width:100%;height:calc(14px * var(--scale));display:none;border-radius:3px;overflow:hidden;
+}
+.now-panel .panel-phrases.on{display:block}
+.now-panel .panel-detail{
+  width:100%;height:calc(96px * var(--scale));display:block;border-radius:calc(8px * var(--scale));
+  background:rgba(0,0,0,.28);
+}
+
 .now{
   display:grid;
   grid-template-columns:108px 1fr;
@@ -325,8 +368,17 @@ const layout = ['nowplaying','dual','minimal','setlist'].includes(params.get('la
   ? params.get('layout') : 'nowplaying';
 const corner = ['bl','br','tl','tr','center'].includes(params.get('corner'))
   ? params.get('corner') : 'bl';
-const nowPosRaw = (params.get('pos') || 'left').toLowerCase();
-const nowPos = nowPosRaw === 'right' ? 'right' : 'left';
+const nowStyle = params.get('style') === 'panel' ? 'panel' : 'card';
+const nowPosRaw = (params.get('pos') || (nowStyle === 'panel' ? 'bottom' : 'left')).toLowerCase();
+const nowPos = nowStyle === 'panel'
+  ? (nowPosRaw === 'top' ? 'top' : 'bottom')
+  : (nowPosRaw === 'right' ? 'right' : 'left');
+const PLAYHEAD_LEFT_FRACTION = 0.25;
+const DEFAULT_BPM = 120;
+const ZOOM_BARS_OPTS = [1, 2, 4, 8, 16];
+let showPhrasesDisplay = true;
+let zoomBarsDisplay = 4;
+let playheadModeDisplay = 'auto';
 const onlyPlaying = params.get('playing') !== '0';
 const preview = params.get('preview') === '1';
 const useMix = params.get('mix') !== '0';
@@ -349,9 +401,13 @@ const accent = /^#?[0-9a-fA-F]{6}$/.test(accentParam)
 if (preview) document.body.classList.add('preview');
 const root = document.getElementById('root');
 if (layout === 'nowplaying') {
-  // Bottom-aligned; card hugs the left or right edge of the canvas.
-  root.classList.add(nowPos === 'right' ? 'corner-br' : 'corner-bl');
-  root.classList.add('now-pos-' + nowPos);
+  if (nowStyle === 'panel') {
+    root.classList.add('now-panel-mode', nowPos === 'top' ? 'now-panel-top' : 'now-panel-bottom');
+  } else {
+    // Bottom-aligned card hugs the left or right edge of the canvas.
+    root.classList.add(nowPos === 'right' ? 'corner-br' : 'corner-bl');
+    root.classList.add('now-pos-' + nowPos);
+  }
 } else {
   root.classList.add('corner-' + corner);
 }
@@ -364,7 +420,7 @@ if (accent) {
   DECK_COLORS[1] = accent;
 }
 
-const tracks = new Map();   // cacheId -> {meta, overview, track_id}
+const tracks = new Map();   // cacheId -> {meta, detail, overview, track_id}
 const pending = new Set();
 
 function deckCacheId(deck) {
@@ -521,16 +577,19 @@ async function loadTrack(deck){
     if (!meta) return;
     if (deck.track_key && meta.track_key && meta.track_key !== deck.track_key) return;
     let overview = null;
+    let detail = null;
     if (buf) {
-      const detail = readWaveform(buf, 0);
+      detail = readWaveform(buf, 0);
       overview = readWaveform(buf, detail.end);
       const b1 = readBands(buf, overview.end);
+      attachBands(detail, b1);
       const b2 = b1 ? readBands(buf, b1.end) : null;
       attachBands(overview, b2);
       const blue1 = readBlue(buf, b2 ? b2.end : (b1 ? b1.end : overview.end));
+      attachBlue(detail, blue1);
       if (blue1) attachBlue(overview, readBlue(buf, blue1.end));
     }
-    tracks.set(cacheId, {meta, overview, track_id: id});
+    tracks.set(cacheId, {meta, detail, overview, track_id: id});
   } finally { pending.delete(cacheId); }
 }
 
@@ -681,6 +740,223 @@ function fillOverlayColumn(ctx, x, mid, amp, src, wave, span, colW){
     ctx.fillStyle = `rgb(${rgb[src * 3]},${rgb[src * 3 + 1]},${rgb[src * 3 + 2]})`;
   }
   fillMirrored(ctx, x, mid, drawAmp, colW);
+}
+
+function barsToSeconds(bars, bpm) {
+  const b = (bpm && bpm > 0) ? bpm : DEFAULT_BPM;
+  return Math.max(0.25, bars * 4 * 60 / b);
+}
+
+function modelDefaultsLeft(name) {
+  const compact = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return compact.includes('xdjaz') || compact.includes('opusquad');
+}
+
+function playheadAnchorForDeck(deck) {
+  let pos = 'centre';
+  if (playheadModeDisplay === 'left' || playheadModeDisplay === 'centre') pos = playheadModeDisplay;
+  else if (deck && (deck.waveform_position === 'left' || deck.waveform_position === 'centre')) {
+    pos = deck.waveform_position;
+  } else if (modelDefaultsLeft(deck && deck.name)) pos = 'left';
+  return pos === 'left' ? PLAYHEAD_LEFT_FRACTION : 0.5;
+}
+
+function phraseColor(label) {
+  const t = String(label || '').toLowerCase();
+  if (t.startsWith('intro')) return 'rgba(120,180,255,.92)';
+  if (t.startsWith('verse')) return 'rgba(160,220,120,.92)';
+  if (t.startsWith('bridge')) return 'rgba(200,160,255,.92)';
+  if (t.startsWith('chorus') || t.startsWith('drop')) return 'rgba(255,120,90,.92)';
+  if (t.startsWith('up')) return 'rgba(255,190,80,.92)';
+  if (t.startsWith('outro')) return 'rgba(160,160,180,.92)';
+  return 'rgba(200,200,210,.88)';
+}
+
+function paintPanelPhrases(cv, pack, pos) {
+  if (!cv) return;
+  const track = pack;
+  const on = showPhrasesDisplay && track && track.meta && (track.meta.phrases || []).length;
+  cv.classList.toggle('on', !!on);
+  if (!on) return;
+  const r = window.devicePixelRatio || 1;
+  const cssW = Math.max(1, Math.round(cv.clientWidth || 800));
+  const cssH = Math.max(1, Math.round(cv.clientHeight || 14));
+  const W = Math.round(cssW * r), H = Math.round(cssH * r);
+  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+  const ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+  const dur = track.meta.duration_ms || (track.overview && track.overview.dur) || 1;
+  const beats = track.meta.beats || [];
+  const phrases = track.meta.phrases || [];
+  const starts = [];
+  for (const ph of phrases) {
+    const bi = (ph.beat | 0) - 1;
+    if (bi < 0 || bi >= beats.length) continue;
+    starts.push({t: beats[bi][0], ph});
+  }
+  starts.sort((a, b) => a.t - b.t);
+  for (let i = 0; i < starts.length; i++) {
+    const start = starts[i].t;
+    const end = i + 1 < starts.length ? starts[i + 1].t : dur;
+    const x1 = (start / dur) * cssW * r;
+    const x2 = (end / dur) * cssW * r;
+    ctx.fillStyle = phraseColor(starts[i].ph.text);
+    ctx.fillRect(x1, 0, Math.max(1, x2 - x1), H);
+  }
+  const px = Math.max(0, Math.min(W, (pos / dur) * W));
+  if (px < W) {
+    ctx.fillStyle = 'rgba(8,10,12,.35)';
+    ctx.fillRect(px, 0, W - px, H);
+  }
+}
+
+function paintPanelDetail(cv, pack, pos, deck, playing, looping) {
+  if (!cv) return;
+  const track = pack;
+  const r = window.devicePixelRatio || 1;
+  const cssW = Math.max(1, Math.round(cv.clientWidth || 800));
+  const cssH = Math.max(1, Math.round(cv.clientHeight || 96));
+  const W = Math.round(cssW * r), H = Math.round(cssH * r);
+  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+  const ctx = cv.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  if (!track || !track.detail || !track.detail.n) {
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(0,0,0,.25)';
+    ctx.fillRect(0, 0, W, H);
+    cv._panelCache = null;
+    return;
+  }
+  const {n, cps, h} = track.detail;
+  const mid = H / 2;
+  const span = mid * 0.98;
+  const colW = Math.max(1, Math.round(r));
+  const bpm = deck.track_bpm || deck.bpm || DEFAULT_BPM;
+  const bars = ZOOM_BARS_OPTS.includes(zoomBarsDisplay) ? zoomBarsDisplay : 4;
+  const visibleSeconds = barsToSeconds(bars, bpm);
+  const visibleCols = visibleSeconds * cps;
+  const pxPerCol = cssW / visibleCols;
+  const currentCol = (pos / 1000) * cps;
+  const needle = playheadAnchorForDeck(deck);
+  const start = currentCol - visibleCols * needle;
+  const color = DECK_COLORS[deck.number] || '#22d3ee';
+  const key = `${deck.track_id}|${deck.track_key}|${waveStyle}|${bars}|${Math.round(bpm)}|${cssW}|${H}|${needle}`;
+
+  function paintRange(o, rangeStart, xLo, xHi) {
+    const meta = track.meta;
+    if (meta && meta.beats && meta.beats.length) {
+      o.lineWidth = Math.max(1, r * 0.5);
+      const t0 = ((rangeStart + xLo / pxPerCol) / cps) * 1000;
+      const t1 = ((rangeStart + xHi / pxPerCol) / cps) * 1000;
+      for (const [t] of meta.beats) {
+        if (t < t0 - 500) continue;
+        if (t > t1 + 500) break;
+        const x = ((t / 1000) * cps - rangeStart) * pxPerCol;
+        if (x < xLo - 1 || x > xHi) continue;
+        o.strokeStyle = 'rgba(255,255,255,.08)';
+        o.beginPath(); o.moveTo(Math.round(x * r), 0); o.lineTo(Math.round(x * r), H); o.stroke();
+      }
+    }
+    for (let x = xLo; x < xHi; x++) {
+      let lo = Math.floor(rangeStart + x / pxPerCol);
+      let hi = Math.ceil(rangeStart + (x + 1) / pxPerCol);
+      if (hi <= lo) hi = lo + 1;
+      if (hi <= 0 || lo >= n) continue;
+      if (lo < 0) lo = 0;
+      if (hi > n) hi = n;
+      let tall = 0, src = lo;
+      for (let i = lo; i < hi; i++) if (h[i] > tall) { tall = h[i]; src = i; }
+      const amp = (tall / 31) * span;
+      fillOverlayColumn(o, Math.round(x * r), mid, amp, src, track.detail, span, colW);
+    }
+  }
+
+  let cache = cv._panelCache || {};
+  if (cache.key !== key || !cache.off) {
+    const off = document.createElement('canvas');
+    off.width = W; off.height = H;
+    const o = off.getContext('2d');
+    o.imageSmoothingEnabled = false;
+    o.clearRect(0, 0, W, H);
+    paintRange(o, start, 0, cssW);
+    cache = {key, off, start, scratch: cache.scratch || null};
+    cv._panelCache = cache;
+  } else {
+    const shiftF = (cache.start - start) * pxPerCol;
+    const shift = shiftF | 0;
+    if (Math.abs(shift) >= cssW) {
+      const o = cache.off.getContext('2d');
+      o.clearRect(0, 0, W, H);
+      paintRange(o, start, 0, cssW);
+      cache.start = start;
+    } else if (shift !== 0) {
+      let scratch = cache.scratch || document.createElement('canvas');
+      if (scratch.width !== W || scratch.height !== H) { scratch.width = W; scratch.height = H; }
+      const o = scratch.getContext('2d');
+      o.imageSmoothingEnabled = false;
+      o.clearRect(0, 0, W, H);
+      if (shift > 0) {
+        o.drawImage(cache.off, Math.round(shift * r), 0);
+        paintRange(o, start, 0, shift);
+      } else {
+        const sh = -shift;
+        o.drawImage(cache.off, Math.round(-sh * r), 0);
+        paintRange(o, start, cssW - sh, cssW);
+      }
+      cache.scratch = cache.off;
+      cache.off = scratch;
+      cache.start -= shift / pxPerCol;
+    }
+    cv._panelCache = cache;
+  }
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.drawImage(cache.off, 0, 0);
+
+  const loop = activeLoop(track.meta, pos, looping);
+  if (loop) {
+    const x0 = ((loop.t / 1000) * cps - cache.start) * pxPerCol * r;
+    const x1 = ((loop.end / 1000) * cps - cache.start) * pxPerCol * r;
+    ctx.fillStyle = 'rgba(46,232,154,.30)';
+    ctx.fillRect(x0, 0, Math.max(1, x1 - x0), H);
+  }
+
+  const px = W * needle;
+  ctx.fillStyle = color;
+  ctx.globalAlpha = playing ? .18 : .07;
+  ctx.fillRect(px - 9 * r, 0, 18 * r, H);
+  ctx.globalAlpha = 1;
+  ctx.fillRect(px - r, 0, Math.max(2, Math.round(2 * r)), H);
+}
+
+function renderNowPanel(deck, pos) {
+  const pack = trackPack(deck);
+  const meta = pack && pack.meta;
+  const keyOk = !meta || !deck.track_key || meta.track_key === deck.track_key;
+  const title = (meta && keyOk) ? (meta.title || '—') : (deck.track_id ? 'loading…' : 'no track');
+  const artist = (meta && keyOk) ? (meta.artist || '') : '';
+  const key = (meta && keyOk) ? (meta.key || '') : '';
+  const color = DECK_COLORS[deck.number] || '#22d3ee';
+  const info = `
+    <div class="panel-info">
+      ${artHtml(deck, pack)}
+      <div class="copy">
+        ${tagsHtml(deck, pack, pos)}
+        <div class="title">${escapeHtml(title)}</div>
+        <div class="artist">${escapeHtml(artist)}</div>
+        <div class="readouts">
+          <div class="bpm">${deck.bpm ? deck.bpm.toFixed(2) : '—'}<small>BPM</small></div>
+          ${key ? `<div class="key">${escapeHtml(key)}</div>` : ''}
+          <div class="deck-tag">DECK ${deck.number}</div>
+        </div>
+      </div>
+    </div>`;
+  const phrases = '<canvas class="panel-phrases"></canvas>';
+  const detail = '<canvas class="panel-detail"></canvas>';
+  const blocks = nowPos === 'top'
+    ? `${detail}${phrases}${info}`
+    : `${info}${phrases}${detail}`;
+  return `<div class="now-panel" style="--deck:${color}">${blocks}</div>`;
 }
 
 function renderNow(deck, pos, compact=false){
@@ -841,6 +1117,15 @@ function renderNextThird(pending){
   el.classList.add('show');
 }
 
+function paintPanelWaves(deck, pos, playing) {
+  const card = document.getElementById('card');
+  const pack = trackPack(deck);
+  const ph = card.querySelector('.panel-phrases');
+  const det = card.querySelector('.panel-detail');
+  paintPanelPhrases(ph, pack, pos);
+  paintPanelDetail(det, pack, pos, deck, playing, deck.state === 'looping');
+}
+
 function paintWaves(decks, positions){
   const card = document.getElementById('card');
   card.querySelectorAll('canvas[data-wave]').forEach((cv, i) => {
@@ -887,6 +1172,7 @@ function paint(){
   if (layout === 'dual') html = renderDual(decks, positions);
   else if (layout === 'minimal') html = renderMinimal(decks[0], positions[0]);
   else if (layout === 'setlist') html = renderSetlist(decks[0], positions[0], last.setlist || []);
+  else if (nowStyle === 'panel') html = renderNowPanel(decks[0], positions[0]);
   else html = renderNow(decks[0], positions[0]);
 
   const np = last.now_playing;
@@ -906,8 +1192,9 @@ function paint(){
       return `${e.track_id}:${e.track_key||''}:${!!(p&&p.meta)}`;
     }).join(',');
   }
-  const sig = waveSig + '|' + layout + mixSig + setlistSig + '|' + histSig + `|d${maxDecks}`;
-  card.classList.toggle('spread', spread);
+  const sig = waveSig + '|' + layout + mixSig + setlistSig + '|' + histSig
+    + `|d${maxDecks}|ns${nowStyle}${nowPos}|zb${zoomBarsDisplay}|ph${playheadModeDisplay}|sp${showPhrasesDisplay}`;
+  card.classList.toggle('spread', spread || (layout === 'nowplaying' && nowStyle === 'panel'));
   if (card.dataset.sig !== sig){
     card.innerHTML = html;
     card.dataset.sig = sig;
@@ -934,8 +1221,9 @@ function paint(){
         el.innerHTML = `${d.bpm ? d.bpm.toFixed(2) : '—'}<small>BPM</small>`;
     });
   }
-  // Only paint the now-playing wave (first canvas) for setlist.
-  if (layout === 'setlist') paintWaves([decks[0]], [positions[0]]);
+  if (layout === 'nowplaying' && nowStyle === 'panel') {
+    paintPanelWaves(decks[0], positions[0], decks[0].playing);
+  } else if (layout === 'setlist') paintWaves([decks[0]], [positions[0]]);
   else paintWaves(decks, positions);
   card.classList.add('show');
   const pending = (last.mix && last.mix.pending) || last.pending || null;
@@ -945,9 +1233,69 @@ function paint(){
 function applyState(state){
   last = state;
   receivedAt = performance.now();
+  if (state && state.display) {
+    if (typeof state.display.show_phrases === 'boolean') {
+      showPhrasesDisplay = state.display.show_phrases;
+    }
+    const zb = +state.display.zoom_bars;
+    if (ZOOM_BARS_OPTS.includes(zb)) zoomBarsDisplay = zb;
+    if (state.display.playhead_position) {
+      playheadModeDisplay = String(state.display.playhead_position);
+    }
+  }
+}
+
+function seedMockWave(n) {
+  const h = new Uint8Array(n);
+  const rgb = new Uint8Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    h[i] = Math.min(31, Math.round(8 + (Math.sin(i / 9) * 0.5 + 0.5) * 22));
+    rgb[i * 3] = 30 + (i % 40);
+    rgb[i * 3 + 1] = 160 + (i % 30);
+    rgb[i * 3 + 2] = 220;
+  }
+  return {n, cps: 150, dur: 300000, h, rgb, end: 0};
+}
+
+function enableMockPreview() {
+  const ov = seedMockWave(800);
+  const det = seedMockWave(2400);
+  tracks.set('id:1', {
+    meta: {
+      id: 1,
+      title: 'Example Track',
+      artist: 'Demo Artist',
+      key: '8A',
+      duration_ms: 300000,
+      has_artwork: false,
+      phrases: [{beat: 1, text: 'Intro'}, {beat: 33, text: 'Drop'}],
+      beats: [[0, 1], [468, 2], [937, 3], [1406, 4]],
+    },
+    detail: det,
+    overview: ov,
+    track_id: 1,
+  });
+  applyState({
+    decks: [{
+      number: 1,
+      track_id: 1,
+      playing: true,
+      bpm: 128,
+      track_bpm: 128,
+      position_ms: 62000,
+      duration_ms: 300000,
+      name: 'XDJ-AZ',
+      master: true,
+    }],
+    display: {show_phrases: true, zoom_bars: 4, playhead_position: 'left'},
+  });
 }
 
 function connect(){
+  if (params.get('mock') === '1') {
+    enableMockPreview();
+    return;
+  }
   const es = new EventSource('/api/events');
   es.onmessage = ev => applyState(JSON.parse(ev.data));
   es.onerror = () => {

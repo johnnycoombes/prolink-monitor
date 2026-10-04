@@ -41,6 +41,13 @@ class OverlayNowPosSettingsTests(unittest.TestCase):
         clean = _sanitize({**load_settings(), "overlay_now_pos": "nope"})
         self.assertEqual(clean["overlay_now_pos"], "left")
 
+    def test_panel_pos_when_style_panel(self):
+        base = {**load_settings(), "overlay_now_style": "panel"}
+        clean = _sanitize({**base, "overlay_now_pos": "top"})
+        self.assertEqual(clean["overlay_now_pos"], "top")
+        clean = _sanitize({**base, "overlay_now_pos": "nope"})
+        self.assertEqual(clean["overlay_now_pos"], "bottom")
+
 
 if __name__ == "__main__":
     unittest.main()

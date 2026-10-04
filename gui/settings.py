@@ -7,6 +7,7 @@ import os
 from copy import deepcopy
 from typing import Any
 
+from gui.overlay_now import normalize_now_pos, normalize_now_style
 from prolink.proto import normalize_playhead_mode
 
 
@@ -47,7 +48,8 @@ DEFAULTS: dict[str, Any] = {
     "deck_show_key": True,
     "deck_show_state": True,
     "overlay_layout": "nowplaying",   # nowplaying | dual | minimal | setlist
-    "overlay_now_pos": "left",        # left | right — now playing card horizontal anchor
+    "overlay_now_style": "card",      # card | panel — now playing layout (layout=nowplaying)
+    "overlay_now_pos": "left",        # card: left|right — panel: bottom|top
     "overlay_corner": "bl",           # bl | br | tl | tr | center
     "floating_now_topmost": True,
     "floating_now_transparent": True,
@@ -55,6 +57,10 @@ DEFAULTS: dict[str, Any] = {
     "floating_now_y": -1,
     "floating_now_width": 0,
     "floating_now_height": 0,
+    "floating_now_panel_x": -1,
+    "floating_now_panel_y": -1,
+    "floating_now_panel_width": 0,
+    "floating_now_panel_height": 0,
     "overlay_playing_only": True,
     "overlay_mix": True,
     "overlay_decks": 1,
@@ -213,8 +219,9 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     out["overlay_layout"] = (
         layout if layout in ("nowplaying", "dual", "minimal", "setlist") else "nowplaying"
     )
-    now_pos = str(data.get("overlay_now_pos") or "left").lower()
-    out["overlay_now_pos"] = "right" if now_pos == "right" else "left"
+    out["overlay_now_style"] = normalize_now_style(data.get("overlay_now_style"))
+    now_style = out["overlay_now_style"]
+    out["overlay_now_pos"] = normalize_now_pos(now_style, data.get("overlay_now_pos"))
     corner = str(data.get("overlay_corner") or "bl").lower()
     out["overlay_corner"] = corner if corner in ("bl", "br", "tl", "tr", "center") else "bl"
     out["overlay_playing_only"] = bool(data.get("overlay_playing_only", True))
@@ -245,6 +252,10 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
         ("floating_now_y", -1, 10000),
         ("floating_now_width", 0, 4000),
         ("floating_now_height", 0, 4000),
+        ("floating_now_panel_x", -1, 10000),
+        ("floating_now_panel_y", -1, 10000),
+        ("floating_now_panel_width", 0, 4000),
+        ("floating_now_panel_height", 0, 4000),
     ):
         try:
             out[key] = max(lo, min(hi, int(data.get(key, lo))))
