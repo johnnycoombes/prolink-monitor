@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --no-sandbox")
+os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -41,9 +44,12 @@ class _MockBackend:
 
 
 def _grab(win: FloatingNowPlayingWindow, path: str) -> None:
+    from scripts.capture_floating_overlay_parity import _wait_overlay_ready
+
     win.show()
     QApplication.processEvents()
-    pix = win.grab()
+    _wait_overlay_ready(win._web)
+    pix = win._web.grab()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     pix.save(path)
 
@@ -57,49 +63,27 @@ def main() -> int:
 
     card_settings = {**base, "overlay_now_style": "card", "overlay_now_pos": "left"}
     save_settings(card_settings)
+    from gui.overlay_url import build_floating_overlay_file_url
+
     card = FloatingNowPlayingWindow(backend, i18n, lambda: card_settings)
-    card.restore_geometry(card_settings)
+    card.load_url(build_floating_overlay_file_url(card_settings, mock=True) + "&float=1")
+    card.restore_geometry({**card_settings, "floating_now_width": 0, "floating_now_height": 0})
     card.apply_settings()
-    card.apply_state(
-        {
-            "decks": [
-                {
-                    "number": 1,
-                    "track_id": 1,
-                    "track_key": "k1",
-                    "playing": True,
-                    "bpm": 128.0,
-                    "position_ms": 45000,
-                    "duration_ms": 300000,
-                    "name": "XDJ-AZ",
-                }
-            ]
-        }
-    )
+    for _ in range(40):
+        QApplication.processEvents()
+        time.sleep(0.03)
     _grab(card, os.path.join(out_dir, "floating-now-card.png"))
     card.close()
 
     panel_settings = {**base, "overlay_now_style": "panel", "overlay_now_pos": "bottom"}
     save_settings(panel_settings)
     panel = FloatingNowPlayingWindow(backend, i18n, lambda: panel_settings)
-    panel.restore_geometry(panel_settings)
+    panel.load_url(build_floating_overlay_file_url(panel_settings, mock=True) + "&float=1")
+    panel.restore_geometry({**panel_settings, "floating_now_panel_width": 0, "floating_now_panel_height": 0})
     panel.apply_settings()
-    panel.apply_state(
-        {
-            "decks": [
-                {
-                    "number": 2,
-                    "track_id": 2,
-                    "track_key": "k2",
-                    "playing": True,
-                    "bpm": 126.0,
-                    "position_ms": 90000,
-                    "duration_ms": 280000,
-                    "name": "CDJ-3000",
-                }
-            ]
-        }
-    )
+    for _ in range(40):
+        QApplication.processEvents()
+        time.sleep(0.03)
     _grab(panel, os.path.join(out_dir, "floating-now-panel.png"))
     panel.close()
 
