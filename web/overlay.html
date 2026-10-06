@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Archivo:wght@500;600;700&display=swap" rel="stylesheet">
+<script src="wavepack.js"></script>
 <script src="spectrum.js"></script>
 <style>
 :root{
@@ -41,6 +42,10 @@ body.preview{
 #root.embed-mode{
   padding:0;
   height:100%;
+  box-sizing:border-box;
+}
+#root.embed-mode.now-card-mode{
+  padding:14px;
 }
 #root.embed-mode.now-card-mode.corner-bl{align-items:flex-end;justify-content:flex-start}
 #root.embed-mode.now-card-mode.corner-br{align-items:flex-end;justify-content:flex-end}
@@ -61,11 +66,13 @@ body.preview{
 #root.embed-mode .card{
   width:100%;
   height:auto;
-  max-width:none;
+  max-width:100%;
+  max-height:100%;
   min-width:0;
-  flex:0 0 auto;
+  flex:0 1 auto;
   display:block;
   border-radius:calc(16px * var(--scale));
+  box-sizing:border-box;
 }
 #root.embed-mode.now-panel-mode .card{border-radius:calc(10px * var(--scale))}
 #root.embed-mode.now-panel-mode #stack{height:100%;flex:1}
@@ -76,9 +83,37 @@ body.preview{
   flex:1;
 }
 #root.embed-mode .card.show{transform:none}
-#root.embed-mode .now-card{flex:0 0 auto;justify-content:flex-start}
+#root.embed-mode.now-card-mode #stack{
+  max-height:100%;
+  min-height:0;
+  height:100%;
+  justify-content:center;
+}
+#root.embed-mode .now-card{
+  flex:0 1 auto;
+  justify-content:flex-start;
+  max-width:100%;
+  max-height:100%;
+  min-width:0;
+  min-height:0;
+  width:100%;
+  box-sizing:border-box;
+}
+#root.embed-mode .now-card .art{
+  flex:1 1 auto;
+  min-height:0;
+  width:min(calc(500px * var(--scale)),100%);
+  max-height:min(calc(500px * var(--scale)),100%);
+  height:auto;
+}
+#root.embed-mode .now-card .meta{flex:0 0 auto}
+#root.embed-mode .now-card .wave{width:100%;max-width:100%;flex:0 0 auto}
 #root.embed-mode .now-panel{flex:1;min-height:0}
-#root.embed-mode .panel-detail{flex:1;min-height:calc(72px * var(--scale));height:auto}
+#root.embed-mode .panel-detail{
+  flex:1 0 calc(72px * var(--scale));
+  min-height:calc(72px * var(--scale));
+  height:calc(96px * var(--scale));
+}
 body.float-window .card{-webkit-app-region:drag}
 body.float-window canvas{-webkit-app-region:no-drag}
 #root{
@@ -163,7 +198,13 @@ body.float-window canvas{-webkit-app-region:no-drag}
 .now-card .bpm{font-size:calc(26px * var(--scale))}
 .now-card .key{font-size:calc(17px * var(--scale))}
 .now-card .progress{margin-top:calc(10px * var(--scale));height:5px;max-width:min(520px,92%)}
-.now-card .wave{margin-top:calc(8px * var(--scale));height:calc(44px * var(--scale));max-width:min(640px,96%)}
+.now-card .wave{
+  margin-top:calc(8px * var(--scale));
+  height:calc(44px * var(--scale));
+  width:100%;
+  max-width:100%;
+  flex:0 0 auto;
+}
 
 #root.now-panel-mode{padding:0;align-items:stretch;justify-content:stretch}
 #root.now-panel-bottom{align-items:flex-end}
@@ -272,9 +313,10 @@ body.float-window canvas{-webkit-app-region:no-drag}
   transition:width .08s linear;
 }
 .wave{
-  margin-top:10px;height:36px;width:100%;
+  margin-top:10px;height:36px;width:100%;max-width:100%;
   border-radius:6px;background:rgba(0,0,0,.35);
   border:1px solid var(--line);overflow:hidden;
+  box-sizing:border-box;flex:0 0 auto;
 }
 .wave canvas{display:block;width:100%;height:100%}
 
@@ -594,70 +636,19 @@ function syncNowPlayingCache(deck) {
   _nowPlayingCacheId = id;
 }
 
-function readWaveform(buf, off){
-  const dv = new DataView(buf);
-  const n = dv.getUint32(off + 8, true);
-  const cps = dv.getFloat32(off + 12, true);
-  const dur = dv.getUint32(off + 16, true);
-  const h = new Uint8Array(buf, off + 24, n);
-  const rgb = new Uint8Array(buf, off + 24 + n, n * 3);
-  return {n, cps, dur, h, rgb, end: off + 24 + n * 4};
-}
+function readWaveform(buf, off){ return ProlinkWave.readWaveform(buf, off); }
+function readBands(buf, off){ return ProlinkWave.readBands(buf, off); }
+function readBlue(buf, off){ return ProlinkWave.readBlue(buf, off); }
+function attachBands(wave, bands){ return ProlinkWave.attachBands(wave, bands); }
+function attachBlue(wave, blue){ return ProlinkWave.attachBlue(wave, blue); }
 
-function readBands(buf, off){
-  if (!buf || off + 24 > buf.byteLength) return null;
-  const dv = new DataView(buf);
-  const magic = String.fromCharCode(dv.getUint8(off), dv.getUint8(off+1),
-    dv.getUint8(off+2), dv.getUint8(off+3));
-  if (magic !== 'PLWB') return null;
-  const n = dv.getUint32(off + 8, true);
-  const end = off + 24 + n * 3;
-  if (end > buf.byteLength) return null;
-  return {
-    n,
-    low: new Uint8Array(buf, off + 24, n),
-    mid: new Uint8Array(buf, off + 24 + n, n),
-    high: new Uint8Array(buf, off + 24 + 2 * n, n),
-    end,
-  };
-}
-
-function readBlue(buf, off){
-  if (!buf || off + 24 > buf.byteLength) return null;
-  const dv = new DataView(buf);
-  const magic = String.fromCharCode(dv.getUint8(off), dv.getUint8(off+1),
-    dv.getUint8(off+2), dv.getUint8(off+3));
-  if (magic !== 'PLBC') return null;
-  const n = dv.getUint32(off + 8, true);
-  const end = off + 24 + n * 4;
-  if (end > buf.byteLength) return null;
-  return {
-    n,
-    h: new Uint8Array(buf, off + 24, n),
-    rgb: new Uint8Array(buf, off + 24 + n, n * 3),
-    end,
-  };
-}
-
-function attachBands(wave, bands){
-  if (!wave || !bands || bands.n !== wave.n) return;
-  wave.low = bands.low; wave.mid = bands.mid; wave.high = bands.high;
-  let peak = 1;
-  for (let i = 0; i < bands.n; i++) {
-    peak = Math.max(peak, bands.low[i], bands.mid[i], bands.high[i]);
-  }
-  wave.bandPeak = peak;
-}
-
-function attachBlue(wave, blue){
-  if (!wave || !blue || blue.n !== wave.n) return;
-  wave.blueH = blue.h; wave.blueRgb = blue.rgb;
-}
+const waveRetryAt = new Map();
 
 async function loadTrack(deck){
   const id = deck.track_id;
   const cacheId = deckCacheId(deck);
   if (!id || !cacheId || tracks.has(cacheId) || pending.has(cacheId)) return;
+  if ((waveRetryAt.get(cacheId) || 0) > Date.now()) return;
   pending.add(cacheId);
   const qs = trackApiQuery(deck);
   try{
@@ -665,22 +656,22 @@ async function loadTrack(deck){
       fetch(`/api/track/${id}${qs}`).then(r => r.ok ? r.json() : null),
       fetch(`/api/waveform/${id}${qs}`).then(r => r.ok ? r.arrayBuffer() : null),
     ]);
-    if (!meta) return;
-    if (deck.track_key && meta.track_key && meta.track_key !== deck.track_key) return;
-    let overview = null;
-    let detail = null;
-    if (buf) {
-      detail = readWaveform(buf, 0);
-      overview = readWaveform(buf, detail.end);
-      const b1 = readBands(buf, overview.end);
-      attachBands(detail, b1);
-      const b2 = b1 ? readBands(buf, b1.end) : null;
-      attachBands(overview, b2);
-      const blue1 = readBlue(buf, b2 ? b2.end : (b1 ? b1.end : overview.end));
-      attachBlue(detail, blue1);
-      if (blue1) attachBlue(overview, readBlue(buf, blue1.end));
+    if (!meta || !buf) {
+      waveRetryAt.set(cacheId, Date.now() + 1200);
+      return;
     }
-    tracks.set(cacheId, {meta, detail, overview, track_id: id});
+    if (deck.track_key && meta.track_key && meta.track_key !== deck.track_key) return;
+    const decoded = ProlinkWave.decodeWavePack(buf);
+    if (!decoded.detail && !decoded.overview) {
+      waveRetryAt.set(cacheId, Date.now() + 1200);
+      return;
+    }
+    waveRetryAt.delete(cacheId);
+    tracks.set(cacheId, {
+      meta, detail: decoded.detail, overview: decoded.overview, track_id: id,
+    });
+  } catch (_) {
+    waveRetryAt.set(cacheId, Date.now() + 1200);
   } finally { pending.delete(cacheId); }
 }
 
@@ -1358,9 +1349,12 @@ function paintPanelWaves(deck, pos, playing) {
   const ph = card.querySelector('.panel-phrases');
   const det = card.querySelector('.panel-detail');
   const spec = card.querySelector('.panel-spectrum');
-  paintPanelPhrases(ph, pack, pos);
-  paintSpectrum(spec, pack, pos, deck, playing);
-  paintPanelDetail(det, pack, pos, deck, playing, deck.state === 'looping');
+  // The waveform is the thing that must stay on screen. A spectrum error
+  // used to run first and skip the detail wave entirely.
+  try { paintPanelDetail(det, pack, pos, deck, playing, deck.state === 'looping'); }
+  catch (_) {}
+  try { paintPanelPhrases(ph, pack, pos); } catch (_) {}
+  try { paintSpectrum(spec, pack, pos, deck, playing); } catch (_) {}
 }
 
 function paintWaves(decks, positions){

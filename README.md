@@ -313,12 +313,13 @@ python app.py
 ```
 
 It finds the player, picks a mode, starts the server and opens
-<http://127.0.0.1:8777/>. From the desktop app, **Open web panel** launches Edge
-or Chrome in kiosk fullscreen on Windows. The page follows the **Monitor** view
+<http://127.0.0.1:8777/> in a normal browser tab. From the desktop app,
+**Open web panel** does the same. The page follows the **Monitor** view
 (decks, waveform, phrases, playhead, zoom). Those controls are not on the web
-panel. A normal browser tab shows a one-tap fullscreen prompt, because browsers
-block fullscreen without a click. The HTTP server listens on **all interfaces**
-by default (`0.0.0.0`), so a phone on the same Wi‑Fi can open the panel too.
+panel. A small fullscreen button on the page can fill the screen after you
+click it; nothing opens fullscreen on its own. The HTTP server listens on
+**all interfaces** by default (`0.0.0.0`), so a phone on the same Wi‑Fi can
+open the panel too.
 
 | Option | What it does |
 |---|---|

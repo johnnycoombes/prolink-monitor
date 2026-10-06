@@ -18,6 +18,7 @@ import struct
 import sys
 import threading
 import time
+import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -299,13 +300,20 @@ class Monitor:
             except Exception:
                 analysis = None
         if analysis is not None and copied is not None and media is not None:
-            if self._deck_still_on(deck, track_id):
+            if self._deck_still_on(deck, track_id) and analysis.beats:
                 length = analysis.duration_ms or ((copied.duration * 1000) if copied else 0)
                 deck.set_beat_grid([b.time for b in analysis.beats], length)
-            self._build(host, media, track_id, analysis, copied, slot=slot)
-            self._finish_meta(
-                key, live, slot=slot, track_type=type_name, fallback_source=copied_src)
-            return
+            if _analysis_has_wave(analysis):
+                self._build(
+                    host, media, track_id, analysis, copied, slot=slot, bound_key=key)
+                stored = self._resolve_key(track_id, deck.number) or key
+                with self._lock:
+                    stored_wave = self._waveforms.get(stored)
+                if _wave_has_detail(stored_wave):
+                    self._finish_meta(
+                        stored, live, slot=slot, track_type=type_name,
+                        fallback_source=copied_src)
+                    return
 
         fields: dict = {}
         if live:
@@ -382,11 +390,24 @@ class Monitor:
             self._meta[key] = meta
 
     def _build(self, host: str, media, track_id: int, a: anlz.Analysis, t,
-               *, slot: str = "") -> None:
-        """Prepare and cache the binary waveform and metadata of a track."""
-        key = self._cache_key(host, media, track_id, slot)
+               *, slot: str = "", bound_key: tuple | None = None) -> None:
+        """Prepare and cache the binary waveform and metadata of a track.
+
+        ``bound_key`` is the key already published on the deck (and therefore
+        the token clients send to ``/api/waveform``). The medium's export and
+        fingerprint can appear only after that publish — NFS often comes up
+        after dbserver titles — so the bytes are stored on the canonical key
+        and the deck binding moves with them. Leaving the wave on a new key
+        while state still names the old one blanks every screen at once.
+        """
+        canonical = self._cache_key(host, media, track_id, slot)
+        key = canonical if (media is not None and canonical[1]) else (bound_key or canonical)
+        if not _analysis_has_wave(a):
+            return
         with self._lock:
-            if key in self._waveforms:
+            existing = self._waveforms.get(key) or (
+                self._waveforms.get(bound_key) if bound_key else None)
+            if _wave_has_detail(existing):
                 return
 
         heights, rgb, lows, mids, highs, blue_h, blue_rgb = anlz.waveform_levels(a)
@@ -413,10 +434,9 @@ class Monitor:
                    + _pack_blue(blue_h, blue_rgb, cps, length)
                    + _pack_blue(ov_blue_h, ov_blue_rgb, 0.0, length))
 
-        token = track_key_token(key)
         meta = {
             "id": track_id,
-            "track_key": token,
+            "track_key": "",
             "title": (t.title if t else "") or "",
             "artist": t.artist if t else "",
             "album": t.album if t else "",
@@ -440,13 +460,7 @@ class Monitor:
             "detail_columns": len(heights),
             "overview_columns": len(ov_h),
         }
-        with self._lock:
-            self._waveforms[key] = payload
-            self._meta[key] = meta
-            while len(self._waveforms) > 12:
-                oldest = next(iter(self._waveforms))
-                self._waveforms.pop(oldest, None)
-                self._meta.pop(oldest, None)
+        self._store_wave(key, bound_key, payload, meta)
 
     def _media_for_legacy(self, track_id: int):
         """Best-effort medium lookup when no deck binding exists (library API)."""
@@ -467,13 +481,50 @@ class Monitor:
             return None, None
         return host, self.library.get(host)
 
-    def ensure(self, track_id: int, *, deck: int | None = None) -> None:
-        """Load a track on demand when it has not been prepared yet."""
+    def _store_wave(self, key: tuple, bound_key: tuple | None,
+                    payload: bytes, meta: dict) -> None:
+        """Save waveform bytes and move the deck onto that same cache key."""
+        if not _wave_has_detail(payload):
+            return
+        with self._lock:
+            previous: dict = {}
+            for source_key in (bound_key, key):
+                if source_key is None:
+                    continue
+                older = self._meta.get(source_key)
+                if older:
+                    previous = _merge_track_meta(previous, older)
+            if bound_key is not None and bound_key != key:
+                self._meta.pop(bound_key, None)
+                self._waveforms.pop(bound_key, None)
+                for deck_no, stored in list(self._deck_keys.items()):
+                    if stored == bound_key:
+                        self._deck_keys[deck_no] = key
+            meta = _merge_track_meta(previous, meta)
+            meta["track_key"] = track_key_token(key)
+            meta["detail_columns"] = _wave_column_count(payload)
+            self._waveforms[key] = payload
+            self._meta[key] = meta
+            while len(self._waveforms) > 12:
+                oldest = next(iter(self._waveforms))
+                self._waveforms.pop(oldest, None)
+                self._meta.pop(oldest, None)
+
+    def ensure(self, track_id: int, *, deck: int | None = None,
+               force_waveform: bool = False) -> None:
+        """Load a track on demand when it has not been prepared yet.
+
+        Titles can be published before the ANLZ files are read. ``force_waveform``
+        tries the analysis again when metadata is cached but the waveform is not,
+        so a title-only entry does not permanently hide the wave.
+        """
         key = self._resolve_key(track_id, deck)
         if key is None:
             return
         with self._lock:
-            if key in self._meta:
+            if _wave_has_detail(self._waveforms.get(key)):
+                return
+            if key in self._meta and not force_waveform:
                 return
         host, media = self._media_for_key(key)
         if not host or media is None:
@@ -484,10 +535,14 @@ class Monitor:
             status = holder.status if holder is not None else None
             prefer = proto.is_xdj_az(getattr(status, "name", "") or "")
         copied, _src = media.copied_track(track_id, prefer_onelibrary=prefer)
-        a = media.analysis(track_id, track=copied)
-        if a is not None:
+        try:
+            a = media.analysis(track_id, track=copied)
+        except Exception:
+            a = None
+        if a is not None and copied is not None:
             slot = str(key[3]) if len(key) > 3 else ""
-            self._build(host, media, track_id, a, copied, slot=slot)
+            self._build(
+                host, media, track_id, a, copied, slot=slot, bound_key=key)
 
     def waveform(self, track_id: int, *, deck: int | None = None) -> bytes | None:
         self.ensure(track_id, deck=deck)
@@ -495,7 +550,29 @@ class Monitor:
         if key is None:
             return None
         with self._lock:
-            return self._waveforms.get(key)
+            data = self._waveforms.get(key)
+        if _wave_has_detail(data):
+            return data
+        # Metadata without bytes means the ANLZ read has not succeeded yet.
+        # Retry, but not on every paint frame.
+        now = time.monotonic()
+        retry = getattr(self, "_wave_retry_at", None)
+        if retry is None:
+            retry = {}
+            self._wave_retry_at = retry
+        if now < retry.get(key, 0):
+            return None
+        self.ensure(track_id, deck=deck, force_waveform=True)
+        key = self._resolve_key(track_id, deck)
+        with self._lock:
+            data = self._waveforms.get(key) if key is not None else None
+        if _wave_has_detail(data):
+            if key is not None:
+                retry.pop(key, None)
+            return data
+        if key is not None:
+            retry[key] = now + 2.0
+        return None
 
     def meta(self, track_id: int, *, deck: int | None = None, load: bool = True) -> dict | None:
         """Return cached track metadata. With load=True, may hit NFS once."""
@@ -1265,6 +1342,47 @@ class Monitor:
             }
 
 
+def _analysis_has_wave(a: anlz.Analysis | None) -> bool:
+    """True when the analysis can draw a detail waveform (EXT / 2EX)."""
+    return bool(a and (a.color_detail or a.detail or a.band3_detail))
+
+
+def _wave_column_count(payload: bytes | None) -> int:
+    if not payload or len(payload) < 24 or not payload.startswith(b"PLWF"):
+        return 0
+    n = struct.unpack_from("<I", payload, 8)[0]
+    if n <= 0 or 24 + n > len(payload):
+        return 0
+    return int(n)
+
+
+def _wave_has_detail(payload: bytes | None) -> bool:
+    n = _wave_column_count(payload)
+    if n <= 0 or payload is None:
+        return False
+    return any(payload[24:24 + n])
+
+
+def _merge_track_meta(previous: dict | None, fresh: dict) -> dict:
+    """Keep a dbserver title when the NFS row is blank, and keep the new wave."""
+    out = dict(fresh)
+    if not previous:
+        return out
+    for field in ("title", "artist", "album", "genre", "key", "label", "comment"):
+        if not str(out.get(field) or "").strip() and str(previous.get(field) or "").strip():
+            out[field] = previous[field]
+    if not int(out.get("artwork_id") or 0) and int(previous.get("artwork_id") or 0):
+        out["artwork_id"] = int(previous["artwork_id"])
+        out["has_artwork"] = True
+    elif previous.get("has_artwork") and not out.get("has_artwork"):
+        out["has_artwork"] = True
+    if not float(out.get("track_bpm") or 0) and float(previous.get("track_bpm") or 0):
+        out["track_bpm"] = previous["track_bpm"]
+    if previous.get("library_source") == "remotedb":
+        out["library_source"] = "remotedb"
+    return out
+
+
 def _pack_wave(heights, rgb, columns_per_second: float, duration_ms: int) -> bytes:
     """Pack a waveform: a 24-byte header, then the heights, then the RGB."""
     n = len(heights)
@@ -1688,9 +1806,7 @@ def main() -> int:
                   "    (rekordbox) is linked to the player.")
 
     if not args.no_open:
-        from prolink.panel_launch import open_monitor_panel
-
-        threading.Timer(0.5, lambda: open_monitor_panel(url)).start()
+        threading.Timer(0.5, lambda: webbrowser.open(url)).start()
 
     try:
         server.serve_forever()

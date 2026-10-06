@@ -72,36 +72,18 @@ class LoopbackBarTests(unittest.TestCase):
 
 
 class PanelLaunchTests(unittest.TestCase):
-    def test_kiosk_flag_is_added(self):
-        from prolink.panel_launch import with_kiosk_flag
-
-        self.assertIn("kiosk=1", with_kiosk_flag("http://127.0.0.1:8777/"))
-        flagged = with_kiosk_flag("http://127.0.0.1:8777/?readonly=1")
-        self.assertIn("readonly=1", flagged)
-        self.assertIn("kiosk=1", flagged)
-
-    def test_windows_kiosk_uses_edge_fullscreen(self):
+    def test_panel_opens_a_normal_tab(self):
         from prolink import panel_launch
 
-        edge = r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"
-        with mock.patch.object(panel_launch, "_windows_browser_candidates", return_value=[edge]):
-            with mock.patch.object(panel_launch.os.path, "isfile", return_value=True):
-                cmd = panel_launch.kiosk_command("http://127.0.0.1:9/", platform="win32")
-        self.assertIsNotNone(cmd)
-        self.assertEqual(cmd[0], edge)
-        self.assertIn("--kiosk", cmd)
-        self.assertIn("--edge-kiosk-type=fullscreen", cmd)
-        self.assertTrue(any(part.startswith("http://127.0.0.1:9/") and "kiosk=1" in part for part in cmd))
-
-    def test_missing_browser_falls_back(self):
-        from prolink import panel_launch
-
-        with mock.patch.object(panel_launch, "kiosk_command", return_value=None):
-            with mock.patch.object(panel_launch.webbrowser, "open") as opened:
-                how = panel_launch.open_monitor_panel("http://127.0.0.1:9/")
+        with mock.patch.object(panel_launch.webbrowser, "open") as opened:
+            how = panel_launch.open_monitor_panel("http://127.0.0.1:9/?readonly=1")
         self.assertEqual(how, "browser")
-        opened.assert_called_once()
-        self.assertIn("kiosk=1", opened.call_args.args[0])
+        opened.assert_called_once_with("http://127.0.0.1:9/?readonly=1")
+        with open(panel_launch.__file__, encoding="utf-8") as f:
+            src = f.read()
+        self.assertNotIn("--kiosk", src)
+        self.assertNotIn("--edge-kiosk-type", src)
+        self.assertNotIn("--start-fullscreen", src)
 
 
 class DisplayPrefTests(unittest.TestCase):
@@ -151,9 +133,13 @@ class WebPanelSourceTests(unittest.TestCase):
         self.assertNotIn('id="needle-switch"', html)
         self.assertNotIn("localStorage", html)
         self.assertIn("applyMonitorDisplay", html)
-        self.assertIn('id="fs-prompt"', html)
+        self.assertIn('id="fs-btn"', html)
+        self.assertNotIn('id="fs-prompt"', html)
+        self.assertNotIn("showFullscreenPrompt", html)
         self.assertIn("manifest.webmanifest", html)
         self.assertIn("requestFullscreen", html)
+        self.assertIn("decodeWavePack", html)
+        self.assertNotIn("buf[off]", html)
 
     def test_overlay_panel_and_card_art(self):
         path = os.path.join(ROOT, "web", "overlay.html")
@@ -165,6 +151,10 @@ class WebPanelSourceTests(unittest.TestCase):
         self.assertIn("artHtml(deck, pack, 'large')", html)
         self.assertIn("500px", html)
         self.assertIn("48px", html)
+        self.assertIn("decodeWavePack", html)
+        self.assertIn("wavepack.js", html)
+        self.assertIn("max-width:100%", html)
+        self.assertIn("#root.embed-mode.now-card-mode", html)
 
     def test_no_settings_endpoint(self):
         path = os.path.join(ROOT, "app.py")
@@ -180,8 +170,12 @@ class FloatingDefaultSizeTests(unittest.TestCase):
         from gui.floating_now import FloatingNowPlayingWindow
 
         w, h = FloatingNowPlayingWindow.CARD_DEFAULT_SIZE
-        self.assertGreaterEqual(w, 560)
-        self.assertGreaterEqual(h, 820)
+        # 500px art, text, the overview wave, inset, and the drag handle.
+        self.assertGreaterEqual(w, 680)
+        self.assertGreaterEqual(h, 940)
+        pw, ph = FloatingNowPlayingWindow.PANEL_DEFAULT_SIZE
+        self.assertGreaterEqual(pw, 960)
+        self.assertGreaterEqual(ph, 320)
 
 
 class ArtworkSizeTests(unittest.TestCase):

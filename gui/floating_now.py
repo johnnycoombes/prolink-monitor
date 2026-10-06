@@ -103,11 +103,12 @@ class _FloatingDragBridge(QObject):
 class FloatingNowPlayingWindow(QWidget):
     """Draggable, resizable always-on-top window showing ``web/overlay.html`` (now playing)."""
 
-    _CARD_MIN = (380, 360)
-    _PANEL_MIN = (640, 220)
-    # Card hugs a 500px cover plus title, readouts and the overview wave.
-    CARD_DEFAULT_SIZE = (600, 860)
-    PANEL_DEFAULT_SIZE = (960, 280)
+    _CARD_MIN = (420, 480)
+    _PANEL_MIN = (640, 260)
+    # 500px cover + title, readouts, overview wave, 14px inset, and the drag handle.
+    CARD_DEFAULT_SIZE = (720, 980)
+    # Info row + spectrum + detail wave, with the wave kept inside the window.
+    PANEL_DEFAULT_SIZE = (1040, 360)
 
     def __init__(
         self,
