@@ -10,6 +10,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Archivo:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="wavepack.js"></script>
 <style>
 :root{
   --black:#07080a;
@@ -78,19 +79,12 @@ header{
 .switch button.on{background:var(--text);color:var(--black)}
 .switch-label{font-family:var(--mono);font-size:10.5px;letter-spacing:.13em;
   text-transform:uppercase;color:var(--dimmest)}
-#fs-prompt{
-  position:fixed;left:0;right:0;bottom:0;z-index:40;
-  display:flex;justify-content:center;pointer-events:none;
-  padding:18px 16px 22px;
-  background:linear-gradient(180deg,transparent,rgba(0,0,0,.78));
+#fs-btn{
+  font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.12em;
+  text-transform:uppercase;cursor:pointer;border:1px solid var(--line);
+  background:transparent;color:var(--dim);padding:4px 8px;border-radius:4px;
 }
-#fs-prompt[hidden]{display:none !important}
-#fs-prompt button{
-  pointer-events:auto;
-  font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.14em;
-  text-transform:uppercase;background:var(--text);color:var(--black);
-  border:none;padding:12px 18px;cursor:pointer;
-}
+#fs-btn[hidden]{display:none !important}
 body.hide-el-artwork .art{display:none !important}
 body.hide-el-title .title{display:none !important}
 body.hide-el-artist .artist{display:none !important}
@@ -293,15 +287,12 @@ body.readonly #session .head::after{content:' · read-only'; color:var(--dimmest
   <div class="pill" id="p-mode" data-i18n="starting">starting…</div>
   <div class="pill" id="p-lib"></div>
   <div class="right">
+    <button id="fs-btn" type="button" title="Fullscreen">Full screen</button>
     <button id="rec-btn" type="button" title="Record session playlist">Record</button>
     <div class="pill" id="p-dev"></div>
     <div class="led" id="led"></div>
   </div>
 </header>
-<div id="fs-prompt" hidden>
-  <button type="button" id="fs-go">Fill the screen</button>
-</div>
-
 <div id="decks"></div>
 <div id="session"><div class="head">session playlist</div><div id="session-rows"></div></div>
 
@@ -583,68 +574,11 @@ function loopBeats(loop, bpm) {
   return Math.max(0, beats);
 }
 
-function readWaveform(buf, off) {
-  const dv = new DataView(buf);
-  const n = dv.getUint32(off + 8, true);
-  const cps = dv.getFloat32(off + 12, true);
-  const dur = dv.getUint32(off + 16, true);
-  const h = new Uint8Array(buf, off + 24, n);
-  const rgb = new Uint8Array(buf, off + 24 + n, n * 3);
-  return {n, cps, dur, h, rgb, end: off + 24 + n * 4};
-}
-
-function readBands(buf, off) {
-  if (off + 24 > buf.byteLength) return null;
-  const magic = String.fromCharCode(buf[off], buf[off + 1], buf[off + 2], buf[off + 3]);
-  if (magic !== 'PLWB') return null;
-  const n = new DataView(buf).getUint32(off + 8, true);
-  const start = off + 24;
-  const end = start + n * 3;
-  if (n < 0 || end > buf.byteLength) return null;
-  return {
-    n,
-    low: new Uint8Array(buf, start, n),
-    mid: new Uint8Array(buf, start + n, n),
-    high: new Uint8Array(buf, start + n * 2, n),
-    end
-  };
-}
-
-function attachBands(wave, bands) {
-  if (wave && bands && bands.n === wave.n) {
-    let peak = 0;
-    for (const lane of [bands.low, bands.mid, bands.high]) {
-      for (let i = 0; i < lane.length; i++) if (lane[i] > peak) peak = lane[i];
-    }
-    // All-zero PLWB (no PWV7) — leave lanes unset so 3BAND can fall back cleanly.
-    if (peak < 2) return;
-    wave.low = bands.low; wave.mid = bands.mid; wave.high = bands.high;
-    wave.bandPeak = peak;
-  }
-}
-
-function readBlue(buf, off) {
-  if (off + 24 > buf.byteLength) return null;
-  const magic = String.fromCharCode(buf[off], buf[off + 1], buf[off + 2], buf[off + 3]);
-  if (magic !== 'PLBC') return null;
-  const n = new DataView(buf).getUint32(off + 8, true);
-  const start = off + 24;
-  const end = start + n * 4;
-  if (n < 0 || end > buf.byteLength) return null;
-  return {
-    n,
-    h: new Uint8Array(buf, start, n),
-    rgb: new Uint8Array(buf, start + n, n * 3),
-    end
-  };
-}
-
-function attachBlue(wave, block) {
-  if (wave && block && block.n === wave.n) {
-    wave.blueH = block.h;
-    wave.blueRgb = block.rgb;
-  }
-}
+function readWaveform(buf, off) { return ProlinkWave.readWaveform(buf, off); }
+function readBands(buf, off) { return ProlinkWave.readBands(buf, off); }
+function readBlue(buf, off) { return ProlinkWave.readBlue(buf, off); }
+function attachBands(wave, bands) { return ProlinkWave.attachBands(wave, bands); }
+function attachBlue(wave, block) { return ProlinkWave.attachBlue(wave, block); }
 
 /* Beat Link WaveformDetailComponent: 3-band overlap, blue from COLOR_MAP.
    Draw in CSS-pixel steps (column width = devicePixelRatio) so retina
@@ -719,10 +653,13 @@ function fillWave(ctx, x, mid, amp, src, wave, span, colW) {
   fillMirrored(ctx, x, mid, drawAmp, colW);
 }
 
+const waveRetryAt = new Map();
+
 async function loadTrack(deck) {
   const id = deck.track_id;
   const cacheId = deckCacheId(deck);
   if (!id || !cacheId || tracks.has(cacheId) || pending.has(cacheId)) return;
+  if ((waveRetryAt.get(cacheId) || 0) > Date.now()) return;
   pending.add(cacheId);
   const qs = trackApiQuery(deck);
   try {
@@ -730,21 +667,22 @@ async function loadTrack(deck) {
       fetch(`/api/track/${id}${qs}`).then(r => r.ok ? r.json() : null),
       fetch(`/api/waveform/${id}${qs}`).then(r => r.ok ? r.arrayBuffer() : null)
     ]);
-    if (!meta) return;
-    if (deck.track_key && meta.track_key && meta.track_key !== deck.track_key) return;
-    let detail = null, overview = null;
-    if (buf) {
-      detail = readWaveform(buf, 0);
-      overview = readWaveform(buf, detail.end);
-      const b1 = readBands(buf, overview.end);
-      attachBands(detail, b1);
-      const b2 = b1 ? readBands(buf, b1.end) : null;
-      attachBands(overview, b2);
-      const blue1 = readBlue(buf, b2 ? b2.end : (b1 ? b1.end : overview.end));
-      attachBlue(detail, blue1);
-      if (blue1) attachBlue(overview, readBlue(buf, blue1.end));
+    if (!meta || !buf) {
+      waveRetryAt.set(cacheId, Date.now() + 1200);
+      return;
     }
-    tracks.set(cacheId, {meta, detail, overview, track_id: id});
+    if (deck.track_key && meta.track_key && meta.track_key !== deck.track_key) return;
+    const decoded = ProlinkWave.decodeWavePack(buf);
+    if (!decoded.detail && !decoded.overview) {
+      waveRetryAt.set(cacheId, Date.now() + 1200);
+      return;
+    }
+    waveRetryAt.delete(cacheId);
+    tracks.set(cacheId, {
+      meta, detail: decoded.detail, overview: decoded.overview, track_id: id,
+    });
+  } catch (_) {
+    waveRetryAt.set(cacheId, Date.now() + 1200);
   } finally { pending.delete(cacheId); }
 }
 
@@ -1374,35 +1312,22 @@ function connect() {
 
 document.getElementById('rec-btn').addEventListener('click', toggleSession);
 
-function alreadyFullscreen() {
-  if (params.get('kiosk') === '1') return true;
-  if (document.fullscreenElement) return true;
-  try {
-    if (matchMedia('(display-mode: fullscreen)').matches) return true;
-    if (matchMedia('(display-mode: standalone)').matches) return true;
-  } catch (_) {}
-  return false;
+const fsBtn = document.getElementById('fs-btn');
+function syncFsBtn() {
+  if (!fsBtn) return;
+  fsBtn.hidden = !!document.fullscreenElement;
 }
-
-function hideFullscreenPrompt() {
-  const el = document.getElementById('fs-prompt');
-  if (el) el.hidden = true;
+if (fsBtn) {
+  fsBtn.addEventListener('click', async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.documentElement.requestFullscreen();
+    } catch (_) {}
+    syncFsBtn();
+  });
 }
-
-function showFullscreenPrompt() {
-  const el = document.getElementById('fs-prompt');
-  if (el) el.hidden = false;
-}
-
-document.getElementById('fs-go').addEventListener('click', async () => {
-  try { await document.documentElement.requestFullscreen(); } catch (_) {}
-  hideFullscreenPrompt();
-});
-document.addEventListener('fullscreenchange', () => {
-  if (document.fullscreenElement) hideFullscreenPrompt();
-});
-if (alreadyFullscreen()) hideFullscreenPrompt();
-else showFullscreenPrompt();
+document.addEventListener('fullscreenchange', syncFsBtn);
+syncFsBtn();
 
 function seedPanelWave(n) {
   const h = new Uint8Array(n);

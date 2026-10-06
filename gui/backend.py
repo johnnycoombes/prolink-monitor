@@ -6,6 +6,7 @@ import os
 import sys
 import threading
 import time
+import webbrowser
 from typing import Any
 
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -106,9 +107,8 @@ class Backend(QObject):
         self._set_status("idle", "")
 
     def open_web_panel(self) -> None:
-        from prolink.panel_launch import open_monitor_panel
-
-        open_monitor_panel(f"http://127.0.0.1:{self.port}/")
+        """Open the monitor page in a normal browser tab. Never fullscreen."""
+        webbrowser.open(f"http://127.0.0.1:{self.port}/")
 
     def push_display(self, prefs: dict[str, Any]) -> None:
         """Publish the live Monitor view to the web panel and overlay."""

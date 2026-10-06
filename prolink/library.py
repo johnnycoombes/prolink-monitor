@@ -39,6 +39,17 @@ def _track_useful(track) -> bool:
     )
 
 
+def _analysis_cached_ok(result: anlz.Analysis | None, missing_detail: bool) -> bool:
+    """Cache a parse only when the detail waveform was actually read.
+
+    ``.EXT`` holds PWV3/PWV5. If that read failed, the ``.DAT`` grid must not
+    stick in the cache or the colour waveform is never fetched again.
+    """
+    if result is None or missing_detail:
+        return False
+    return bool(result.color_detail or result.detail or result.band3_detail or result.beats or result.preview)
+
+
 def _safe_cache_name(prefix: str, remote: str, suffix: str = "") -> str:
     """Stable, filesystem-safe cache file name derived from the remote path."""
     digest = hashlib.sha1(remote.encode("utf-8", "replace")).hexdigest()[:16]
@@ -297,18 +308,27 @@ class Media:
 
         result: anlz.Analysis | None = None
         base = t.analyze_path.lstrip("/")
-        # the .DAT holds the grid and the overview; the .EXT and .2EX the big waveforms
+        # the .DAT holds the grid and the overview; the .EXT and .2EX the big waveforms.
+        # A missing .EXT must not be cached: the .DAT alone has no detail wave, and
+        # a later successful read would never be tried. That is how every screen
+        # stays blank after one slow NFS pass (large artwork reads share this client).
+        missing_detail = False
         for ext in (".DAT", ".EXT", ".2EX"):
             path = base[:-4] + ext if base.upper().endswith(".DAT") else base
             data = self._fetch(path, _safe_cache_name("anlz", path, ext.lower()))
             if data is None:
+                if ext == ".EXT":
+                    missing_detail = True
                 continue
             try:
                 result = anlz.parse(data, result)
             except ValueError:
+                if ext == ".EXT":
+                    missing_detail = True
                 continue
 
-        if result is not None:
+        has_wave = _analysis_cached_ok(result, missing_detail)
+        if result is not None and has_wave:
             with self.lock:
                 self._analysis[track_id] = result
                 while len(self._analysis) > self._max_analysis:

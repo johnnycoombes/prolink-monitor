@@ -452,6 +452,10 @@ class MonitorPage(Page):
             tid = d.get("track_id") or 0
             tkey = d.get("track_key") or ""
             deck_no = int(d.get("number") or 0)
+            # Register the track id first. update_deck clears a stale wave when
+            # the id changes; doing that after set_track_data wiped the wave
+            # that had just been attached.
+            card.update_deck(d, pos)
             if tid:
                 meta = self.backend.meta(tid, deck=deck_no, track_key=tkey or None)
                 if meta and tkey and meta.get("track_key") != tkey:
@@ -461,26 +465,36 @@ class MonitorPage(Page):
                         detail = overview = None
                         wave = None
                         if self._elements.get("deck_show_waveform", True):
-                            wave = self.backend.waveform(
-                                tid, deck=deck_no, track_key=tkey or None)
+                            try:
+                                wave = self.backend.waveform(
+                                    tid, deck=deck_no, track_key=tkey or None)
+                            except Exception:
+                                wave = None
                         if wave:
                             detail, overview = parse_waveform(wave)
                         art = None
                         if (self._elements.get("deck_show_artwork", True)
                                 and meta.get("has_artwork")):
-                            art = self.backend.artwork(
-                                tid, deck=deck_no, track_key=tkey or None)
-                        # Only attach when we have a wave, or when titles are still empty.
+                            try:
+                                art = self.backend.artwork(
+                                    tid, deck=deck_no, track_key=tkey or None)
+                            except Exception:
+                                art = None
+                        # Attach the wave even when artwork fails. A throw in the
+                        # high-res art fetch used to skip set_track_data entirely,
+                        # so the Monitor drew titles with an empty waveform.
                         if wave or card._meta is None:
                             card.set_track_data(meta, detail, overview, art)
                     elif card._meta is None:
                         art = None
                         if (self._elements.get("deck_show_artwork", True)
                                 and meta.get("has_artwork")):
-                            art = self.backend.artwork(
-                                tid, deck=deck_no, track_key=tkey or None)
+                            try:
+                                art = self.backend.artwork(
+                                    tid, deck=deck_no, track_key=tkey or None)
+                            except Exception:
+                                art = None
                         card.set_track_data(meta, card._detail, card._overview, art)
-            card.update_deck(d, pos)
 
         # Keep layout order (2-deck: 1-2, 4-deck: 3-1-2-4).
         for i, d in enumerate(visible):

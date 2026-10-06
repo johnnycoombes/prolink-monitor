@@ -50,8 +50,8 @@ STRINGS = {
     "apply_reconnect": "Save & reconnect",
     "open_web": "Open web panel",
     "open_web_tip": (
-        "Opens the monitor panel in a fullscreen browser window "
-        "(Edge or Chrome kiosk on Windows). It follows the Monitor view settings."
+        "Opens the monitor panel in a normal browser tab. "
+        "It follows the Monitor view settings. Fullscreen is a button on the page."
     ),
     "overlay_spectrum_audio": "Bar visualiser: use system audio (optional)",
     "overlay_spectrum_audio_tip": (
