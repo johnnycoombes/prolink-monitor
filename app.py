@@ -25,7 +25,8 @@ from urllib.parse import urlparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from prolink import anlz, link, proto                     # noqa: E402
-from prolink.library import Library                       # noqa: E402
+from prolink.anlz_resolve import AnlzChoice               # noqa: E402
+from prolink.library import Library, Media                # noqa: E402
 from prolink import onelibrary                            # noqa: E402
 from prolink import remotedb as remotedb_wire             # noqa: E402
 from prolink.remotedb_client import RemoteDbBrowser, choose_requesting_player  # noqa: E402
@@ -76,6 +77,55 @@ def _fields_from_track(track) -> dict:
 
 OVERVIEW_COLUMNS = 1600          # resolution of the track overview we send
 
+# dbserver tag request, used only when no ANLZ file path is known.
+# NFS of the .DAT/.EXT/.2EX named by export.pdb is the path that works.
+_DBSERVER_ANLZ_TAGS = (
+    ("PWV5", "EXT"),
+    ("PWV3", "EXT"),
+    ("PWV7", "2EX"),
+    ("PQTZ", "DAT"),
+    ("PCO2", "EXT"),
+    ("PSSI", "EXT"),
+)
+
+
+def _analyze_path_str(track) -> str:
+    raw = getattr(track, "analyze_path", "") if track is not None else ""
+    return raw if isinstance(raw, str) else ""
+
+
+def _copied_source(choice: AnlzChoice) -> str:
+    if choice.track is None:
+        return ""
+    if str(choice.source).startswith("onelibrary"):
+        return "onelibrary"
+    return "nfs-cache"
+
+
+def _shell_track(track_id: int, fields: dict):
+    """Minimal row so a dbserver ANLZ blob can still be packed and shown."""
+    from prolink.pdb import Track
+
+    duration_s = int(fields.get("duration_s") or 0)
+    if not duration_s:
+        duration_s = int(int(fields.get("duration_ms") or 0) / 1000)
+    return Track(
+        id=int(track_id),
+        title=str(fields.get("title") or ""),
+        artist=str(fields.get("artist") or ""),
+        album=str(fields.get("album") or ""),
+        genre=str(fields.get("genre") or ""),
+        key=str(fields.get("key") or ""),
+        label=str(fields.get("label") or ""),
+        comment=str(fields.get("comment") or ""),
+        year=int(fields.get("year") or 0),
+        rating=int(fields.get("rating") or 0),
+        tempo=float(fields.get("tempo") or fields.get("track_bpm") or 0),
+        duration=duration_s,
+        bitrate=int(fields.get("bitrate") or 0),
+        artwork_id=int(fields.get("artwork_id") or 0),
+    )
+
 
 class Monitor:
     """Joins the network engine with the library and exposes resolved state."""
@@ -104,6 +154,8 @@ class Monitor:
         self._art_cache: dict[tuple, dict[str, tuple[bytes, str]] | tuple[bytes, str]] = {}
         self._art_source_by_deck: dict[int, str] = {}
         self._last_art_source: str = "none"
+        # Per deck: how the ANLZ path was chosen, and why a fetch failed.
+        self._anlz_by_deck: dict[int, dict] = {}
         self._display: dict[str, Any] = {}
         self.loopback = LoopbackCapturer()
         self.wnp = WnpPublisher()
@@ -259,6 +311,7 @@ class Monitor:
         if not track_id:
             with self._lock:
                 self._deck_keys.pop(deck.number, None)
+            self._anlz_store().pop(getattr(deck, "number", 0), None)
             return
         status = deck.status
         slot = (status.slot if status else "") or ""
@@ -272,19 +325,26 @@ class Monitor:
         if host:
             live = self._fetch_live_metadata(
                 host, track_id, slot, slot_raw, type_name, type_raw)
+        self._note_live_duration(deck, live)
 
         remote_only = slot in ("rekordbox", "beatport", "direct_play", "streaming")
         media = None
         copied = None
         copied_src = ""
+        choice: AnlzChoice | None = None
         if host and not remote_only:
             media = self.library.get(host)
             if media is None:
                 self.library.retry(host)
                 media = self.library.get(host)
             if media is not None:
-                copied, copied_src = media.copied_track(
-                    track_id, prefer_onelibrary=proto.is_xdj_az(player_name))
+                choice = self._choice_from_media(media, track_id, live)
+                if choice is not None:
+                    copied = choice.track
+                    copied_src = _copied_source(choice)
+                else:
+                    copied, copied_src = media.copied_track(
+                        track_id, prefer_onelibrary=proto.is_xdj_az(player_name))
 
         key = self._key_for(host, media, track_id, slot)
         # The dbserver query above can outlive the track. Only bind the deck
@@ -294,11 +354,33 @@ class Monitor:
                 self._deck_keys[deck.number] = key
 
         analysis = None
-        if media is not None and copied is not None:
+        anlz_error = ""
+        path = _analyze_path_str(copied)
+        real_media = isinstance(media, Media)
+        if media is not None and copied is not None and (path or not real_media):
             try:
                 analysis = media.analysis(track_id, track=copied)
-            except Exception:
+            except Exception as exc:
                 analysis = None
+                anlz_error = str(exc)
+            if analysis is None and path and not anlz_error:
+                anlz_error = "ANLZ files were not read from the USB"
+        elif real_media and host and not remote_only and not path:
+            # No file path: ask the player for the tags. A missing path is
+            # the only time this runs, so a slow NFS read is retried as NFS.
+            analysis, anlz_error = self._analysis_from_dbserver(
+                host, slot, slot_raw, type_name, type_raw, track_id)
+            if analysis is not None and copied is None:
+                copied = _shell_track(track_id, live or {})
+                copied_src = "remotedb"
+        if analysis is not None and not _analysis_has_wave(analysis) and not anlz_error:
+            anlz_error = "ANLZ had no detail waveform"
+        self._remember_anlz(
+            deck.number, track_id, choice=choice, copied_src=copied_src,
+            path=path, error=anlz_error,
+            fetched=bool(analysis is not None and _analysis_has_wave(analysis)),
+            pending=media is None and not remote_only,
+        )
         if analysis is not None and copied is not None and media is not None:
             if self._deck_still_on(deck, track_id) and analysis.beats:
                 length = analysis.duration_ms or ((copied.duration * 1000) if copied else 0)
@@ -324,6 +406,101 @@ class Monitor:
         self._publish_basic(
             key, track_id, fields, slot=slot, track_type=type_name,
             fallback_source=copied_src if not live else "remotedb")
+
+    def _anlz_store(self) -> dict:
+        store = getattr(self, "_anlz_by_deck", None)
+        if store is None:
+            store = {}
+            self._anlz_by_deck = store
+        return store
+
+    def _choice_from_media(self, media, track_id: int,
+                           live: dict | None) -> AnlzChoice | None:
+        """Real media resolves pdb, then OneLibrary, then title. Mocks do not."""
+        if not isinstance(media, Media):
+            return None
+        try:
+            return media.resolve_analysis_track(track_id, live=live or {})
+        except Exception as exc:
+            return AnlzChoice(None, "none", str(exc))
+
+    def _note_live_duration(self, deck, live: dict | None) -> None:
+        if not live:
+            return
+        ms = int(live.get("duration_ms") or 0)
+        if ms <= 0:
+            ms = int(live.get("duration_s") or 0) * 1000
+        fn = getattr(deck, "note_metadata_duration", None)
+        if ms > 0 and callable(fn):
+            fn(ms)
+
+    def _remember_anlz(self, deck_no: int, track_id: int, *,
+                       choice: AnlzChoice | None, copied_src: str, path: str,
+                       error: str, fetched: bool, pending: bool) -> None:
+        source = "none"
+        detail = ""
+        if choice is not None:
+            source = choice.source or "none"
+            detail = choice.note or ""
+        elif pending:
+            source = "pending"
+            detail = "USB library not mounted yet; title is from the player"
+        elif copied_src:
+            source = copied_src
+        if fetched and not path:
+            source = "dbserver"
+            detail = "ANLZ tags read from the player"
+        if fetched:
+            error = ""
+        self._anlz_store()[int(deck_no)] = {
+            "deck": int(deck_no),
+            "track_id": int(track_id),
+            "source": source,
+            "path": path or "",
+            "error": error or "",
+            "detail": detail,
+        }
+
+    def _analysis_from_dbserver(self, host: str, slot: str, slot_raw: int,
+                                type_name: str, type_raw: int, track_id: int
+                                ) -> tuple[anlz.Analysis | None, str]:
+        """Last resort: read ANLZ tags over dbserver. Read-only, short timeout."""
+        byte = remotedb_wire.slot_byte(slot, slot_raw) or remotedb_wire.SLOT_USB
+        track_type = remotedb_wire.track_type_byte(type_name, type_raw)
+        browser = self._open_remotedb(host, slot=byte)
+        if browser is None:
+            return None, "dbserver unavailable"
+        browser.timeout = min(float(getattr(browser, "timeout", 2.0) or 2.0), 2.0)
+        found = anlz.Analysis()
+        got = False
+        errors: list[str] = []
+        try:
+            with browser:
+                for tag, ext in _DBSERVER_ANLZ_TAGS:
+                    try:
+                        blob = browser.analysis_tag(
+                            track_id, tag, ext, track_type=track_type)
+                    except Exception as exc:
+                        errors.append(f"{tag}/{ext}: {exc}")
+                        continue
+                    if not blob:
+                        continue
+                    parsed = anlz.analysis_from_tag_blob(blob, found)
+                    if parsed is not None:
+                        found = parsed
+                        got = True
+        except Exception as exc:
+            return None, str(exc)
+        if not got:
+            return None, "; ".join(errors) or "player returned no ANLZ tags"
+        return found, ""
+
+    def _deck_duration_ms(self, deck) -> int:
+        length = int(getattr(deck, "track_length_ms", 0) or 0)
+        known = int(getattr(deck, "metadata_duration_ms", 0) or 0)
+        if known and link.length_exceeds_known(length, known):
+            return known
+        return length
 
     @staticmethod
     def _deck_still_on(deck, track_id: int) -> bool:
@@ -530,16 +707,50 @@ class Monitor:
         if not host or media is None:
             return
         prefer = False
+        status = None
         if deck is not None:
             holder = self.engine.decks.get(int(deck))
             status = holder.status if holder is not None else None
             prefer = proto.is_xdj_az(getattr(status, "name", "") or "")
-        copied, _src = media.copied_track(track_id, prefer_onelibrary=prefer)
-        try:
-            a = media.analysis(track_id, track=copied)
-        except Exception:
-            a = None
-        if a is not None and copied is not None:
+        cached = self.meta(track_id, deck=deck, load=False) or {}
+        choice = self._choice_from_media(media, track_id, cached)
+        anlz_error = ""
+        if choice is not None:
+            copied = choice.track
+            copied_src = _copied_source(choice)
+        else:
+            copied, copied_src = media.copied_track(track_id, prefer_onelibrary=prefer)
+            choice = None
+        path = _analyze_path_str(copied)
+        real_media = isinstance(media, Media)
+        a = None
+        if copied is not None and (path or not real_media):
+            try:
+                a = media.analysis(track_id, track=copied)
+            except Exception as exc:
+                a = None
+                anlz_error = str(exc)
+            if a is None and path and not anlz_error:
+                anlz_error = "ANLZ files were not read from the USB"
+        elif real_media and not path and status is not None:
+            a, anlz_error = self._analysis_from_dbserver(
+                host,
+                getattr(status, "slot", "") or str(key[3] if len(key) > 3 else ""),
+                int(getattr(status, "slot_raw", 0) or 0),
+                getattr(status, "track_type", "") or "",
+                int(getattr(status, "track_type_raw", 0) or 0),
+                track_id,
+            )
+            if a is not None and copied is None:
+                copied = _shell_track(track_id, cached)
+                copied_src = "remotedb"
+        fetched = bool(a is not None and _analysis_has_wave(a))
+        if deck is not None:
+            self._remember_anlz(
+                int(deck), track_id, choice=choice, copied_src=copied_src,
+                path=path, error=anlz_error, fetched=fetched, pending=False,
+            )
+        if a is not None and copied is not None and fetched:
             slot = str(key[3]) if len(key) > 3 else ""
             self._build(
                 host, media, track_id, a, copied, slot=slot, bound_key=key)
@@ -738,7 +949,10 @@ class Monitor:
         source = "none"
         for host, media in media_list:
             hosts.append(host)
-            media.refresh_if_stale()
+            try:
+                media.refresh_if_stale()
+            except Exception:
+                pass
             live_rows: list[dict] | None = None
             slots_ok: list[int] = []
             player_detail = ""
@@ -834,7 +1048,10 @@ class Monitor:
         any_present = False
         library_source = "none"
         for host, media in media_list:
-            media.refresh_if_stale()
+            try:
+                media.refresh_if_stale()
+            except Exception:
+                pass
             live_ok = False
             for slot in self._library_db_slots():
                 browser = self._open_remotedb(host, slot=slot)
@@ -931,7 +1148,10 @@ class Monitor:
         for h, media in media_list:
             if host and h != host:
                 continue
-            media.refresh_if_stale()
+            try:
+                media.refresh_if_stale()
+            except Exception:
+                pass
             for slot in self._library_db_slots():
                 browser = self._open_remotedb(h, slot=slot)
                 if browser is None:
@@ -1100,7 +1320,7 @@ class Monitor:
                 "pitch": round(s.pitch_percent, 2),
                 "speed": round(s.speed, 6),
                 "position_ms": round(d.position_ms, 1),
-                "duration_ms": d.track_length_ms,
+                "duration_ms": self._deck_duration_ms(d),
                 "beat": s.beat_count,
                 "bar": s.beat_in_bar,
                 "state": s.play_state,
@@ -1149,7 +1369,7 @@ class Monitor:
                 "pitch": round(s.pitch_percent, 2),
                 "speed": round(s.speed, 6),
                 "position_ms": round(d.position_ms, 1),
-                "duration_ms": d.track_length_ms,
+                "duration_ms": self._deck_duration_ms(d),
                 "beat": s.beat_count,
                 "bar": s.beat_in_bar,
                 "beat_packets": d.beat_packets,
@@ -1170,6 +1390,9 @@ class Monitor:
                 snap["title"] = meta.get("title") or ""
                 snap["artist"] = meta.get("artist") or ""
                 snap["key"] = meta.get("key") or ""
+                known = int(meta.get("duration_ms") or 0)
+                if known and link.length_exceeds_known(int(snap.get("duration_ms") or 0), known):
+                    snap["duration_ms"] = known
             elif tid:
                 snap.pop("title", None)
                 snap.pop("artist", None)
@@ -1232,6 +1455,11 @@ class Monitor:
                     "calls": int(info.get("nfs_calls") or 0),
                     "timeouts": int(info.get("nfs_timeouts") or 0),
                 })
+        anlz_rows = []
+        for row in (getattr(self, "_anlz_by_deck", None) or {}).values():
+            if isinstance(row, dict):
+                anlz_rows.append(dict(row))
+        anlz_rows.sort(key=lambda row: int(row.get("deck") or 0))
         return {
             "t": time.time(),
             "paint": False,
@@ -1254,6 +1482,7 @@ class Monitor:
             "artwork_sources": art_sources,
             "artwork_source_last": last_art,
             "onelibrary": onelibrary_info,
+            "anlz": anlz_rows,
             "nfs": nfs_health,
             "link_timing": link_timing,
             "capture": capture,

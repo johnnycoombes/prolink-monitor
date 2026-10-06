@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal, QEvent
+from PySide6.QtCore import Qt, QTimer, Signal, QEvent
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QGridLayout,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton,
@@ -714,6 +715,20 @@ class HealthPage(Page):
         ol_l.addWidget(self._ol_hint)
         self.layout_root.addWidget(ol_frame)
 
+        anlz_frame = QFrame()
+        anlz_frame.setObjectName("Card")
+        anlz_l = QVBoxLayout(anlz_frame)
+        anlz_l.setContentsMargins(18, 14, 18, 14)
+        self._anlz_title = QLabel(i18n.t("health_anlz"))
+        self._anlz_title.setObjectName("SectionTitle")
+        anlz_l.addWidget(self._anlz_title)
+        self._anlz_val = QLabel(i18n.t("health_anlz_none"))
+        self._anlz_val.setWordWrap(True)
+        self._anlz_val.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._anlz_val.setStyleSheet("font-family:monospace; font-size:12px;")
+        anlz_l.addWidget(self._anlz_val)
+        self.layout_root.addWidget(anlz_frame)
+
         hint = QLabel(i18n.t("health_hint"))
         hint.setWordWrap(True)
         hint.setObjectName("Dim")
@@ -793,6 +808,7 @@ class HealthPage(Page):
         self._wnp_title.setText(self._i18n.t("health_wnp"))
         self._ol_title.setText(self._i18n.t("health_onelibrary"))
         self._ol_hint.setText(self._i18n.t("health_onelibrary_hint"))
+        self._anlz_title.setText(self._i18n.t("health_anlz"))
         ol_titles = (
             self._i18n.t("health_onelibrary_status"),
             self._i18n.t("health_library_source"),
@@ -850,6 +866,26 @@ class HealthPage(Page):
         self._wnp_val.setStyleSheet(
             f"font-family:monospace; font-size:13px; color:{color};"
         )
+
+    def _anlz_text(self, rows) -> str:
+        lines = []
+        for row in list(rows or []):
+            if not isinstance(row, dict):
+                continue
+            bits = [f"Deck {row.get('deck')}", str(row.get("source") or "none")]
+            path = str(row.get("path") or "")
+            error = str(row.get("error") or "")
+            detail = str(row.get("detail") or "")
+            if path:
+                bits.append(path)
+            if error:
+                bits.append(error)
+            elif detail:
+                bits.append(detail)
+            lines.append(" · ".join(bits))
+        if not lines:
+            return self._i18n.t("health_anlz_none")
+        return "\n".join(lines)
 
     def _source_label(self, raw: str) -> str:
         key = _POSITION_SOURCE_KEYS.get(str(raw or "none"), "health_source_none")
@@ -938,6 +974,7 @@ class HealthPage(Page):
 
             pkg = _ol.pyrekordbox_available()
         self._ol_pkg_val.setText("installed" if pkg else "missing (see requirements-onelibrary.txt)")
+        self._anlz_val.setText(self._anlz_text(state.get("anlz")))
 
         decks = list(state.get("decks") or [])
         self.deck_empty.setVisible(not decks)
@@ -987,8 +1024,56 @@ class HealthPage(Page):
         self.link_panel.update_state(state)
 
 
+def load_library_view(backend, query: str, source: str):
+    """Read playlists and the current track list off the UI thread.
+
+    Returns ``(tracks, playlist payload or None, multi i18n key, error)``.
+    A failure in one call does not discard the other.
+    """
+    if backend is None:
+        return [], None, "", ""
+    errors: list[str] = []
+    playlists = None
+    try:
+        playlists = backend.browse_playlists() or {}
+    except Exception as exc:
+        errors.append(str(exc))
+    tracks: list[dict] = []
+    multi = ""
+    try:
+        if source == "loaded":
+            tracks = list(backend.loaded_tracks() or [])
+            q = (query or "").lower()
+            if q:
+                tracks = [
+                    t for t in tracks
+                    if q in (
+                        f"{t.get('title', '')} {t.get('artist', '')} {t.get('album', '')}"
+                    ).lower()
+                ]
+        elif str(source).startswith("playlist:"):
+            _, rest = str(source).split(":", 1)
+            pid_s, _, host = rest.partition("|")
+            try:
+                pid = int(pid_s)
+            except ValueError:
+                pid = 0
+            data = backend.browse_playlist_tracks(pid, host or None) or {}
+            tracks = list(data.get("tracks") or [])
+        else:
+            data = backend.browse_tracks(query, limit=200, offset=0) or {}
+            tracks = list(data.get("tracks") or [])
+            if data.get("multi_player"):
+                multi = "library_multi"
+    except Exception as exc:
+        errors.append(str(exc))
+    return tracks, playlists, multi, "; ".join(errors)
+
+
 class LibraryPage(Page):
     """Browse export.pdb tracks, OneLibrary playlists/history, and on-deck art."""
+
+    browse_ready = Signal(int, object)
 
     def __init__(self, i18n, backend=None, parent=None):
         super().__init__(i18n, "library_title", "library_sub", parent)
@@ -1105,6 +1190,10 @@ class LibraryPage(Page):
         self.layout_root.addWidget(split, 1)
 
         self._status_timer_n = 0
+        self._reload_gen = 0
+        self._reload_fails = 0
+        self._library_error = ""
+        self.browse_ready.connect(self._apply_browse)
 
     def set_backend(self, backend) -> None:
         self.backend = backend
@@ -1148,36 +1237,71 @@ class LibraryPage(Page):
         self._reload_tracks()
 
     def _reload_tracks(self) -> None:
-        if self.backend is None:
+        self._schedule_browse()
+
+    def _schedule_browse(self) -> None:
+        """Load the table off the GUI thread so a slow dbserver read cannot stall it."""
+        self._reload_gen += 1
+        gen = self._reload_gen
+        backend = self.backend
+        query = self._query
+        source = self._source
+        if backend is None:
             self._fill_table([])
             return
-        tracks: list[dict] = []
-        if self._source == "loaded":
-            tracks = list(self.backend.loaded_tracks() or [])
-            q = self._query.lower()
-            if q:
-                tracks = [
-                    t for t in tracks
-                    if q in f"{t.get('title','')} {t.get('artist','')} {t.get('album','')}".lower()
-                ]
-        elif self._source.startswith("playlist:"):
-            _, rest = self._source.split(":", 1)
-            pid_s, _, host = rest.partition("|")
+        if self.table.rowCount() == 0:
+            self.empty.setVisible(True)
+            self.table.setVisible(False)
+            self.empty.setText(self._i18n.t("library_loading"))
+
+        def work() -> None:
             try:
-                pid = int(pid_s)
-            except ValueError:
-                pid = 0
-            data = self.backend.browse_playlist_tracks(pid, host or None)
-            tracks = list((data or {}).get("tracks") or [])
-        else:
-            data = self.backend.browse_tracks(self._query, limit=200, offset=0)
-            tracks = list((data or {}).get("tracks") or [])
-            if (data or {}).get("multi_player"):
-                self.multi_label.setText(self._i18n.t("library_multi"))
-            else:
-                self.multi_label.setText("")
-        self._fill_table(tracks)
-        self._refresh_art_grid(tracks[:24])
+                payload = load_library_view(backend, query, source)
+            except Exception as exc:
+                payload = ([], None, "", str(exc))
+            self.browse_ready.emit(gen, payload)
+
+        threading.Thread(target=work, name="library-browse", daemon=True).start()
+
+    def _apply_browse(self, gen: int, payload) -> None:
+        if gen != self._reload_gen:
+            return
+        tracks, playlists, multi, error = payload
+        if error and not tracks:
+            self.error_label.setText(error)
+            self.empty.setVisible(True)
+            self.table.setVisible(False)
+            self.empty.setText(error)
+            self._reload_fails += 1
+            if self._reload_fails <= 3:
+                QTimer.singleShot(1200, self._schedule_browse)
+            return
+        self._reload_fails = 0
+        self.error_label.setText(error or self._library_error)
+        if playlists is not None:
+            self._fill_sidebars(playlists)
+        self.multi_label.setText(self._i18n.t(multi) if multi else "")
+        self._fill_table(list(tracks or []))
+        if not tracks:
+            self.empty.setText(self._i18n.t("library_empty"))
+        try:
+            self._refresh_art_grid(list(tracks or [])[:24])
+        except Exception:
+            pass
+
+    def _fill_sidebars(self, data: dict) -> None:
+        self.playlist_list.clear()
+        for p in data.get("playlists") or []:
+            if p.get("folder"):
+                continue
+            item = QListWidgetItem(p.get("name") or f"#{p.get('id')}")
+            item.setData(Qt.UserRole, p)
+            self.playlist_list.addItem(item)
+        self.history_list.clear()
+        for h in data.get("history") or []:
+            item = QListWidgetItem(h.get("name") or f"#{h.get('id')}")
+            item.setData(Qt.UserRole, h)
+            self.history_list.addItem(item)
 
     def _fill_table(self, tracks: list[dict]) -> None:
         self.empty.setVisible(not tracks)
@@ -1229,23 +1353,6 @@ class LibraryPage(Page):
         self.art_row.addStretch(1)
         self.art_scroll.setVisible(bool(self._art_ids))
 
-    def _reload_sidebars(self) -> None:
-        if self.backend is None:
-            return
-        data = self.backend.browse_playlists() or {}
-        self.playlist_list.clear()
-        for p in data.get("playlists") or []:
-            if p.get("folder"):
-                continue
-            item = QListWidgetItem(p.get("name") or f"#{p.get('id')}")
-            item.setData(Qt.UserRole, p)
-            self.playlist_list.addItem(item)
-        self.history_list.clear()
-        for h in data.get("history") or []:
-            item = QListWidgetItem(h.get("name") or f"#{h.get('id')}")
-            item.setData(Qt.UserRole, h)
-            self.history_list.addItem(item)
-
     def update_state(self, state: dict) -> None:
         lib = state.get("library") or {}
         for key, label in self.cards.items():
@@ -1272,15 +1379,15 @@ class LibraryPage(Page):
         else:
             self.onelibrary_label.setText("")
         err = state.get("library_error")
-        self.error_label.setText(err or "")
+        self._library_error = err or ""
+        self.error_label.setText(self._library_error)
 
         # Refresh browse data when media appears / changes (throttled).
         host_key = f"{host}|{bool(lib)}|{bool(ol and ol.get('readable'))}"
         self._status_timer_n += 1
         if host_key != self._last_host_key or self._status_timer_n % 40 == 1:
             self._last_host_key = host_key
-            self._reload_sidebars()
-            self._reload_tracks()
+            self._schedule_browse()
 
 
 class SessionPage(Page):

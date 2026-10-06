@@ -86,6 +86,21 @@ class AbsolutePositionPlayheadTests(unittest.TestCase):
         deck.on_absolute_position(ap, time.monotonic())
         self.assertEqual(deck.track_length_ms, 650_000)
 
+    def test_metadata_length_replaces_an_inflated_packet(self):
+        deck = link.Deck(1)
+        deck.status = proto.Status(track_id=30638, play_state_raw=0x03, pitch=1.0)
+        ap = proto.parse(_abs_packet(track_s=655_861, pos_ms=12_000, pitch_x100=0))
+        assert isinstance(ap, proto.AbsolutePosition)
+        deck.on_absolute_position(ap, time.monotonic())
+        self.assertEqual(deck.track_length_ms, 655_861)
+        deck.note_metadata_duration(501_000)
+        self.assertEqual(deck.track_length_ms, 501_000)
+        self.assertEqual(deck.metadata_duration_ms, 501_000)
+        again = proto.parse(_abs_packet(track_s=655_861, pos_ms=20_000, pitch_x100=0))
+        assert isinstance(again, proto.AbsolutePosition)
+        deck.on_absolute_position(again, time.monotonic())
+        self.assertEqual(deck.track_length_ms, 501_000)
+
 
 if __name__ == "__main__":
     unittest.main()

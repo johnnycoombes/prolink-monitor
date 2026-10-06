@@ -236,26 +236,38 @@ class CopiedDbFallbackTests(unittest.TestCase):
         media.onelibrary = onelibrary.OneLibrarySummary(present=present, readable=readable)
         return media
 
-    def test_az_prefers_onelibrary_id(self):
+    def test_az_uses_onelibrary_when_only_it_has_the_analysis_path(self):
         media = self._media(
             Track(id=5, title="Wrong PDB"),
-            onelibrary.OneLibraryTrack(id=5, title="Right OL", artist="AZ"),
+            onelibrary.OneLibraryTrack(
+                id=5, title="Right OL", artist="AZ",
+                analyze_path="/PIONEER/USBANLZ/x/ANLZ0000.DAT",
+            ),
         )
         track, source = media.copied_track(5, prefer_onelibrary=True)
         self.assertEqual(source, "onelibrary")
         self.assertEqual(track.title, "Right OL")
         self.assertEqual(track.artist, "AZ")
+        self.assertTrue(track.analyze_path.endswith("ANLZ0000.DAT"))
 
-    def test_az_does_not_use_pdb_when_onelibrary_is_readable(self):
+    def test_az_uses_pdb_when_onelibrary_has_no_content_row(self):
+        # Readable OneLibrary with zero content rows used to return nothing,
+        # so analysis() was never called and no ANLZ file was fetched.
         media = self._media(
-            Track(id=5, title="Wrong PDB"),
+            Track(id=5, title="From PDB",
+                  analyze_path="/PIONEER/USBANLZ/x/ANLZ0000.DAT"),
             None,
             present=True,
             readable=True,
         )
+        media.onelibrary.tracks = 0
         track, source = media.copied_track(5, prefer_onelibrary=True)
-        self.assertIsNone(track)
-        self.assertEqual(source, "")
+        self.assertEqual(source, "nfs-cache")
+        self.assertEqual(track.title, "From PDB")
+        self.assertEqual(track.analyze_path, "/PIONEER/USBANLZ/x/ANLZ0000.DAT")
+        choice = media.resolve_analysis_track(5)
+        self.assertEqual(choice.source, "pdb-id")
+        self.assertIn("0 tracks", choice.note)
 
     def test_pdb_then_onelibrary_when_not_az(self):
         media = self._media(None, onelibrary.OneLibraryTrack(id=9, title="Only OL"))
