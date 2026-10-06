@@ -54,6 +54,11 @@ STRINGS = {
         "Opens the monitor panel in a normal browser tab. "
         "It follows the Monitor view settings. Fullscreen is a button on the page."
     ),
+    "overlay_show_spectrum": "Spectrum visualiser",
+    "overlay_show_spectrum_tip": (
+        "Show the spectrum bars above the waveform in the overlay bar. "
+        "Turn this off and that gap closes. System audio is a separate option."
+    ),
     "overlay_spectrum_audio": "Bar visualiser: use system audio (optional)",
     "overlay_spectrum_audio_tip": (
         "Off by default. The bar uses the track waveform, because Pro DJ Link "
@@ -236,6 +241,7 @@ STRINGS = {
     "library_source_label": "Source",
     "library_source_remotedb": "Live (dbserver / ProLink)",
     "library_source_nfs": "Fallback (NFS file cache)",
+    "library_source_onelibrary": "Fallback (OneLibrary copy)",
     "library_source_none": "Not connected",
     "health_nfs": "NFS LATENCY",
     "health_packets_total": "Status packets",

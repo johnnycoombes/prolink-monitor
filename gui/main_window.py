@@ -169,6 +169,7 @@ class MainWindow(QMainWindow):
 
         self.page_settings.load_settings(self.settings)
         self.page_settings.saved.connect(self._on_settings_saved)
+        self.page_settings.display_live.connect(self._on_display_live)
         self.page_settings.wnp_test_btn.clicked.connect(self._on_wnp_test)
         self.backend.wnp_test_finished.connect(self._on_wnp_test_finished)
         self.page_monitor.on_prefs_changed = self._push_monitor_prefs
@@ -540,13 +541,34 @@ class MainWindow(QMainWindow):
     def _on_wnp_test_finished(self, ok: bool, detail: str) -> None:
         self.page_settings.set_wnp_test_result(detail, bool(ok))
 
+    def _apply_display_settings(self) -> None:
+        """Push saved display flags to Monitor, the web panel, overlay, and floating window."""
+        self.page_monitor.apply_prefs(self.settings)
+        if self.backend.monitor is not None:
+            self.backend.push_display(self.settings)
+        if self._floating_now is not None:
+            self._floating_now.apply_settings()
+
+    def _on_display_live(self, patch: dict) -> None:
+        self.settings.update(patch)
+        try:
+            save_settings(self.settings)
+            self.settings = load_settings()
+        except OSError:
+            pass
+        self._apply_display_settings()
+        self.page_overlay.load_prefs(
+            self.settings, port=int(self.settings.get("port", 8777)))
+
     def _on_overlay_prefs(self, data: dict) -> None:
         self.settings.update(data)
         try:
             save_settings(self.settings)
+            self.settings = load_settings()
         except OSError:
             pass
         self.page_settings.load_settings(self.settings)
+        self._apply_display_settings()
 
     def _on_port_changed(self, port: int) -> None:
         """HTTP bind fell back to another port — keep UI / saved settings in sync."""

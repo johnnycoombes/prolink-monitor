@@ -1220,6 +1220,9 @@ function applyState(e) {
       }
     }
     receivedAt = performance.now();
+    if (e.display && typeof e.display.show_phrases === 'boolean') {
+      setShowPhrases(e.display.show_phrases);
+    }
     return;
   }
   last = e; receivedAt = performance.now();

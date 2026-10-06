@@ -143,6 +143,7 @@ class Monitor:
         # Latest resolved medium for each deck (see track_cache_key).
         self._deck_keys: dict[int, tuple] = {}
         self.show_phrases = True
+        self.show_spectrum = True
         self._lock = threading.RLock()
         self.mixstatus = MixStatus(MixStatusConfig())
         self.audience = AudienceDeckTracker()
@@ -245,6 +246,7 @@ class Monitor:
 
         self._display = display_prefs_from(prefs)
         self.show_phrases = bool(self._display.get("show_phrases", True))
+        self.show_spectrum = bool(self._display.get("show_spectrum", True))
         if self._display.get("spectrum_source") == "loopback":
             self.loopback.start()
         else:
@@ -1001,7 +1003,6 @@ class Monitor:
                     f"TCP dbserver · {player_detail} slots {slot_text}".strip(),
                 )
                 source = "remotedb"
-            if live_rows is not None:
                 if q:
                     live_rows = [
                         r for r in live_rows
@@ -1010,21 +1011,48 @@ class Monitor:
                     ]
                 all_rows.extend(live_rows)
                 continue
-            if media.db is None:
+            pdb_rows: list[dict] = []
+            if getattr(media, "db", None) is None:
                 try:
                     media.load_database()
                 except Exception:
-                    continue
+                    pass
+            if getattr(media, "db", None) is not None:
+                try:
+                    rows, _total = media.db.search(query, limit=10_000, offset=0)
+                except Exception:
+                    rows = []
+                for r in rows:
+                    r = dict(r)
+                    r["host"] = host
+                    r["source"] = "nfs-cache"
+                    pdb_rows.append(r)
+            if pdb_rows:
+                media.set_library_source(
+                    "nfs-cache",
+                    f"NFS export.pdb cache ({media.cache_dir})",
+                )
+                source = "nfs-cache"
+                all_rows.extend(pdb_rows)
+                continue
+            ol = getattr(media, "onelibrary_db", None)
+            if ol is None:
+                continue
+            try:
+                ol_rows = onelibrary.list_tracks(ol, query, limit=10_000, offset=0)
+            except Exception:
+                ol_rows = []
+            if not ol_rows:
+                continue
             media.set_library_source(
-                "nfs-cache",
-                f"NFS export.pdb cache ({media.cache_dir})",
+                "onelibrary",
+                f"Fallback: read-only OneLibrary copy ({media.cache_dir})",
             )
-            source = "nfs-cache"
-            rows, _total = media.db.search(query, limit=10_000, offset=0)
-            for r in rows:
+            source = "onelibrary"
+            for r in ol_rows:
                 r = dict(r)
                 r["host"] = host
-                r["source"] = "nfs-cache"
+                r["source"] = "onelibrary"
                 all_rows.append(r)
         all_rows.sort(key=lambda r: ((r.get("title") or "").lower(), r.get("id") or 0))
         total = len(all_rows)
@@ -1289,7 +1317,10 @@ class Monitor:
         live = getattr(self, "_display", None)
         if isinstance(live, dict) and live:
             prefs = dict(live)
-            prefs["show_phrases"] = bool(getattr(self, "show_phrases", prefs.get("show_phrases", True)))
+            if "show_phrases" not in prefs:
+                prefs["show_phrases"] = bool(getattr(self, "show_phrases", True))
+            if "show_spectrum" not in prefs:
+                prefs["show_spectrum"] = bool(getattr(self, "show_spectrum", True))
             return prefs
         try:
             from gui.settings import display_prefs_from, load_settings
@@ -1299,7 +1330,8 @@ class Monitor:
             from gui.settings import display_prefs_from
 
             prefs = display_prefs_from(None)
-        prefs["show_phrases"] = bool(getattr(self, "show_phrases", prefs.get("show_phrases", True)))
+        if "show_phrases" not in prefs:
+            prefs["show_phrases"] = bool(getattr(self, "show_phrases", True))
         return prefs
 
     def paint_state(self) -> dict:
@@ -1340,7 +1372,13 @@ class Monitor:
             "decks": decks,
             "audience_deck": audience_deck,
         }
-        if self._display_prefs().get("spectrum_source") == "loopback":
+        display = self._display_prefs()
+        payload["display"] = {
+            "show_phrases": bool(display.get("show_phrases", True)),
+            "show_spectrum": bool(display.get("show_spectrum", True)),
+            "spectrum_source": display.get("spectrum_source") or "waveform",
+        }
+        if display.get("spectrum_source") == "loopback":
             bins = self.loopback.snapshot()
             if bins:
                 payload["spectrum"] = [round(v, 4) for v in bins]

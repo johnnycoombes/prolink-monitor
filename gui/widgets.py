@@ -888,6 +888,7 @@ class DeckCard(QFrame):
         self._overview = None
         self._art_id = 0
         self._art_key = ""
+        self._art_miss_key = ""
         self._wave_track_id = 0
         self._wave_track_key = ""
         self._last_offair: bool | None = None
@@ -1183,6 +1184,41 @@ class DeckCard(QFrame):
     def set_show_phrases(self, enabled: bool) -> None:
         self.wave.set_show_phrases(enabled)
 
+    def needs_artwork(self, token: str = "") -> bool:
+        """True when this card has no image yet for the loaded track."""
+        token = token or ""
+        if getattr(self, "_art_miss_key", "") == token and token:
+            return False
+        if self._art_key == token and token:
+            pix = self.art.pixmap()
+            if pix is not None and not pix.isNull():
+                return False
+        pix = self.art.pixmap()
+        return pix is None or pix.isNull()
+
+    def set_artwork(self, art: bytes | None, token: str) -> None:
+        """Attach a JPEG without clearing a picture that is already showing."""
+        token = token or ""
+        if not art:
+            if token:
+                self._art_miss_key = token
+            return
+        if token and self._art_key == token:
+            pix = self.art.pixmap()
+            if pix is not None and not pix.isNull():
+                return
+        img = QImage.fromData(art)
+        if img.isNull():
+            if token:
+                self._art_miss_key = token
+            return
+        pix = QPixmap.fromImage(img).scaled(
+            72, 72, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        self.art.setPixmap(pix)
+        self.art.setText("")
+        self._art_key = token
+        self._art_miss_key = ""
+
     def set_playhead_mode(self, mode: str) -> None:
         """User override (auto / centre / left). Applies immediately."""
         self._playhead_mode = mode or "auto"
@@ -1311,6 +1347,7 @@ class DeckCard(QFrame):
             self._wave_track_key = ""
             self._art_id = 0
             self._art_key = ""
+            self._art_miss_key = ""
             self._last_offair = None
             self._last_tags = ""
             if not tid:

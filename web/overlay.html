@@ -483,6 +483,7 @@ const PLAYHEAD_LEFT_FRACTION = 0.25;
 const DEFAULT_BPM = 120;
 const ZOOM_BARS_OPTS = [1, 2, 4, 8, 16];
 let showPhrasesDisplay = true;
+let showSpectrum = true;
 let zoomBarsDisplay = 4;
 let playheadModeDisplay = 'auto';
 const onlyPlaying = params.get('playing') !== '0';
@@ -1086,7 +1087,7 @@ function renderNowPanel(deck, pos) {
       </div>
     </div>`;
   const phrases = '<canvas class="panel-phrases"></canvas>';
-  const spectrum = '<canvas class="panel-spectrum"></canvas>';
+  const spectrum = showSpectrum ? '<canvas class="panel-spectrum"></canvas>' : '';
   const detail = '<canvas class="panel-detail"></canvas>';
   // Spectrum sits in the gap the smaller artwork leaves next to the waveform.
   const blocks = nowPos === 'top'
@@ -1427,7 +1428,7 @@ function paint(){
     }).join(',');
   }
   const sig = waveSig + '|' + layout + audSig + mixSig + setlistSig + '|' + histSig
-    + `|d${maxDecks}|ns${nowStyle}${nowPos}|zb${zoomBarsDisplay}|ph${playheadModeDisplay}|sp${showPhrasesDisplay}`;
+    + `|d${maxDecks}|ns${nowStyle}${nowPos}|zb${zoomBarsDisplay}|ph${playheadModeDisplay}|sp${showPhrasesDisplay}|viz${showSpectrum ? 1 : 0}`;
   if (layout === 'nowplaying' || layout === 'minimal' || layout === 'setlist') {
     syncNowPlayingCache(decks[0]);
   }
@@ -1490,6 +1491,14 @@ function applyState(state){
       loopbackBins = state.spectrum.map(Number);
       loopbackAt = performance.now();
     }
+    if (state.display) {
+      if (typeof state.display.show_phrases === 'boolean') {
+        showPhrasesDisplay = state.display.show_phrases;
+      }
+      if (typeof state.display.show_spectrum === 'boolean') {
+        showSpectrum = state.display.show_spectrum;
+      }
+    }
     return;
   }
   last = state;
@@ -1503,6 +1512,9 @@ function applyState(state){
   if (state && state.display) {
     if (typeof state.display.show_phrases === 'boolean') {
       showPhrasesDisplay = state.display.show_phrases;
+    }
+    if (typeof state.display.show_spectrum === 'boolean') {
+      showSpectrum = state.display.show_spectrum;
     }
     const zb = +state.display.zoom_bars;
     if (ZOOM_BARS_OPTS.includes(zb)) zoomBarsDisplay = zb;

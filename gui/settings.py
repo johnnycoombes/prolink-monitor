@@ -72,8 +72,9 @@ DEFAULTS: dict[str, Any] = {
     "overlay_show_tags": True,
     "overlay_show_bpm": True,
     "overlay_show_next": True,
-    # Panel-bar visualiser. Waveform is the default; loopback needs the optional
-    # MIT `soundcard` package and is never used unless the user opts in.
+    # Panel-bar visualiser. On by default. The audio checkbox only picks the
+    # input (waveform vs PC audio); it is not the on/off switch.
+    "overlay_show_spectrum": True,
     "overlay_spectrum_audio": False,
     "session_autosave": False,
     "session_autosave_dir": "",       # empty → ~/.prolink-monitor/sessions
@@ -140,6 +141,7 @@ def display_prefs_from(data: dict[str, Any] | None = None) -> dict[str, Any]:
         audio = True
     return {
         "show_phrases": bool(src.get("show_phrases", True)),
+        "show_spectrum": bool(src.get("overlay_show_spectrum", src.get("show_spectrum", True))),
         "zoom_bars": zoom,
         "zoom_bars_by_deck": by_deck,
         "playhead_position": normalize_playhead_mode(src.get("playhead_position")),
@@ -298,6 +300,7 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     out["overlay_show_tags"] = bool(data.get("overlay_show_tags", True))
     out["overlay_show_bpm"] = bool(data.get("overlay_show_bpm", True))
     out["overlay_show_next"] = bool(data.get("overlay_show_next", True))
+    out["overlay_show_spectrum"] = bool(data.get("overlay_show_spectrum", True))
     out["overlay_spectrum_audio"] = bool(data.get("overlay_spectrum_audio", False))
     out["floating_now_topmost"] = bool(data.get("floating_now_topmost", True))
     out["floating_now_transparent"] = bool(data.get("floating_now_transparent", True))

@@ -214,25 +214,35 @@ class MonitorPage(Page):
         self.set_wave_style("rgb")
         self.set_playhead_mode("auto")
         self._show_phrases = True
+        self._applying_prefs = False
 
     def apply_prefs(self, settings: dict) -> None:
-        self.set_zoom(int(settings.get("zoom_bars", DEFAULT_ZOOM_BARS)))
-        raw = settings.get("zoom_bars_by_deck") or {}
-        if isinstance(raw, dict):
-            self._zoom_overrides = {
-                int(k): int(v) for k, v in raw.items()
-                if int(v) in ZOOM_BARS
-            }
-        self._apply_card_zooms()
-        self.set_max_decks(int(settings.get("max_decks", 4)))
-        self.set_wave_style(str(settings.get("waveform_style") or "rgb"))
-        self.set_playhead_mode(str(settings.get("playhead_position") or "auto"))
-        self._show_empty = bool(settings.get("show_empty_decks", True))
-        self.set_show_phrases(bool(settings.get("show_phrases", True)))
-        self.set_elements(settings)
+        # Set the phrase flag before the setters that publish a snapshot.
+        # Those snapshots used to go out with the old "on" value and put the
+        # strip back.
+        self._applying_prefs = True
+        try:
+            self.set_show_phrases(bool(settings.get("show_phrases", True)))
+            self.set_zoom(int(settings.get("zoom_bars", DEFAULT_ZOOM_BARS)))
+            raw = settings.get("zoom_bars_by_deck") or {}
+            if isinstance(raw, dict):
+                self._zoom_overrides = {
+                    int(k): int(v) for k, v in raw.items()
+                    if int(v) in ZOOM_BARS
+                }
+            self._apply_card_zooms()
+            self.set_max_decks(int(settings.get("max_decks", 4)))
+            self.set_wave_style(str(settings.get("waveform_style") or "rgb"))
+            self.set_playhead_mode(str(settings.get("playhead_position") or "auto"))
+            self._show_empty = bool(settings.get("show_empty_decks", True))
+            self.set_elements(settings)
+        finally:
+            self._applying_prefs = False
         self._notify_prefs()
 
     def _notify_prefs(self) -> None:
+        if getattr(self, "_applying_prefs", False):
+            return
         cb = getattr(self, "on_prefs_changed", None)
         if callable(cb):
             cb(self.prefs_snapshot())
@@ -310,12 +320,12 @@ class MonitorPage(Page):
 
     def set_show_phrases(self, enabled: bool) -> None:
         enabled = bool(enabled)
-        if getattr(self, "_show_phrases", True) == enabled:
-            return
+        changed = getattr(self, "_show_phrases", True) != enabled
         self._show_phrases = enabled
         for card in self._cards.values():
             card.set_show_phrases(enabled)
-        self._notify_prefs()
+        if changed:
+            self._notify_prefs()
 
     def set_playhead_mode(self, mode: str) -> None:
         mode = normalize_playhead_mode(mode)
@@ -486,6 +496,10 @@ class MonitorPage(Page):
                         # so the Monitor drew titles with an empty waveform.
                         if wave or card._meta is None:
                             card.set_track_data(meta, detail, overview, art)
+                        elif (self._elements.get("deck_show_artwork", True)
+                                and meta.get("has_artwork")
+                                and card.needs_artwork(tkey or str(tid))):
+                            card.set_artwork(art, tkey or str(tid))
                     elif card._meta is None:
                         art = None
                         if (self._elements.get("deck_show_artwork", True)
@@ -496,6 +510,15 @@ class MonitorPage(Page):
                             except Exception:
                                 art = None
                         card.set_track_data(meta, card._detail, card._overview, art)
+                    elif (self._elements.get("deck_show_artwork", True)
+                            and meta.get("has_artwork")
+                            and card.needs_artwork(tkey or str(tid))):
+                        try:
+                            art = self.backend.artwork(
+                                tid, deck=deck_no, track_key=tkey or None)
+                        except Exception:
+                            art = None
+                        card.set_artwork(art, tkey or str(tid))
 
         # Keep layout order (2-deck: 1-2, 4-deck: 3-1-2-4).
         for i, d in enumerate(visible):
@@ -935,6 +958,8 @@ class HealthPage(Page):
             src_text = self._i18n.t("library_source_remotedb")
         elif src_name == "nfs-cache":
             src_text = self._i18n.t("library_source_nfs")
+        elif src_name == "onelibrary":
+            src_text = self._i18n.t("library_source_onelibrary")
         else:
             src_text = self._i18n.t("library_source_none")
         detail = src.get("detail") or src.get("remotedb_error") or ""
@@ -1365,6 +1390,8 @@ class LibraryPage(Page):
             src_text = self._i18n.t("library_source_remotedb")
         elif src_name == "nfs-cache":
             src_text = self._i18n.t("library_source_nfs")
+        elif src_name == "onelibrary":
+            src_text = self._i18n.t("library_source_onelibrary")
         else:
             src_text = self._i18n.t("library_source_none")
         self.source_label.setText(src_text)
@@ -1661,6 +1688,9 @@ class OverlayPage(Page):
         self.show_bpm.setChecked(True)
         self.show_next = QCheckBox(i18n.t("overlay_show_next"))
         self.show_next.setChecked(True)
+        self.show_spectrum = QCheckBox(i18n.t("overlay_show_spectrum"))
+        self.show_spectrum.setToolTip(i18n.t("overlay_show_spectrum_tip"))
+        self.show_spectrum.setChecked(True)
         self.wave_box = QComboBox()
         self.wave_box.addItem(i18n.t("wave_rgb"), "rgb")
         self.wave_box.addItem(i18n.t("wave_3band"), "3band")
@@ -1689,6 +1719,7 @@ class OverlayPage(Page):
         form.addRow("", self.show_tags)
         form.addRow("", self.show_bpm)
         form.addRow("", self.show_next)
+        form.addRow("", self.show_spectrum)
         form.addRow("", self.preview)
         self.layout_root.addWidget(card)
 
@@ -1734,6 +1765,7 @@ class OverlayPage(Page):
         self.show_tags.toggled.connect(self._on_change)
         self.show_bpm.toggled.connect(self._on_change)
         self.show_next.toggled.connect(self._on_change)
+        self.show_spectrum.toggled.connect(self._on_change)
         self.preview.toggled.connect(self._on_change)
         self.accent_edit.textChanged.connect(self._on_change)
         self.layout_box.currentIndexChanged.connect(self._maybe_bump_decks)
@@ -1783,6 +1815,9 @@ class OverlayPage(Page):
         self.show_tags.setChecked(bool(data.get("overlay_show_tags", True)))
         self.show_bpm.setChecked(bool(data.get("overlay_show_bpm", True)))
         self.show_next.setChecked(bool(data.get("overlay_show_next", True)))
+        self.show_spectrum.blockSignals(True)
+        self.show_spectrum.setChecked(bool(data.get("overlay_show_spectrum", True)))
+        self.show_spectrum.blockSignals(False)
         idx = self.wave_box.findData(data.get("overlay_waveform_style", "rgb"))
         self.wave_box.setCurrentIndex(max(0, idx))
         scale = str(data.get("overlay_scale") or "1")
@@ -1807,6 +1842,7 @@ class OverlayPage(Page):
             "overlay_show_tags": self.show_tags.isChecked(),
             "overlay_show_bpm": self.show_bpm.isChecked(),
             "overlay_show_next": self.show_next.isChecked(),
+            "overlay_show_spectrum": self.show_spectrum.isChecked(),
         }
 
     def set_port(self, port: int) -> None:
@@ -1883,6 +1919,7 @@ class OverlayPage(Page):
 
 class SettingsPage(Page):
     saved = Signal(dict, bool)  # settings, reconnect
+    display_live = Signal(dict)  # phrase strip / spectrum, applied immediately
 
     def __init__(self, i18n, parent=None):
         super().__init__(i18n, "settings_title", "settings_sub", parent)
@@ -2034,6 +2071,9 @@ class SettingsPage(Page):
         self.settings_now_pos_doc.setStyleSheet(f"color:{COLORS['dim']}; font-size:12px;")
         self.floating_now_topmost = QCheckBox(i18n.t("floating_now_topmost"))
         self.floating_now_transparent = QCheckBox(i18n.t("floating_now_transparent"))
+        self.overlay_show_spectrum = QCheckBox(i18n.t("overlay_show_spectrum"))
+        self.overlay_show_spectrum.setToolTip(i18n.t("overlay_show_spectrum_tip"))
+        self.overlay_show_spectrum.setChecked(True)
         self.overlay_spectrum_audio = QCheckBox(i18n.t("overlay_spectrum_audio"))
         self.overlay_spectrum_audio.setToolTip(i18n.t("overlay_spectrum_audio_tip"))
         self.settings_floating_btn = QPushButton(i18n.t("open_floating_now"))
@@ -2049,6 +2089,7 @@ class SettingsPage(Page):
         self._sync_settings_overlay_rows()
         ov.addRow("", self.floating_now_topmost)
         ov.addRow("", self.floating_now_transparent)
+        ov.addRow("", self.overlay_show_spectrum)
         ov.addRow("", self.overlay_spectrum_audio)
         ov.addRow(i18n.t("floating_now"), self.settings_floating_btn)
         ov.addRow(i18n.t("overlay_decks"), self.overlay_decks)
@@ -2130,6 +2171,17 @@ class SettingsPage(Page):
             "mode": conn.labelForField(self.mode),
             "host": conn.labelForField(self.host),
         }
+        self.show_phrases.toggled.connect(self._emit_display_live)
+        self.overlay_show_spectrum.toggled.connect(self._emit_display_live)
+
+    def _emit_display_live(self, *_args) -> None:
+        """Save and push the phrase strip and spectrum switch without a dialog."""
+        if getattr(self, "_loading_settings", False):
+            return
+        self.display_live.emit({
+            "show_phrases": self.show_phrases.isChecked(),
+            "overlay_show_spectrum": self.overlay_show_spectrum.isChecked(),
+        })
 
     def _on_settings_now_style_changed(self) -> None:
         new_style = normalize_now_style(self.settings_now_style.currentData())
@@ -2153,6 +2205,7 @@ class SettingsPage(Page):
             now and normalize_now_style(self.settings_now_style.currentData()) == "panel")
 
     def load_settings(self, data: dict) -> None:
+        self._loading_settings = True
         idx = self.mode.findData(data.get("mode", "auto"))
         self.mode.setCurrentIndex(max(0, idx))
         self.host.setText(data.get("host") or "")
@@ -2172,7 +2225,12 @@ class SettingsPage(Page):
         self.wave_style.setCurrentIndex(max(0, idx))
         idx = self.playhead.findData(normalize_playhead_mode(data.get("playhead_position")))
         self.playhead.setCurrentIndex(max(0, idx))
+        self.show_phrases.blockSignals(True)
         self.show_phrases.setChecked(bool(data.get("show_phrases", True)))
+        self.show_phrases.blockSignals(False)
+        self.overlay_show_spectrum.blockSignals(True)
+        self.overlay_show_spectrum.setChecked(bool(data.get("overlay_show_spectrum", True)))
+        self.overlay_show_spectrum.blockSignals(False)
         self.show_empty.setChecked(bool(data.get("show_empty_decks", True)))
         self.poll_hz.setValue(int(data.get("poll_hz", 60)))
         for key, cb in self.deck_checks.items():
@@ -2211,6 +2269,7 @@ class SettingsPage(Page):
         self.show_sidebar.setChecked(bool(data.get("sidebar_visible", True)))
         self.minimize_to_tray.setChecked(bool(data.get("minimize_to_tray", True)))
         self.close_to_tray.setChecked(bool(data.get("close_to_tray", True)))
+        self._loading_settings = False
 
     def collect(self) -> dict:
         data = {
@@ -2241,6 +2300,7 @@ class SettingsPage(Page):
             "overlay_waveform_style": self.overlay_wave.currentData(),
             "floating_now_topmost": self.floating_now_topmost.isChecked(),
             "floating_now_transparent": self.floating_now_transparent.isChecked(),
+            "overlay_show_spectrum": self.overlay_show_spectrum.isChecked(),
             "overlay_spectrum_audio": self.overlay_spectrum_audio.isChecked(),
             "session_autosave": self.session_autosave.isChecked(),
             "session_autosave_dir": self.session_autosave_dir.text().strip(),
