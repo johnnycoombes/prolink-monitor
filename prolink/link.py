@@ -356,6 +356,36 @@ class SnifferSource:
 SMOOTHING = 0.2
 # Above this error it is not noise: it is a real jump (cue, scratch, seek).
 JUMP_MS = 400.0
+# A loop wrap is a real jump even when it is shorter than JUMP_MS. Smaller
+# than this is packet jitter, not the playhead coming back to the loop start.
+LOOP_WRAP_MIN_MS = 20.0
+
+
+def wrap_loop_position(pos_ms: float, looping: bool,
+                       start_ms: float | None, end_ms: float | None) -> float:
+    """Keep a playhead inside the active loop.
+
+    Extrapolation between packets runs past the loop end. Folding it back
+    is what stops the highlight walking out of the loop. Outside a loop, or
+    without bounds, the position is unchanged.
+    """
+    if not looping:
+        return pos_ms
+    try:
+        start = float(start_ms)  # type: ignore[arg-type]
+        end = float(end_ms)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return pos_ms
+    length = end - start
+    if length <= 0:
+        return pos_ms
+    if pos_ms >= end:
+        return start + (pos_ms - start) % length
+    # Just before the window while the loop is active (a sample that wrapped
+    # the other way, or jitter). A seek well before the loop is left alone.
+    if start - length < pos_ms < start:
+        return start
+    return pos_ms
 
 # Tracks longer than this (as seconds) are not plausible DJ tracks; Absolute
 # Position "seconds" fields that big are almost certainly already milliseconds
@@ -415,6 +445,11 @@ class Deck:
     # must not replace this with a longer, unrelated packet value.
     metadata_duration_ms: int = 0
     _exact: bool = False
+    # Active loop, learned from a backward wrap or from the status packet.
+    # Cleared as soon as the player is not in play state "looping".
+    _loop_start_ms: float | None = None
+    _loop_end_ms: float | None = None
+    _loop_from_packet: bool = False
 
     def set_beat_grid(self, times: list[int], length_ms: int = 0) -> None:
         self._beat_times = times
@@ -467,16 +502,24 @@ class Deck:
             self._exact = False
             self.position_source = "none"
             self._model = (0.0, now, 0.0)
+            self._clear_loop_window()
 
         # advance the model up to now at the speed it carried, then continue at
         # the new one
         self._model = (self._project(now), now, s.speed if s.has_track else 0.0)
+        self._sync_loop_window(s)
 
-        # Exact Absolute Position packets already own the playhead.
+        # Exact Absolute Position packets already own the playhead. A loop
+        # wrap can still show up first in the beat grid (the absolute clock
+        # keeps counting on some players), so notice that jump too.
         if self._exact:
+            if s.play_state == "looping":
+                self._observe_beat_wrap(s, now)
+            self._fold_model()
             return
 
         if s.beat_count == self._last_beat:
+            self._fold_model()
             return
         self._last_beat = s.beat_count
 
@@ -488,12 +531,21 @@ class Deck:
 
         pos, _, speed = self._model
         error = target - pos
-        if new_track or not s.speed or abs(error) > JUMP_MS:
+        # A loop wrap is a jump back to the loop start. Smoothing that (the
+        # usual treatment for an error under JUMP_MS) walks the playhead out
+        # of the loop a little further on every cycle.
+        # A beat time of 0 with no grid is "unknown", not the loop start.
+        beat_known = bool(self._beat_times or s.bpm)
+        if s.play_state == "looping" and error < -LOOP_WRAP_MIN_MS and beat_known:
+            self._learn_loop_from_wrap(pos, target)
+            self._model = (target, now, speed)
+        elif new_track or not s.speed or abs(error) > JUMP_MS:
             self._model = (target, now, speed)          # real jump: re-place it
         else:
             self._model = (pos + error * SMOOTHING, now, speed)
         if self.position_source == "none":
             self.position_source = "beat_grid"
+        self._fold_model()
 
     def on_beat(self, b: proto.Beat, now: float) -> None:
         self.last_beat_packet = now
@@ -528,7 +580,113 @@ class Deck:
             speed = ap.speed
         else:
             speed = 0.0
-        self._model = (float(ap.position_ms), now, speed)
+        before = self._project(now)
+        pos = float(ap.position_ms)
+        if s and s.play_state == "looping" and pos + LOOP_WRAP_MIN_MS < before:
+            self._learn_loop_from_wrap(before, pos)
+        self._model = (pos, now, speed)
+        self._fold_model()
+
+    def loop_window(self) -> tuple[float, float] | None:
+        """Active loop bounds, or None when the player is not looping."""
+        s = self.status
+        if s is None or s.play_state != "looping":
+            return None
+        start, end = self._loop_start_ms, self._loop_end_ms
+        if start is None or end is None or end <= start:
+            return None
+        return float(start), float(end)
+
+    def loop_payload(self) -> dict:
+        window = self.loop_window()
+        if window is None:
+            return {"loop_start_ms": None, "loop_end_ms": None}
+        return {
+            "loop_start_ms": round(window[0], 1),
+            "loop_end_ms": round(window[1], 1),
+        }
+
+    def _clear_loop_window(self) -> None:
+        self._loop_start_ms = None
+        self._loop_end_ms = None
+        self._loop_from_packet = False
+
+    def _sync_loop_window(self, s: proto.Status) -> None:
+        """Take loop in/out from the status packet, or forget it when not looping."""
+        if s.play_state != "looping":
+            self._clear_loop_window()
+            return
+        start = int(getattr(s, "loop_start_ms", 0) or 0)
+        end = int(getattr(s, "loop_end_ms", 0) or 0)
+        if end <= start:
+            return
+        pos = self._model[0]
+        length = end - start
+        # Ignore a decoded window the playhead is nowhere near. A short packet
+        # or a different layout must not yank the highlight into the wrong loop.
+        # A little past the end is normal: extrapolation runs on until this packet.
+        if pos < start - length or pos > end + max(length * 4, 2000):
+            return
+        self._loop_start_ms = float(start)
+        self._loop_end_ms = float(end)
+        self._loop_from_packet = True
+
+    def _learn_loop_from_wrap(self, before: float, after: float) -> None:
+        """Remember the loop from a playhead that jumped backward while looping."""
+        if self._loop_from_packet:
+            return
+        if after >= before - LOOP_WRAP_MIN_MS:
+            return
+        length = before - after
+        if length < LOOP_WRAP_MIN_MS:
+            return
+        if self.track_length_ms and length > self.track_length_ms:
+            return
+        self._loop_start_ms = float(after)
+        self._loop_end_ms = float(before)
+
+    def _observe_beat_wrap(self, s: proto.Status, now: float) -> None:
+        """While Absolute Position owns the playhead, still notice a loop wrap.
+
+        On some players the absolute clock keeps counting through a loop and
+        the beat number is what jumps back to the loop start. That jump is the
+        position the highlight should follow.
+        """
+        if s.beat_count == self._last_beat or not s.speed:
+            return
+        self._last_beat = s.beat_count
+        # No grid and no tempo: beat 0 is "unknown", not a wrap back to the start.
+        if not self._beat_times and not s.bpm:
+            return
+        delay = now - self.last_beat_packet
+        beat_time = self.last_beat_packet if 0 <= delay < 0.25 else now
+        target = self._beat_time(s.beat_count) + (now - beat_time) * 1000.0 * s.speed
+        pos, t, speed = self._model
+        if target >= pos - LOOP_WRAP_MIN_MS:
+            return
+        self._learn_loop_from_wrap(pos, target)
+        window = self.loop_window()
+        if window and not (window[0] <= pos < window[1]):
+            folded = wrap_loop_position(pos, True, window[0], window[1])
+            self._model = (folded, t, speed)
+
+    def _fold_model(self) -> None:
+        """Pull an anchor that ran past the loop end back inside it."""
+        window = self.loop_window()
+        if window is None:
+            return
+        pos, t, speed = self._model
+        folded = wrap_loop_position(pos, True, window[0], window[1])
+        if folded != pos:
+            self._model = (folded, t, speed)
+
+    def _bounded(self, pos: float) -> float:
+        window = self.loop_window()
+        if window is not None:
+            pos = wrap_loop_position(pos, True, window[0], window[1])
+        elif self.track_length_ms:
+            pos = min(pos, self.track_length_ms)
+        return max(0.0, pos)
 
     @property
     def position_ms(self) -> float:
@@ -537,15 +695,9 @@ class Deck:
         if not s or not s.has_track:
             # Absolute packets can arrive before status on some firmwares.
             if self._exact:
-                pos = self._project(time.monotonic())
-                if self.track_length_ms:
-                    pos = min(pos, self.track_length_ms)
-                return max(0.0, pos)
+                return self._bounded(self._project(time.monotonic()))
             return 0.0
-        pos = self._project(time.monotonic())
-        if self.track_length_ms:
-            pos = min(pos, self.track_length_ms)
-        return max(0.0, pos)
+        return self._bounded(self._project(time.monotonic()))
 
     @property
     def is_playing(self) -> bool:

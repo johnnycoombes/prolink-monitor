@@ -742,7 +742,19 @@ function loopBeats(loop, bpm) {
   return Math.max(0, Math.round(ms / (60000 / bpm)));
 }
 
-function activeLoop(meta, pos, looping) {
+function wrapLoopPosition(pos, looping, start, end) {
+  // Same rule as prolink.link.wrap_loop_position.
+  if (!looping || start == null || end == null || !(+end > +start)) return pos;
+  const a = +start, b = +end, len = b - a;
+  if (pos >= b) return a + (((pos - a) % len) + len) % len;
+  if (pos < a && a - pos < len) return a;
+  return pos;
+}
+
+function activeLoop(meta, pos, looping, deck) {
+  if (looping && deck && +deck.loop_end_ms > +deck.loop_start_ms) {
+    return {type: 'loop', t: +deck.loop_start_ms, end: +deck.loop_end_ms};
+  }
   if (!meta || !meta.cues) return null;
   const loops = meta.cues.filter(c => c.type === 'loop' && c.end > c.t);
   if (!loops.length) return null;
@@ -763,7 +775,7 @@ function tagsHtml(deck, pack, pos){
   if (deck.on_air) bits.push('<span class="tag onair">ON AIR</span>');
   const looping = deck.state === 'looping';
   if (looping) {
-    const loop = activeLoop(pack && pack.meta, pos || 0, true);
+    const loop = activeLoop(pack && pack.meta, pos || 0, true, deck);
     const beats = loopBeats(loop, deck.track_bpm || deck.bpm);
     const label = beats ? String(beats) : 'LOOP';
     bits.push(`<span class="tag loop" title="Loop">${LOOP_ICON}${label}</span>`);
@@ -780,7 +792,7 @@ function waveHtml(trackId){
   return `<div class="wave"><canvas data-wave="${trackId||0}"></canvas></div>`;
 }
 
-function paintWaveCanvas(cv, pack, pos, color, looping){
+function paintWaveCanvas(cv, pack, pos, color, looping, deck){
   if (!cv) return;
   const r = window.devicePixelRatio || 1;
   const cssW = Math.max(1, Math.round(cv.clientWidth || cv.parentElement.clientWidth || 120));
@@ -802,14 +814,11 @@ function paintWaveCanvas(cv, pack, pos, color, looping){
   }
   const dur = (pack.meta && pack.meta.duration_ms) || ov.dur || 1;
   const px = Math.max(0, Math.min(W, (pos / dur) * W));
-  if (looping && pack.meta && pack.meta.cues) {
-    const loop = pack.meta.cues.find(c => c.type === 'loop' && c.end > c.t && pos >= c.t && pos <= c.end)
-      || pack.meta.cues.find(c => c.type === 'loop' && c.end > c.t);
-    if (loop) {
-      const x0 = (loop.t / dur) * W, x1 = (loop.end / dur) * W;
-      ctx.fillStyle = 'rgba(46,232,154,.30)';
-      ctx.fillRect(x0, 0, Math.max(1, x1 - x0), H);
-    }
+  const loop = activeLoop(pack && pack.meta, pos, looping, deck);
+  if (loop) {
+    const x0 = (loop.t / dur) * W, x1 = (loop.end / dur) * W;
+    ctx.fillStyle = 'rgba(46,232,154,.30)';
+    ctx.fillRect(x0, 0, Math.max(1, x1 - x0), H);
   }
   // Cue markers on the overlay mini-wave.
   if (pack.meta && pack.meta.cues) {
@@ -1048,10 +1057,11 @@ function paintPanelDetail(cv, pack, pos, deck, playing, looping) {
   ctx.clearRect(0, 0, W, H);
   ctx.drawImage(cache.off, 0, 0);
 
-  const loop = activeLoop(track.meta, pos, looping);
+  const loop = activeLoop(track.meta, pos, looping, deck);
   if (loop) {
-    const x0 = ((loop.t / 1000) * cps - cache.start) * pxPerCol * r;
-    const x1 = ((loop.end / 1000) * cps - cache.start) * pxPerCol * r;
+    // Lock the highlight to the true playhead window, not the scrolled cache.
+    const x0 = ((loop.t / 1000) * cps - start) * pxPerCol * r;
+    const x1 = ((loop.end / 1000) * cps - start) * pxPerCol * r;
     ctx.fillStyle = 'rgba(46,232,154,.30)';
     ctx.fillRect(x0, 0, Math.max(1, x1 - x0), H);
   }
@@ -1368,7 +1378,8 @@ function paintWaves(decks, positions){
       trackPack(d),
       positions[i] ?? positions[0],
       DECK_COLORS[d.number],
-      d.state === 'looping'
+      d.state === 'looping',
+      d
     );
   });
 }
@@ -1395,6 +1406,7 @@ function paint(){
     const pack = trackPack(d);
     const dur = overlayDuration(d, pack);
     let pos = +(d.position_ms||0) + (d.playing ? dt*1000*(d.speed||1) : 0);
+    pos = wrapLoopPosition(pos, d.state === 'looping', d.loop_start_ms, d.loop_end_ms);
     if (dur) pos = Math.min(pos, dur);
     return pos;
   });
