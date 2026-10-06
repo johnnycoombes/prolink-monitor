@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib
 import re
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -140,11 +141,76 @@ def _safe_process_result_value(_self: Any, value: Any, _dialect: Any) -> datetim
 _safe_process_result_value._prolink_safe = True  # type: ignore[attr-defined]
 
 
-_DATETIME_MODULES = (
+# masterdb replaced db6. Import db6 only when masterdb is not installed,
+# and never let its DeprecationWarning become a library failure.
+_PREFERRED_DATETIME_MODULES = (
     "pyrekordbox.devicelib_plus.models",
     "pyrekordbox.masterdb.models",
-    "pyrekordbox.db6.tables",
 )
+_LEGACY_DATETIME_MODULE = "pyrekordbox.db6.tables"
+
+
+def is_library_warning(value: Any) -> bool:
+    """True when ``value`` is a warning, not a failed library read.
+
+    ``pyrekordbox.db6`` warns on import (Python prints that from importlib).
+    That text must not be stored or shown as a Library error.
+    """
+    if value is None:
+        return False
+    if isinstance(value, Warning):
+        return True
+    text = str(value).lower()
+    if "deprecationwarning" in text or "pendingdeprecationwarning" in text:
+        return True
+    if "pyrekordbox.db6" in text and "deprecated" in text:
+        return True
+    if "db6 package was renamed" in text or "db6' is deprecated" in text:
+        return True
+    return False
+
+
+def scrub_status_text(value: Any) -> str:
+    """Drop warning lines from a status string. Real errors stay."""
+    if value is None:
+        return ""
+    if isinstance(value, Warning):
+        return ""
+    kept: list[str] = []
+    for segment in str(value).split(" · "):
+        lines = [
+            line.strip() for line in segment.splitlines()
+            if line.strip() and not is_library_warning(line)
+        ]
+        cleaned = " ".join(lines).strip()
+        if cleaned and not is_library_warning(cleaned):
+            kept.append(cleaned)
+    return " · ".join(kept)
+
+
+def library_failure_text(value: Any) -> str | None:
+    """Exception text worth showing, or None when it is only a warning."""
+    if value is None or isinstance(value, Warning):
+        return None
+    text = str(value)
+    # The db6 warning printout includes a following source line. When that is
+    # the whole message, none of it is a library failure. A status line that
+    # also has real counts is split below so those counts can stay.
+    if " · " not in text and is_library_warning(text):
+        return None
+    cleaned = scrub_status_text(value)
+    if not cleaned or is_library_warning(cleaned):
+        return None
+    return cleaned
+
+
+def _import_datetime_module(name: str) -> Any:
+    """Import a pyrekordbox models module without surfacing its rename warning."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        warnings.simplefilter("ignore", PendingDeprecationWarning)
+        warnings.simplefilter("ignore", FutureWarning)
+        return importlib.import_module(name)
 
 
 def install_tolerant_datetimes_on(module: Any) -> None:
@@ -172,32 +238,64 @@ def install_tolerant_datetimes(modules: tuple[str, ...] | None = None) -> None:
 
     Content, cues, history, playlists, and artwork rows share this type.
     Patching the class covers the ANLZ-path lookup as well as the library list.
+
+    ``pyrekordbox.masterdb`` is the supported package. ``db6`` is imported only
+    when masterdb is missing, and its deprecation warning is ignored.
     """
-    for name in modules or _DATETIME_MODULES:
+    if modules is not None:
+        for name in modules:
+            try:
+                module = _import_datetime_module(name)
+            except Exception:
+                continue
+            install_tolerant_datetimes_on(module)
+        return
+
+    masterdb_patched = False
+    for name in _PREFERRED_DATETIME_MODULES:
         try:
-            module = importlib.import_module(name)
+            module = _import_datetime_module(name)
         except Exception:
             continue
         install_tolerant_datetimes_on(module)
+        if "masterdb" in name:
+            masterdb_patched = True
+    if masterdb_patched:
+        return
+    try:
+        module = _import_datetime_module(_LEGACY_DATETIME_MODULE)
+    except Exception:
+        return
+    install_tolerant_datetimes_on(module)
 
 
 def open_onelibrary(path: str) -> tuple[Any | None, str | None]:
-    """Open ``exportLibrary.db``. Returns ``(db, error)``."""
+    """Open ``exportLibrary.db``. Returns ``(db, error)``.
+
+    A DeprecationWarning from pyrekordbox is not an error and is not returned.
+    """
     install_tolerant_datetimes()
     try:
-        from pyrekordbox import DeviceLibraryPlus
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            warnings.simplefilter("ignore", PendingDeprecationWarning)
+            from pyrekordbox import DeviceLibraryPlus
     except Exception as exc:
-        return None, f"pyrekordbox missing or incomplete ({exc})"
+        text = library_failure_text(exc)
+        if text is None:
+            return None, None
+        return None, f"pyrekordbox missing or incomplete ({text})"
     try:
         db = DeviceLibraryPlus(path)
         return db, None
     except Exception as exc:
-        return None, str(exc)
+        return None, library_failure_text(exc)
 
 
 def summarize(db: Any | None, *, present: bool, path: str = "",
               error: str | None = None) -> OneLibrarySummary:
     install_tolerant_datetimes()
+    error = library_failure_text(error)
     out = OneLibrarySummary(present=present, path=path, error=error)
     if not present:
         out.detail = "not on medium"
@@ -258,7 +356,8 @@ def content_count(db: Any) -> tuple[int, str | None]:
             return len(rows), None
     except Exception as exc:
         _rollback(_session(db))
-        orm_error = f"get_content failed: {exc}"
+        text = library_failure_text(exc)
+        orm_error = f"get_content failed: {text}" if text else None
     counted, note = _raw_content_count(db)
     if orm_error and note:
         return counted, f"{orm_error}; {note}"

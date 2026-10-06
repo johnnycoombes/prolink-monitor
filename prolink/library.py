@@ -469,8 +469,12 @@ class Library:
             m = Media(host, cache_dir=self.cache_dir)
             m.load_database()
         except Exception as e:                    # no medium, no NFS, drive removed
+            text = onelibrary.library_failure_text(e)
+            if text is None:
+                # A pyrekordbox DeprecationWarning is not a failed library.
+                return None
             with self.lock:
-                self.errors[host] = str(e)
+                self.errors[host] = text
                 self._error_at[host] = time.time()
             return None
         with self.lock:

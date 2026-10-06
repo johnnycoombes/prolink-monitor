@@ -95,6 +95,39 @@ WAVEFORM_POSITION_OFFSET = 0xDD   # 01 centre, 02 left
 _WAVEFORM_COLORS = {0x01: "blue", 0x03: "rgb", 0x04: "3band"}
 _WAVEFORM_POSITIONS = {0x01: "centre", 0x02: "left"}
 
+# CDJ-3000 status packets (0x200 bytes) carry the loop that is actually playing.
+# Start is bytes 0x1B6-0x1B9, end is 0x1BE-0x1C1. The documented unit is
+# milliseconds = raw * 65536 / 1000. Shorter packets leave both at 0.
+LOOP_START_OFFSET = 0x1B6
+LOOP_END_OFFSET = 0x1BE
+_LOOP_PACKET_MIN = 0x1C2
+_LOOP_MIN_MS = 20
+_LOOP_MAX_MS = 30 * 60 * 1000
+_LOOP_MAX_START_MS = 6 * 3600 * 1000
+
+
+def decode_loop_bounds(start_raw: int, end_raw: int) -> tuple[int, int]:
+    """Active loop in milliseconds, or (0, 0) when the fields are not a loop.
+
+    Prefer the documented CDJ-3000 scaling. Fall back to plain milliseconds
+    when that scaling is not a plausible loop and the raw values are.
+    """
+    if start_raw <= 0 or end_raw <= start_raw:
+        return 0, 0
+    scaled_s = int(start_raw * 65536 / 1000)
+    scaled_e = int(end_raw * 65536 / 1000)
+
+    def plausible(start: int, end: int) -> bool:
+        length = end - start
+        return _LOOP_MIN_MS <= length <= _LOOP_MAX_MS and 0 <= start < _LOOP_MAX_START_MS
+
+    if plausible(scaled_s, scaled_e):
+        return scaled_s, scaled_e
+    if plausible(int(start_raw), int(end_raw)):
+        return int(start_raw), int(end_raw)
+    return 0, 0
+
+
 # Scrolling-waveform needle, as a fraction of the strip width.
 # Centre is the historical middle. Left is the left quarter: the needle
 # stays near the left edge so more of the upcoming track stays visible,
@@ -201,6 +234,9 @@ class Status:
     beat_count: int = 0           # absolute beat within the track
     beat_in_bar: int = 0          # 1..4
     cue_distance: int = 0         # beats to the next cue (0x1ff = none)
+    # Active loop from a long status packet (CDJ-3000 layout). 0 when absent.
+    loop_start_ms: int = 0
+    loop_end_ms: int = 0
 
     # From settings block 1 when the marker is present; None if absent,
     # the packet is short, or the byte is not a known value.
@@ -405,6 +441,10 @@ def _parse_status(data: bytes) -> Status | None:
     s.cue_distance = struct.unpack_from(">H", data, 0xA4)[0]
     s.beat_in_bar = data[0xA6]
     s.waveform_color, s.waveform_position = _parse_waveform_settings(data)
+    if len(data) >= _LOOP_PACKET_MIN:
+        raw_start = struct.unpack_from(">I", data, LOOP_START_OFFSET)[0]
+        raw_end = struct.unpack_from(">I", data, LOOP_END_OFFSET)[0]
+        s.loop_start_ms, s.loop_end_ms = decode_loop_bounds(raw_start, raw_end)
     return s
 
 

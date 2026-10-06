@@ -1255,7 +1255,8 @@ class Monitor:
         """Cached library totals / OneLibrary info for the hot state() path."""
         with self.library.lock:
             media_list = list(self.library.media.values())
-            first_error = next(iter(self.library.errors.values()), None)
+            first_error = onelibrary.library_failure_text(
+                next(iter(self.library.errors.values()), None))
         key = tuple(
             (getattr(m, "host", None), getattr(m, "export", None),
              getattr(m, "_pdb_fingerprint", None),
@@ -1276,14 +1277,16 @@ class Monitor:
                 totals[k] = totals.get(k, 0) + v
             ol = getattr(m, "onelibrary", None)
             if ol is not None and ol.present:
+                ol_error = onelibrary.library_failure_text(ol.error)
+                ol_detail = onelibrary.scrub_status_text(ol.detail)
                 onelibrary_info = {
                     "present": True,
                     "readable": ol.readable,
                     "tracks": ol.tracks,
                     "playlists": ol.playlists,
                     "history": ol.history,
-                    "detail": ol.detail,
-                    "error": ol.error,
+                    "detail": ol_detail,
+                    "error": ol_error,
                     "path": ol.path or onelibrary.ONE_LIBRARY_PATH,
                     "pyrekordbox": onelibrary.pyrekordbox_available(),
                 }
@@ -1298,6 +1301,16 @@ class Monitor:
         return snap
 
     # -- state --------------------------------------------------------------
+    @staticmethod
+    def _loop_fields(deck) -> dict:
+        """Loop in/out for clients. Stand-in decks without the method send none."""
+        payload = getattr(deck, "loop_payload", None)
+        if callable(payload):
+            fields = payload()
+            if isinstance(fields, dict):
+                return fields
+        return {"loop_start_ms": None, "loop_end_ms": None}
+
     @staticmethod
     def _waveform_report(status) -> dict:
         """Player-reported waveform settings, or null when absent/unknown.
@@ -1361,6 +1374,7 @@ class Monitor:
                 "on_air": s.on_air,
                 "position_source": d.position_source,
                 **self._waveform_report(s),
+                **self._loop_fields(d),
             })
         tracker = getattr(self, "audience", None) or AudienceDeckTracker()
         self.audience = tracker
@@ -1418,6 +1432,7 @@ class Monitor:
                 "sync": s.sync,
                 "on_air": s.on_air,
                 **self._waveform_report(s),
+                **self._loop_fields(d),
             })
         # Enrich from cache only — never NFS on the hot path (ensure runs on track change).
         for snap in decks:

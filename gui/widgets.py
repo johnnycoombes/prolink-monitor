@@ -1270,8 +1270,15 @@ class DeckCard(QFrame):
         )
 
     def advance_playhead(self, pos_ms: float, playing: bool, duration_ms: float = 0,
-                         *, bar: int = 0, looping: bool = False) -> None:
+                         *, bar: int = 0, looping: bool = False,
+                         loop_start_ms: float | None = None,
+                         loop_end_ms: float | None = None) -> None:
         """Lightweight per-frame update: times + waveform position + phase."""
+        if looping and loop_end_ms is not None and loop_start_ms is not None:
+            deck = dict(getattr(self, "_last_deck", None) or {})
+            deck["loop_start_ms"] = loop_start_ms
+            deck["loop_end_ms"] = loop_end_ms
+            self._last_deck = deck
         meta_dur = float((self._meta or {}).get("duration_ms") or 0)
         dur = sane_duration_ms(duration_ms, meta_dur)
         if dur:
@@ -1306,16 +1313,31 @@ class DeckCard(QFrame):
 
     def _apply_loop_region(self, pos_ms: float, looping: bool) -> None:
         start = end = None
-        cues = (self._meta or {}).get("cues") or []
-        loops = [c for c in cues
-                 if c.get("type") == "loop" and (c.get("end") or 0) > (c.get("t") or 0)]
         pick = None
-        if loops:
-            pick = next((c for c in loops if c["t"] <= pos_ms <= c["end"]), None)
-            if pick is None and looping:
-                pick = loops[0]
-            if pick is not None:
-                start, end = float(pick["t"]), float(pick["end"])
+        # The player's own loop in/out wins over a stored cue. A manual loop
+        # is not in the ANLZ cues, and a drifting playhead must not slide the
+        # highlight onto a different cue.
+        deck = getattr(self, "_last_deck", None) or {}
+        packet_start = deck.get("loop_start_ms")
+        packet_end = deck.get("loop_end_ms")
+        if looping and packet_start is not None and packet_end is not None:
+            try:
+                p_start, p_end = float(packet_start), float(packet_end)
+            except (TypeError, ValueError):
+                p_start = p_end = 0.0
+            if p_end > p_start:
+                start, end = p_start, p_end
+                pick = {"t": start, "end": end}
+        if pick is None:
+            cues = (self._meta or {}).get("cues") or []
+            loops = [c for c in cues
+                     if c.get("type") == "loop" and (c.get("end") or 0) > (c.get("t") or 0)]
+            if loops:
+                pick = next((c for c in loops if c["t"] <= pos_ms <= c["end"]), None)
+                if pick is None and looping:
+                    pick = loops[0]
+                if pick is not None:
+                    start, end = float(pick["t"]), float(pick["end"])
         self.wave.set_loop_region(start, end, active=bool(looping and start is not None))
         # Loop length badge (icon + beats) — same idea as the web panel.
         if looping and pick is not None:
@@ -1417,6 +1439,8 @@ class DeckCard(QFrame):
             float(deck.get("duration_ms") or 0),
             bar=int(deck.get("bar") or 0),
             looping=(deck.get("state") == "looping"),
+            loop_start_ms=deck.get("loop_start_ms"),
+            loop_end_ms=deck.get("loop_end_ms"),
         )
 
     @staticmethod

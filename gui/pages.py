@@ -20,6 +20,7 @@ from gui.overlay_now import migrate_now_pos_for_style, normalize_now_pos, normal
 from gui.theme import COLORS
 from gui.widgets import DeckCard, parse_waveform
 from gui.settings import deck_elements_from
+from prolink.link import wrap_loop_position
 from prolink.proto import normalize_playhead_mode
 from prolink.session import ZOOM_BARS, DEFAULT_ZOOM_BARS
 
@@ -28,6 +29,25 @@ DECK_LAYOUT = {
     2: (1, 2),
     4: (3, 1, 2, 4),
 }
+
+
+def extrapolate_playhead(pos_ms: float, *, playing: bool, speed: float, dt: float,
+                         duration_ms: float = 0, looping: bool = False,
+                         loop_start_ms: float | None = None,
+                         loop_end_ms: float | None = None) -> float:
+    """Move the playhead between polls, and keep it inside an active loop.
+
+    The published position is already the server's estimate. Adding ``dt``
+    again bridges the gap until the next poll. Without the wrap, that extra
+    time runs past the loop end and the highlight walks away from the needle.
+    """
+    pos = float(pos_ms or 0)
+    if playing:
+        pos += float(dt) * 1000.0 * float(speed if speed else 1.0)
+    pos = wrap_loop_position(pos, looping, loop_start_ms, loop_end_ms)
+    if duration_ms:
+        pos = min(pos, float(duration_ms))
+    return max(0.0, pos)
 
 
 def _repopulate_overlay_now_pos(combo: QComboBox, i18n, style: str, pos=None) -> None:
@@ -454,11 +474,16 @@ class MonitorPage(Page):
             meta_dur = float((card._meta or {}).get("duration_ms") or 0)
             from gui.widgets import sane_duration_ms
             dur = sane_duration_ms(float(d.get("duration_ms") or 0), meta_dur)
-            pos = float(d.get("position_ms") or 0)
-            if d.get("playing"):
-                pos += dt * 1000.0 * float(d.get("speed") or 1.0)
-            if dur:
-                pos = min(pos, dur)
+            pos = extrapolate_playhead(
+                float(d.get("position_ms") or 0),
+                playing=bool(d.get("playing")),
+                speed=float(d.get("speed") or 1.0),
+                dt=dt,
+                duration_ms=dur,
+                looping=(d.get("state") == "looping"),
+                loop_start_ms=d.get("loop_start_ms"),
+                loop_end_ms=d.get("loop_end_ms"),
+            )
 
             tid = d.get("track_id") or 0
             tkey = d.get("track_key") or ""
@@ -542,17 +567,24 @@ class MonitorPage(Page):
             from gui.widgets import sane_duration_ms
             meta_dur = float((card._meta or {}).get("duration_ms") or 0)
             dur = sane_duration_ms(float(d.get("duration_ms") or 0), meta_dur)
-            pos = float(d.get("position_ms") or 0)
-            if d.get("playing"):
-                pos += dt * 1000.0 * float(d.get("speed") or 1.0)
-            if dur:
-                pos = min(pos, dur)
+            pos = extrapolate_playhead(
+                float(d.get("position_ms") or 0),
+                playing=bool(d.get("playing")),
+                speed=float(d.get("speed") or 1.0),
+                dt=dt,
+                duration_ms=dur,
+                looping=(d.get("state") == "looping"),
+                loop_start_ms=d.get("loop_start_ms"),
+                loop_end_ms=d.get("loop_end_ms"),
+            )
             card.advance_playhead(
                 pos,
                 bool(d.get("playing")),
                 dur,
                 bar=int(d.get("bar") or 0),
                 looping=(d.get("state") == "looping"),
+                loop_start_ms=d.get("loop_start_ms"),
+                loop_end_ms=d.get("loop_end_ms"),
             )
 
     def _visible(self, decks: list[dict]) -> list[dict]:
@@ -1062,7 +1094,9 @@ def load_library_view(backend, query: str, source: str):
     try:
         playlists = backend.browse_playlists() or {}
     except Exception as exc:
-        errors.append(str(exc))
+        text = _library_failure_text(exc)
+        if text:
+            errors.append(text)
     tracks: list[dict] = []
     multi = ""
     try:
@@ -1091,8 +1125,16 @@ def load_library_view(backend, query: str, source: str):
             if data.get("multi_player"):
                 multi = "library_multi"
     except Exception as exc:
-        errors.append(str(exc))
+        text = _library_failure_text(exc)
+        if text:
+            errors.append(text)
     return tracks, playlists, multi, "; ".join(errors)
+
+
+def _library_failure_text(exc: BaseException) -> str | None:
+    from prolink.onelibrary import library_failure_text
+
+    return library_failure_text(exc)
 
 
 class LibraryPage(Page):

@@ -878,8 +878,21 @@ function fitCanvas(cv) {
   return false;
 }
 
-function activeLoop(meta, pos, looping) {
-  /** Loop cue containing playhead, or null. Prefer when deck reports looping. */
+function wrapLoopPosition(pos, looping, start, end) {
+  // Same rule as prolink.link.wrap_loop_position: extrapolation must not
+  // walk the highlight out of the loop between polls.
+  if (!looping || start == null || end == null || !(+end > +start)) return pos;
+  const a = +start, b = +end, len = b - a;
+  if (pos >= b) return a + (((pos - a) % len) + len) % len;
+  if (pos < a && a - pos < len) return a;
+  return pos;
+}
+
+function activeLoop(meta, pos, looping, deck) {
+  /** Loop the player is in, else the cue containing the playhead. */
+  if (looping && deck && +deck.loop_end_ms > +deck.loop_start_ms) {
+    return {type: 'loop', t: +deck.loop_start_ms, end: +deck.loop_end_ms};
+  }
   if (!meta || !meta.cues) return null;
   const loops = meta.cues.filter(c => c.type === 'loop' && c.end > c.t);
   if (!loops.length) return null;
@@ -950,7 +963,7 @@ function drawPhrases(d, track, pos) {
   }
 }
 
-function drawOverview(d, track, pos, looping) {
+function drawOverview(d, track, pos, looping, deck) {
   const cv = d.cvOverview, ctx = d.ctxOverview;
   const resized = fitCanvas(cv);
   const r = window.devicePixelRatio || 1;
@@ -982,7 +995,7 @@ function drawOverview(d, track, pos, looping) {
   ctx.drawImage(d.overviewOff, 0, 0);
   ctx.restore();
 
-  const loop = activeLoop(track.meta, pos, looping);
+  const loop = activeLoop(track.meta, pos, looping, deck);
   if (loop) {
     const x0 = (loop.t / dur) * W;
     const x1 = (loop.end / dur) * W;
@@ -1011,7 +1024,7 @@ function drawOverview(d, track, pos, looping) {
   ctx.fillRect(px - r, 0, Math.max(2, Math.round(2 * r)), H);
 }
 
-function drawDetail(d, track, pos, playing, looping, anchor) {
+function drawDetail(d, track, pos, playing, looping, anchor, deck) {
   const cv = d.cvDetail, ctx = d.ctxDetail;
   const resized = fitCanvas(cv);
   const W = cv.width, H = cv.height, r = window.devicePixelRatio || 1;
@@ -1133,7 +1146,7 @@ function drawDetail(d, track, pos, playing, looping, anchor) {
   ctx.clearRect(0, 0, W, H);
   ctx.drawImage(d.detailOff, 0, 0);
 
-  const loop = activeLoop(track.meta, pos, looping);
+  const loop = activeLoop(track.meta, pos, looping, deck);
   if (loop) {
     const x0 = ((loop.t / 1000) * cps - start) * pxPerCol * r;
     const x1 = ((loop.end / 1000) * cps - start) * pxPerCol * r;
@@ -1167,7 +1180,9 @@ function render() {
     const track = trackPack(s);
     if (s.track_id && !track) loadTrack(s);
     const dur = durationMs(s, track);
+    const looping = s.state === 'looping';
     let pos = s.position_ms + (s.playing ? dt * 1000 * s.speed : 0);
+    pos = wrapLoopPosition(pos, looping, s.loop_start_ms, s.loop_end_ms);
     if (dur) pos = Math.min(pos, dur);
 
     drawInfo(d, s);
@@ -1179,8 +1194,7 @@ function render() {
     d.remaining.parentElement.classList.toggle('low',
       dur > 0 && remaining < 30000);
 
-    const looping = s.state === 'looping';
-    const loop = track ? activeLoop(track.meta, pos, looping) : null;
+    const loop = track ? activeLoop(track.meta, pos, looping, s) : null;
     const beats = loopBeats(loop, s.track_bpm || s.bpm);
     if (looping && loop) {
       d.loopBadge.classList.add('on');
@@ -1197,9 +1211,9 @@ function render() {
     }
     d.lastBar = s.bar;
 
-    drawOverview(d, track, pos, looping);
+    drawOverview(d, track, pos, looping, s);
     drawPhrases(d, track, pos);
-    drawDetail(d, track, pos, s.playing, looping, playheadAnchor(s));
+    drawDetail(d, track, pos, s.playing, looping, playheadAnchor(s), s);
   }
 }
 
