@@ -122,6 +122,7 @@ class MainWindow(QMainWindow):
         self.btn_disconnect.setCursor(Qt.PointingHandCursor)
         self.btn_web = QPushButton(self.i18n.t("open_web"))
         self.btn_web.setCursor(Qt.PointingHandCursor)
+        self.btn_web.setToolTip(self.i18n.t("open_web_tip"))
         self.btn_connect.clicked.connect(self.connect_backend)
         self.btn_disconnect.clicked.connect(self.disconnect_backend)
         self.btn_web.clicked.connect(self.backend.open_web_panel)
@@ -170,6 +171,7 @@ class MainWindow(QMainWindow):
         self.page_settings.saved.connect(self._on_settings_saved)
         self.page_settings.wnp_test_btn.clicked.connect(self._on_wnp_test)
         self.backend.wnp_test_finished.connect(self._on_wnp_test_finished)
+        self.page_monitor.on_prefs_changed = self._push_monitor_prefs
         self.page_monitor.apply_prefs(self.settings)
         self.page_overlay.load_prefs(self.settings, port=int(self.settings.get("port", 8777)))
         self.page_overlay.prefs_changed.connect(self._on_overlay_prefs)
@@ -496,6 +498,12 @@ class MainWindow(QMainWindow):
         # Next state tick will attach meta/waveform; nudge playheads now.
         self.page_monitor.advance_playheads()
 
+    def _push_monitor_prefs(self, prefs: dict | None = None) -> None:
+        """Keep the web panel on the Monitor view, including unsaved toolbar changes."""
+        if prefs:
+            self.settings.update(prefs)
+        self.backend.push_display(self.settings)
+
     def _on_settings_saved(self, data: dict, reconnect: bool) -> None:
         # preserve window size
         data["window_width"] = self.width()
@@ -508,8 +516,7 @@ class MainWindow(QMainWindow):
         self.page_overlay.load_prefs(self.settings, port=int(self.settings.get("port", 8777)))
         self.set_sidebar_visible(bool(self.settings.get("sidebar_visible", True)), persist=False)
         if self.backend.monitor is not None:
-            self.backend.monitor.show_phrases = bool(
-                self.settings.get("show_phrases", True))
+            self.backend.push_display(self.settings)
             publisher = getattr(self.backend.monitor, "wnp", None)
             if publisher is not None:
                 publisher.configure(self.settings)

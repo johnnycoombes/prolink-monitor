@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Archivo:wght@500;600;700&display=swap" rel="stylesheet">
+<script src="spectrum.js"></script>
 <style>
 :root{
   --text:#f4f6fb;
@@ -33,10 +34,10 @@ html,body{
   color:var(--text);
   -webkit-font-smoothing:antialiased;
 }
+body.embed{background:transparent !important}
 body.preview{
   background:radial-gradient(circle at 20% 10%,#1a2230,#07080a 55%) !important;
 }
-body.embed{background:transparent !important}
 #root.embed-mode{
   padding:0;
   height:100%;
@@ -130,17 +131,22 @@ body.float-window canvas{-webkit-app-region:no-drag}
 .now-card{
   display:flex;flex-direction:column;align-items:center;text-align:center;
   padding:calc(20px * var(--scale)) calc(24px * var(--scale)) calc(18px * var(--scale));
-  min-width:min(calc(640px * var(--scale)),94vw);
-  max-width:min(calc(920px * var(--scale)),96vw);
+  min-width:min(calc(560px * var(--scale)),96vw);
+  max-width:min(calc(620px * var(--scale)),96vw);
   flex:0 0 auto;
 }
 .now-card .art{
-  width:min(calc(380px * var(--scale)),44vw);
-  height:min(calc(380px * var(--scale)),44vw);
+  width:min(calc(500px * var(--scale)),100%);
+  aspect-ratio:1;
+  height:auto;
   border-radius:calc(20px * var(--scale));
   margin:0 auto calc(12px * var(--scale));
-  font-size:calc(84px * var(--scale));
+  font-size:calc(96px * var(--scale));
   flex-shrink:0;
+  overflow:hidden;
+}
+.now-card .art img,.now-panel .art img{
+  width:100%;height:100%;object-fit:cover;display:block;border-radius:inherit;
 }
 .now-card .meta{width:100%;min-width:0;flex:0 0 auto}
 .now-card .tags{justify-content:center;margin-bottom:calc(8px * var(--scale))}
@@ -176,8 +182,13 @@ body.float-window canvas{-webkit-app-region:no-drag}
   display:flex;align-items:center;gap:calc(16px * var(--scale));min-width:0;
 }
 .now-panel .panel-info .art{
-  width:calc(72px * var(--scale));height:calc(72px * var(--scale));flex-shrink:0;
-  border-radius:calc(10px * var(--scale));font-size:calc(32px * var(--scale));
+  width:calc(48px * var(--scale));height:calc(48px * var(--scale));flex-shrink:0;
+  border-radius:calc(8px * var(--scale));font-size:calc(20px * var(--scale));
+}
+.now-panel .panel-spectrum{
+  width:100%;height:calc(72px * var(--scale));display:block;flex:0 0 auto;
+  border-radius:calc(6px * var(--scale));
+  background:rgba(0,0,0,.42);
 }
 .now-panel .panel-info .copy{min-width:0;text-align:left;flex:1}
 .now-panel .panel-info .title{
@@ -673,11 +684,63 @@ async function loadTrack(deck){
   } finally { pending.delete(cacheId); }
 }
 
-function artHtml(deck, pack){
+function artQuery(deck, size){
+  const base = trackApiQuery(deck);
+  const q = new URLSearchParams(base.startsWith('?') ? base.slice(1) : base);
+  if (!q.has('deck') && deck && deck.number) q.set('deck', String(deck.number));
+  if (size) q.set('size', size);
+  const s = q.toString();
+  return s ? `?${s}` : '';
+}
+
+let _mockArt = null;
+function mockArtDataUri(size){
+  if (!_mockArt) _mockArt = {};
+  const key = size === 'large' ? 'large' : 'small';
+  if (_mockArt[key]) return _mockArt[key];
+  const px = key === 'large' ? 500 : 48;
+  const cv = document.createElement('canvas');
+  cv.width = px; cv.height = px;
+  const ctx = cv.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, px, px);
+  g.addColorStop(0, '#14304a');
+  g.addColorStop(1, '#0b1016');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, px, px);
+  ctx.fillStyle = '#22d3ee';
+  ctx.beginPath();
+  ctx.arc(px * 0.5, px * 0.42, px * 0.28, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#ffb020';
+  ctx.fillRect(px * 0.18, px * 0.72, px * 0.64, Math.max(2, px * 0.06));
+  if (key === 'large') {
+    ctx.strokeStyle = 'rgba(255,255,255,.35)';
+    ctx.lineWidth = Math.max(1, px * 0.008);
+    for (let i = 1; i < 6; i++) {
+      ctx.beginPath();
+      ctx.moveTo(px * 0.12, px * (0.15 + i * 0.1));
+      ctx.lineTo(px * 0.88, px * (0.15 + i * 0.1));
+      ctx.stroke();
+    }
+  }
+  ctx.fillStyle = '#f4f6fb';
+  ctx.font = `700 ${Math.round(px * 0.16)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText(key === 'large' ? 'HI-RES' : 'AZ', px / 2, px * 0.46);
+  _mockArt[key] = cv.toDataURL('image/jpeg', key === 'large' ? 0.92 : 0.7);
+  return _mockArt[key];
+}
+
+function artHtml(deck, pack, size){
   const trackId = deck && deck.track_id;
   const meta = pack && pack.meta;
-  if (trackId && meta && meta.has_artwork)
-    return `<div class="art"><img alt="" src="/api/artwork/${trackId}${trackApiQuery(deck)}"></div>`;
+  const variant = size === 'large' ? 'large' : (size === 'small' ? 'small' : '');
+  if (params.get('mock') === '1' && trackId)
+    return `<div class="art"><img alt="" src="${mockArtDataUri(variant || 'small')}"></div>`;
+  if (trackId && meta && meta.has_artwork) {
+    const id = trackId;
+    return `<div class="art"><img alt="" src="/api/artwork/${id}${artQuery(deck, variant)}"></div>`;
+  }
   return `<div class="art">♪</div>`;
 }
 
@@ -1019,7 +1082,7 @@ function renderNowPanel(deck, pos) {
   const color = DECK_COLORS[deck.number] || '#22d3ee';
   const info = `
     <div class="panel-info">
-      ${artHtml(deck, pack)}
+      ${artHtml(deck, pack, 'small')}
       <div class="copy">
         ${tagsHtml(deck, pack, pos)}
         <div class="title">${escapeHtml(title)}</div>
@@ -1032,10 +1095,12 @@ function renderNowPanel(deck, pos) {
       </div>
     </div>`;
   const phrases = '<canvas class="panel-phrases"></canvas>';
+  const spectrum = '<canvas class="panel-spectrum"></canvas>';
   const detail = '<canvas class="panel-detail"></canvas>';
+  // Spectrum sits in the gap the smaller artwork leaves next to the waveform.
   const blocks = nowPos === 'top'
-    ? `${detail}${phrases}${info}`
-    : `${info}${phrases}${detail}`;
+    ? `${detail}${spectrum}${phrases}${info}`
+    : `${info}${phrases}${spectrum}${detail}`;
   return `<div class="now-panel" style="--deck:${color}">${blocks}</div>`;
 }
 
@@ -1061,13 +1126,13 @@ function renderNow(deck, pos, compact=false){
   if (compact) {
     return `
     <div class="now" style="--deck:${color}">
-      ${artHtml(deck, pack)}
+      ${artHtml(deck, pack, 'small')}
       <div class="meta">${inner}</div>
     </div>`;
   }
   return `
     <div class="now-card" style="--deck:${color}">
-      ${artHtml(deck, pack)}
+      ${artHtml(deck, pack, 'large')}
       <div class="meta">${inner}${waveHtml(deck.track_id)}</div>
     </div>`;
 }
@@ -1080,7 +1145,7 @@ function renderMinimal(deck, pos){
   const color = DECK_COLORS[deck.number] || '#22d3ee';
   return `
     <div class="minimal" style="--deck:${color}">
-      ${artHtml(deck, pack)}
+      ${artHtml(deck, pack, 'small')}
       <div class="meta" style="min-width:0">
         <div class="title">${escapeHtml(title)}</div>
         <div class="artist">${escapeHtml(artist)}</div>
@@ -1120,7 +1185,7 @@ function renderSetlistHistory(entries, current){
     const when = setlistClock(e.reported_at || e.started_at);
     if (e.track_id) loadTrack(histDeck);
     return `<div class="setlist-row" style="--deck:${color};animation-delay:${Math.min(i, 6) * 0.04}s">
-      ${artHtml(histDeck, pack)}
+      ${artHtml(histDeck, pack, 'small')}
       <div class="meta">
         <div class="title">${escapeHtml(title)}</div>
         <div class="artist">${escapeHtml(artist)}${e.deck ? ` · D${e.deck}` : ''}</div>
@@ -1146,7 +1211,7 @@ function renderDual(decks, positions){
     const artist = meta ? (meta.artist || '') : '';
     return `
     <div class="slot" style="--deck:${DECK_COLORS[d.number]||'#22d3ee'}">
-      ${artHtml(d, pack)}
+      ${artHtml(d, pack, 'small')}
       <div class="meta">
         ${tagsHtml(d, pack, positions[i])}
         <div class="title">${escapeHtml(title)}</div>
@@ -1197,12 +1262,104 @@ function renderNextThird(pending){
   el.classList.add('show');
 }
 
+let spectrumLevels = null;
+let spectrumKey = '';
+let spectrumStamp = 0;
+let loopbackBins = null;
+let loopbackAt = 0;
+
+function paintSpectrum(cv, pack, pos, deck, playing) {
+  if (!cv) return;
+  const r = window.devicePixelRatio || 1;
+  const cssW = Math.max(1, Math.round(cv.clientWidth || cv.parentElement && cv.parentElement.clientWidth || 640));
+  const cssH = Math.max(1, Math.round(cv.clientHeight || 72));
+  const W = Math.round(cssW * r), H = Math.round(cssH * r);
+  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+  const ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+  const now = performance.now();
+  const dt = spectrumStamp ? Math.min(0.25, (now - spectrumStamp) / 1000) : 0.016;
+  spectrumStamp = now;
+  const detail = pack && pack.detail;
+  const key = detail ? `${deck.track_id}|${deck.track_key || ''}|${detail.n}` : '';
+  if (key !== spectrumKey) {
+    spectrumKey = key;
+    spectrumLevels = null;
+  }
+  const api = window.ProlinkSpectrum;
+  const wantLoop = last && last.display && last.display.spectrum_source === 'loopback';
+  const useLoop = wantLoop && loopbackBins && (now - loopbackAt) < 500;
+  let result = null;
+  if (useLoop) {
+    const target = loopbackBins;
+    const nBars = target.length;
+    if (!spectrumLevels || spectrumLevels.length !== nBars) {
+      spectrumLevels = target.slice();
+    }
+    const k = playing ? (1 - Math.exp(-dt / 0.06)) : (1 - Math.exp(-dt / 0.2));
+    for (let i = 0; i < nBars; i++) {
+      const goal = playing ? target[i] : target[i] * 0.35;
+      spectrumLevels[i] = spectrumLevels[i] + (goal - spectrumLevels[i]) * k;
+    }
+    result = { levels: spectrumLevels };
+  } else if (api && detail && detail.n) {
+    const col = (pos / 1000) * (detail.cps || 150);
+    result = api.spectrumBars({
+      low: detail.low || null,
+      mid: detail.mid || null,
+      high: detail.high || null,
+      height: detail.h || null,
+      columns: detail.n,
+      column: col,
+      peak: detail.bandPeak || 31,
+      prev: spectrumLevels,
+      dt: dt,
+      playing: !!playing,
+    });
+    spectrumLevels = result.levels;
+  }
+  const levels = result && result.levels;
+  const n = levels ? levels.length : (api ? api.BARS : 48);
+  const gap = Math.max(2, Math.round(2 * r));
+  const barW = Math.max(2, (W - gap * (n + 1)) / n);
+  const color = DECK_COLORS[deck.number] || '#22d3ee';
+  ctx.fillStyle = '#05070b';
+  ctx.fillRect(0, 0, W, H);
+  // Three zones, same colours as the 3-band waveform, so the analyser reads at a glance.
+  ctx.globalAlpha = 0.14;
+  ctx.fillStyle = 'rgb(32,83,217)';
+  ctx.fillRect(0, 0, W * 0.38, H);
+  ctx.fillStyle = 'rgb(242,170,60)';
+  ctx.fillRect(W * 0.38, 0, W * 0.30, H);
+  ctx.fillStyle = 'rgb(244,246,251)';
+  ctx.fillRect(W * 0.68, 0, W * 0.32, H);
+  ctx.globalAlpha = 1;
+  const floor = Math.max(2, Math.round(2 * r));
+  for (let i = 0; i < n; i++) {
+    const u = n === 1 ? 0 : i / (n - 1);
+    const amp = levels ? Math.max(0, Math.min(1, levels[i])) : 0;
+    const bh = floor + amp * (H - floor - 3 * r);
+    const x = gap + i * (barW + gap);
+    const y = H - bh;
+    if (u < 0.38) ctx.fillStyle = 'rgb(32,83,217)';
+    else if (u < 0.68) ctx.fillStyle = 'rgb(242,170,60)';
+    else ctx.fillStyle = 'rgb(244,246,251)';
+    ctx.fillRect(x, y, barW, bh);
+    ctx.fillStyle = 'rgba(255,255,255,.72)';
+    ctx.fillRect(x, y, barW, Math.max(1, Math.round(r)));
+  }
+  ctx.fillStyle = color;
+  ctx.fillRect(0, H - Math.max(2, Math.round(2 * r)), W, Math.max(2, Math.round(2 * r)));
+}
+
 function paintPanelWaves(deck, pos, playing) {
   const card = document.getElementById('card');
   const pack = trackPack(deck);
   const ph = card.querySelector('.panel-phrases');
   const det = card.querySelector('.panel-detail');
+  const spec = card.querySelector('.panel-spectrum');
   paintPanelPhrases(ph, pack, pos);
+  paintSpectrum(spec, pack, pos, deck, playing);
   paintPanelDetail(det, pack, pos, deck, playing, deck.state === 'looping');
 }
 
@@ -1335,10 +1492,20 @@ function applyState(state){
       }
     }
     receivedAt = performance.now();
+    if (Array.isArray(state.spectrum) && state.spectrum.length) {
+      loopbackBins = state.spectrum.map(Number);
+      loopbackAt = performance.now();
+    }
     return;
   }
   last = state;
   receivedAt = performance.now();
+  if (state && Array.isArray(state.spectrum) && state.spectrum.length) {
+    loopbackBins = state.spectrum.map(Number);
+    loopbackAt = performance.now();
+  } else if (state && state.display && state.display.spectrum_source !== 'loopback') {
+    loopbackBins = null;
+  }
   if (state && state.display) {
     if (typeof state.display.show_phrases === 'boolean') {
       showPhrasesDisplay = state.display.show_phrases;
@@ -1354,13 +1521,22 @@ function applyState(state){
 function seedMockWave(n) {
   const h = new Uint8Array(n);
   const rgb = new Uint8Array(n * 3);
+  const low = new Uint8Array(n);
+  const mid = new Uint8Array(n);
+  const high = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
+    const kick = Math.pow(Math.max(0, Math.sin(i / 6)), 2);
+    const vocal = Math.pow(Math.max(0, Math.sin(i / 4.2 + 1.2)), 2);
+    const hat = Math.abs(Math.sin(i / 2.4 + 0.4));
     h[i] = Math.min(31, Math.round(8 + (Math.sin(i / 9) * 0.5 + 0.5) * 22));
+    low[i] = Math.min(31, Math.round(4 + kick * 26));
+    mid[i] = Math.min(31, Math.round(3 + vocal * 22));
+    high[i] = Math.min(31, Math.round(2 + hat * 16));
     rgb[i * 3] = 30 + (i % 40);
     rgb[i * 3 + 1] = 160 + (i % 30);
     rgb[i * 3 + 2] = 220;
   }
-  return {n, cps: 150, dur: 300000, h, rgb, end: 0};
+  return {n, cps: 150, dur: 300000, h, rgb, low, mid, high, bandPeak: 31, end: 0};
 }
 
 function enableMockPreview() {
@@ -1388,7 +1564,7 @@ function enableMockPreview() {
       playing: true,
       bpm: 128,
       track_bpm: 128,
-      position_ms: 62000,
+      position_ms: 8087,
       duration_ms: 300000,
       name: 'XDJ-AZ',
       master: true,

@@ -72,6 +72,9 @@ DEFAULTS: dict[str, Any] = {
     "overlay_show_tags": True,
     "overlay_show_bpm": True,
     "overlay_show_next": True,
+    # Panel-bar visualiser. Waveform is the default; loopback needs the optional
+    # MIT `soundcard` package and is never used unless the user opts in.
+    "overlay_spectrum_audio": False,
     "session_autosave": False,
     "session_autosave_dir": "",       # empty → ~/.prolink-monitor/sessions
     "minimize_to_tray": True,         # when connected, minimize hides to tray
@@ -103,6 +106,49 @@ def deck_elements_from(data: dict[str, Any] | None = None) -> dict[str, bool]:
     """Return the deck-element visibility map, defaulting missing keys to on."""
     src = data or {}
     return {key: bool(src.get(key, True)) for key in DECK_ELEMENT_KEYS}
+
+
+def display_prefs_from(data: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Monitor-view prefs the web panel and overlay should follow."""
+    src = data or {}
+    try:
+        zoom = int(src.get("zoom_bars", 4))
+    except (TypeError, ValueError):
+        zoom = 4
+    if zoom not in (1, 2, 4, 8, 16):
+        zoom = 4
+    by_deck_raw = src.get("zoom_bars_by_deck") or {}
+    by_deck: dict[str, int] = {}
+    if isinstance(by_deck_raw, dict):
+        for key, value in by_deck_raw.items():
+            try:
+                bars = int(value)
+                deck_no = int(key)
+            except (TypeError, ValueError):
+                continue
+            if bars in (1, 2, 4, 8, 16):
+                by_deck[str(deck_no)] = bars
+    try:
+        max_decks = 4 if int(src.get("max_decks", 4)) >= 4 else 2
+    except (TypeError, ValueError):
+        max_decks = 4
+    style = str(src.get("waveform_style") or "rgb").lower()
+    if style not in ("rgb", "3band", "blue"):
+        style = "rgb"
+    audio = bool(src.get("overlay_spectrum_audio", False))
+    if str(src.get("spectrum_source") or "") == "loopback":
+        audio = True
+    return {
+        "show_phrases": bool(src.get("show_phrases", True)),
+        "zoom_bars": zoom,
+        "zoom_bars_by_deck": by_deck,
+        "playhead_position": normalize_playhead_mode(src.get("playhead_position")),
+        "max_decks": max_decks,
+        "waveform_style": style,
+        "show_empty_decks": bool(src.get("show_empty_decks", True)),
+        "elements": deck_elements_from(src),
+        "spectrum_source": "loopback" if audio else "waveform",
+    }
 
 
 
@@ -252,6 +298,7 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     out["overlay_show_tags"] = bool(data.get("overlay_show_tags", True))
     out["overlay_show_bpm"] = bool(data.get("overlay_show_bpm", True))
     out["overlay_show_next"] = bool(data.get("overlay_show_next", True))
+    out["overlay_spectrum_audio"] = bool(data.get("overlay_spectrum_audio", False))
     out["floating_now_topmost"] = bool(data.get("floating_now_topmost", True))
     out["floating_now_transparent"] = bool(data.get("floating_now_transparent", True))
     for key, lo, hi in (

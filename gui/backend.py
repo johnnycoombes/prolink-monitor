@@ -6,7 +6,6 @@ import os
 import sys
 import threading
 import time
-import webbrowser
 from typing import Any
 
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -107,7 +106,17 @@ class Backend(QObject):
         self._set_status("idle", "")
 
     def open_web_panel(self) -> None:
-        webbrowser.open(f"http://127.0.0.1:{self.port}/")
+        from prolink.panel_launch import open_monitor_panel
+
+        open_monitor_panel(f"http://127.0.0.1:{self.port}/")
+
+    def push_display(self, prefs: dict[str, Any]) -> None:
+        """Publish the live Monitor view to the web panel and overlay."""
+        with self._lock:
+            self._settings.update(prefs)
+            monitor = self._monitor
+        if monitor is not None:
+            monitor.configure_display(self._settings)
 
     def open_overlay(self, url: str | None = None) -> None:
         webbrowser.open(url or f"http://127.0.0.1:{self.port}/overlay?preview=1")
@@ -284,7 +293,7 @@ class Backend(QObject):
             net = link.local_net(host or "255.255.255.255")
             source = build_source(args, net)
             monitor = Monitor(host, source, args.cache, local_ip=net.ip)
-            monitor.show_phrases = bool(settings.get("show_phrases", True))
+            monitor.configure_display(settings)
             if getattr(monitor, "wnp", None) is not None:
                 monitor.wnp.configure(settings)
             monitor.start()

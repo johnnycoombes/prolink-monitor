@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Prolink Listener — Pro DJ Link</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Archivo:wght@400;500;600&display=swap" rel="stylesheet">
@@ -75,6 +78,30 @@ header{
 .switch button.on{background:var(--text);color:var(--black)}
 .switch-label{font-family:var(--mono);font-size:10.5px;letter-spacing:.13em;
   text-transform:uppercase;color:var(--dimmest)}
+#fs-prompt{
+  position:fixed;left:0;right:0;bottom:0;z-index:40;
+  display:flex;justify-content:center;pointer-events:none;
+  padding:18px 16px 22px;
+  background:linear-gradient(180deg,transparent,rgba(0,0,0,.78));
+}
+#fs-prompt[hidden]{display:none !important}
+#fs-prompt button{
+  pointer-events:auto;
+  font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.14em;
+  text-transform:uppercase;background:var(--text);color:var(--black);
+  border:none;padding:12px 18px;cursor:pointer;
+}
+body.hide-el-artwork .art{display:none !important}
+body.hide-el-title .title{display:none !important}
+body.hide-el-artist .artist{display:none !important}
+body.hide-el-meta .meta{display:none !important}
+body.hide-el-tags .tags{display:none !important}
+body.hide-el-waveform .canvases{display:none !important}
+body.hide-el-bpm .bpm{display:none !important}
+body.hide-el-tempo .pitch{display:none !important}
+body.hide-el-time .times{display:none !important}
+body.hide-el-key .key{display:none !important}
+body.hide-el-state .state{display:none !important}
 .led{width:6px;height:6px;border-radius:50%;background:var(--dimmest);transition:.3s}
 .led.up{background:var(--d4);box-shadow:0 0 8px var(--d4)}
 .led.down{background:var(--red);box-shadow:0 0 8px var(--red)}
@@ -266,31 +293,14 @@ body.readonly #session .head::after{content:' · read-only'; color:var(--dimmest
   <div class="pill" id="p-mode" data-i18n="starting">starting…</div>
   <div class="pill" id="p-lib"></div>
   <div class="right">
-    <span class="switch-label" data-i18n="wave">wave</span>
-    <div class="switch" id="wave-switch">
-      <button data-w="rgb">RGB</button><button data-w="3band">3BAND</button><button data-w="blue">BLUE</button>
-    </div>
-    <span class="switch-label">phrases</span>
-    <div class="switch" id="phrase-switch">
-      <button data-ph="1">ON</button><button data-ph="0">OFF</button>
-    </div>
-    <span class="switch-label" data-i18n="needle">needle</span>
-    <div class="switch" id="needle-switch" title="Scrolling playhead. Auto follows each player's Waveform Current Position.">
-      <button data-p="auto" title="Auto — follow the player">AUTO</button><button data-p="centre" title="Centre">CEN</button><button data-p="left" title="Left (quarter)">LEFT</button>
-    </div>
-    <span class="switch-label" data-i18n="zoom">bars</span>
-    <div class="switch" id="zoom-switch">
-      <button data-b="1">1</button><button data-b="2">2</button><button data-b="4">4</button><button data-b="8">8</button><button data-b="16">16</button>
-    </div>
-    <span class="switch-label" data-i18n="decks">decks</span>
-    <div class="switch" id="deck-switch">
-      <button data-n="2">2</button><button data-n="4">4</button>
-    </div>
     <button id="rec-btn" type="button" title="Record session playlist">Record</button>
     <div class="pill" id="p-dev"></div>
     <div class="led" id="led"></div>
   </div>
 </header>
+<div id="fs-prompt" hidden>
+  <button type="button" id="fs-go">Fill the screen</button>
+</div>
 
 <div id="decks"></div>
 <div id="session"><div class="head">session playlist</div><div id="session-rows"></div></div>
@@ -352,44 +362,18 @@ const ZOOM_BARS = [1, 2, 4, 8, 16];      // 4/4 bars shown in the detail view
 const WAVE_STYLES = ['rgb', '3band', 'blue'];
 const DEFAULT_BPM = 120;
 
-function migrateZoomBars(raw) {
-  // Prefer zoomBars; fall back from legacy zoom-seconds (≈ bars×2 at 120 BPM).
-  const bars = +raw;
-  if (ZOOM_BARS.includes(bars)) return bars;
-  const sec = +localStorage.getItem('zoom');
-  const map = {4: 2, 8: 4, 16: 8, 32: 16, 64: 16};
-  return map[sec] || 4;
-}
-
-let zoomBars = migrateZoomBars(localStorage.getItem('zoomBars'));
-const zoomByDeck = new Map(); // deck number → bars override
-try {
-  const raw = JSON.parse(localStorage.getItem('zoomBarsByDeck') || '{}');
-  if (raw && typeof raw === 'object') {
-    for (const [k, v] of Object.entries(raw)) {
-      const bars = migrateZoomBars(String(v));
-      if (ZOOM_BARS.includes(bars)) zoomByDeck.set(+k, bars);
-    }
-  }
-} catch (_) {}
+let zoomBars = 4;
+const zoomByDeck = new Map(); // deck number → bars, from the desktop Monitor view
 
 function deckZoom(n) {
   return zoomByDeck.has(n) ? zoomByDeck.get(n) : zoomBars;
 }
-
-function persistDeckZoom() {
-  const obj = {};
-  for (const [k, v] of zoomByDeck) obj[k] = v;
-  localStorage.setItem('zoomBarsByDeck', JSON.stringify(obj));
-}
-let waveStyle = WAVE_STYLES.includes(localStorage.getItem('waveStyle'))
-  ? localStorage.getItem('waveStyle') : 'rgb';
+let waveStyle = 'rgb';
 const PLAYHEAD_MODES = ['auto', 'centre', 'left'];
 // Left needle sits at the left quarter of the strip (same fraction as the desktop painter).
 const PLAYHEAD_LEFT_FRACTION = 0.25;
-let storedPlayhead = localStorage.getItem('playheadPosition');
-if (storedPlayhead === 'center') storedPlayhead = 'centre';
-let playheadMode = PLAYHEAD_MODES.includes(storedPlayhead) ? storedPlayhead : 'auto';
+let playheadMode = 'auto';
+let showEmptyDecks = true;
 
 function barsToSeconds(bars, bpm) {
   const b = (bpm && bpm > 0) ? bpm : DEFAULT_BPM;
@@ -399,7 +383,7 @@ function barsToSeconds(bars, bpm) {
 const decks = new Map();          // number -> deck view
 const tracks = new Map();         // cacheId -> {meta, detail, overview, track_id}
 const pending = new Set();
-let showPhrases = localStorage.getItem('showPhrases') !== '0';
+let showPhrases = true;
 
 function deckCacheId(deck) {
   if (deck && deck.track_key) return String(deck.track_key);
@@ -420,7 +404,7 @@ function trackPack(deck) {
   return tracks.get(deckCacheId(deck));
 }
 let last = null, receivedAt = 0;
-let maxDecks = (+localStorage.getItem('maxDecks') || 4) >= 4 ? 4 : 2;
+let maxDecks = 4;
 
 /* Display order: 2-deck = 1-2, 4-deck = 3-1-2-4 (Pioneer-style layout). */
 const DECK_LAYOUT = {2: [1, 2], 4: [3, 1, 2, 4]};
@@ -431,7 +415,9 @@ function visible(list) {
   const out = [];
   for (const n of order) {
     const d = byNum.get(n);
-    if (d) out.push(d);
+    if (!d) continue;
+    if (!showEmptyDecks && !d.track_id) continue;
+    out.push(d);
   }
   return out;
 }
@@ -462,22 +448,16 @@ function playheadAnchor(s) {
 function setPlayheadMode(mode) {
   if (mode === 'center') mode = 'centre';
   if (!PLAYHEAD_MODES.includes(mode)) mode = 'auto';
+  if (mode === playheadMode) return;
   playheadMode = mode;
-  localStorage.setItem('playheadPosition', mode);
-  document.querySelectorAll('#needle-switch button').forEach(
-    b => b.classList.toggle('on', b.dataset.p === mode));
   for (const d of decks.values()) {
     d.detailKey = null;
     d.detailOff = null;
   }
 }
 
-function setShowPhrases(on, persist = true) {
+function setShowPhrases(on) {
   showPhrases = !!on;
-  if (persist) localStorage.setItem('showPhrases', showPhrases ? '1' : '0');
-  document.querySelectorAll('#phrase-switch button').forEach(b => {
-    b.classList.toggle('on', (b.dataset.ph === '1') === showPhrases);
-  });
   for (const d of decks.values()) {
     d.phrasesWrap.classList.toggle('on', showPhrases);
   }
@@ -485,11 +465,8 @@ function setShowPhrases(on, persist = true) {
 
 function setWaveStyle(style) {
   if (!WAVE_STYLES.includes(style)) style = 'rgb';
+  if (style === waveStyle) return;
   waveStyle = style;
-  localStorage.setItem('waveStyle', style);
-  document.querySelectorAll('#wave-switch button').forEach(
-    b => b.classList.toggle('on', b.dataset.w === style));
-  // Force overview + detail caches to rebuild in the new style.
   for (const d of decks.values()) {
     d.overviewId = null;
     d.detailKey = null;
@@ -499,11 +476,8 @@ function setWaveStyle(style) {
 
 function setZoom(bars) {
   if (!ZOOM_BARS.includes(bars)) bars = 4;
+  if (bars === zoomBars) return;
   zoomBars = bars;
-  localStorage.setItem('zoomBars', bars);
-  document.querySelectorAll('#zoom-switch button').forEach(
-    b => b.classList.toggle('on', +b.dataset.b === bars));
-  // Global zoom applies to decks without a per-deck override.
   for (const d of decks.values()) {
     if (zoomByDeck.has(d.n)) continue;
     d.overviewId = null;
@@ -512,44 +486,72 @@ function setZoom(bars) {
   }
 }
 
-function setDeckZoom(n, bars) {
-  if (!ZOOM_BARS.includes(bars)) return;
-  zoomByDeck.set(n, bars);
-  persistDeckZoom();
-  const d = decks.get(n);
-  if (d) {
-    d.overviewId = null;
+function applyDeckZooms(map) {
+  const next = new Map();
+  if (map && typeof map === 'object') {
+    for (const [k, v] of Object.entries(map)) {
+      const bars = +v;
+      if (ZOOM_BARS.includes(bars)) next.set(+k, bars);
+    }
+  }
+  let changed = next.size !== zoomByDeck.size;
+  if (!changed) {
+    for (const [k, v] of next) if (zoomByDeck.get(k) !== v) changed = true;
+  }
+  if (!changed) return;
+  zoomByDeck.clear();
+  for (const [k, v] of next) zoomByDeck.set(k, v);
+  for (const d of decks.values()) {
     d.detailKey = null;
     d.detailOff = null;
   }
-}
-
-function clearDeckZoom(n) {
-  zoomByDeck.delete(n);
-  persistDeckZoom();
-  const d = decks.get(n);
-  if (d) {
-    d.overviewId = null;
-    d.detailKey = null;
-    d.detailOff = null;
-  }
-}
-
-function stepZoom(direction) {
-  const i = ZOOM_BARS.indexOf(zoomBars);
-  const next = ZOOM_BARS[Math.min(ZOOM_BARS.length - 1, Math.max(0, i + direction))];
-  if (next !== zoomBars) setZoom(next);
 }
 
 function setDeckCount(n) {
-  maxDecks = (+n || 4) >= 4 ? 4 : 2;
-  localStorage.setItem('maxDecks', maxDecks);
-  document.querySelectorAll('#deck-switch button').forEach(
-    b => b.classList.toggle('on', +b.dataset.n === maxDecks));
+  const next = (+n || 4) >= 4 ? 4 : 2;
+  if (next === maxDecks) return;
+  maxDecks = next;
   if (last) {
     prune(visible(last.decks));
     sortDecks();
   }
+}
+
+const ELEMENT_HIDE = {
+  deck_show_artwork: 'hide-el-artwork',
+  deck_show_title: 'hide-el-title',
+  deck_show_artist: 'hide-el-artist',
+  deck_show_meta: 'hide-el-meta',
+  deck_show_tags: 'hide-el-tags',
+  deck_show_waveform: 'hide-el-waveform',
+  deck_show_bpm: 'hide-el-bpm',
+  deck_show_tempo: 'hide-el-tempo',
+  deck_show_time: 'hide-el-time',
+  deck_show_key: 'hide-el-key',
+  deck_show_state: 'hide-el-state',
+};
+
+function applyElements(elements) {
+  const src = elements || {};
+  for (const [key, cls] of Object.entries(ELEMENT_HIDE)) {
+    const on = src[key] !== false;
+    document.body.classList.toggle(cls, !on);
+  }
+}
+
+function applyMonitorDisplay(display) {
+  const d = display || {};
+  if (typeof d.show_phrases === 'boolean') setShowPhrases(d.show_phrases);
+  if (d.zoom_bars != null) setZoom(+d.zoom_bars);
+  if (d.waveform_style) setWaveStyle(d.waveform_style);
+  if (d.playhead_position) setPlayheadMode(d.playhead_position);
+  if (d.max_decks != null) setDeckCount(d.max_decks);
+  if (d.zoom_bars_by_deck) applyDeckZooms(d.zoom_bars_by_deck);
+  if (typeof d.show_empty_decks === 'boolean') {
+    showEmptyDecks = d.show_empty_decks;
+    if (last) prune(visible(last.decks));
+  }
+  if (d.elements) applyElements(d.elements);
 }
 
 /* --------------------------------------------------------------- utilities */
@@ -845,24 +847,11 @@ function createDeck(n) {
     cv.addEventListener('mousemove', ev => showScrub(msAt(cv, ev, kind)));
     cv.addEventListener('mouseleave', () => showScrub(null));
     cv.addEventListener('click', ev => {
-      if (ev.altKey) {
-        const cur = deckZoom(d.n);
-        const i = ZOOM_BARS.indexOf(cur);
-        const next = ZOOM_BARS[(i + 1) % ZOOM_BARS.length];
-        setDeckZoom(d.n, next);
-        d.scrub.textContent = next + ' bars';
-        d.scrub.classList.add('on');
-        return;
-      }
       const ms = msAt(cv, ev, kind);
       if (ms == null) return;
       d.cueMs = ms;
       d.scrub.textContent = 'cue ' + mmss(ms);
       d.scrub.classList.add('on');
-    });
-    cv.addEventListener('contextmenu', ev => {
-      ev.preventDefault();
-      clearDeckZoom(d.n);
     });
   }
 
@@ -1062,7 +1051,7 @@ function drawOverview(d, track, pos, looping) {
     drawLoopRegion(ctx, x0, 0, Math.max(1, x1 - x0), H, r);
   }
 
-  for (const c of track.meta.cues) {            // cue markers
+  for (const c of (track.meta.cues || [])) {   // cue markers
     if (c.type === 'loop') continue;
     const cx = (c.t / dur) * W;
     ctx.fillStyle = c.color ? `rgb(${c.color[0]},${c.color[1]},${c.color[2]})`
@@ -1142,7 +1131,7 @@ function drawDetail(d, track, pos, playing, looping, anchor) {
       for (let i = lo; i < hi; i++) if (h[i] > tall) { tall = h[i]; src = i; }
       fillWave(o, Math.round(x * r), mid, (tall / 31) * span, src, track.detail, span, colW);
     }
-    for (const c of meta.cues) {
+    for (const c of (meta.cues || [])) {
       if (c.type === 'loop') continue;
       const x = ((c.t / 1000) * cps - rangeStart) * pxPerCol;
       if (x < xLo - 20 || x > xHi + 20) continue;
@@ -1296,9 +1285,7 @@ function applyState(e) {
     return;
   }
   last = e; receivedAt = performance.now();
-  if (e.display && typeof e.display.show_phrases === 'boolean') {
-    setShowPhrases(e.display.show_phrases, false);
-  }
+  if (e.display) applyMonitorDisplay(e.display);
 
   const modeName = e.mode_kind === 'vcdj' ? T('modeVcdj')
                  : e.mode_kind === 'sniffer' ? T('modeSniffer') : (e.mode || '—');
@@ -1385,30 +1372,104 @@ function connect() {
   };
 }
 
-document.querySelectorAll('#deck-switch button').forEach(
-  b => b.addEventListener('click', () => setDeckCount(+b.dataset.n)));
-document.querySelectorAll('#zoom-switch button').forEach(
-  b => b.addEventListener('click', () => setZoom(+b.dataset.b)));
-document.querySelectorAll('#wave-switch button').forEach(
-  b => b.addEventListener('click', () => setWaveStyle(b.dataset.w)));
-document.querySelectorAll('#phrase-switch button').forEach(
-  b => b.addEventListener('click', () => setShowPhrases(b.dataset.ph === '1')));
-document.querySelectorAll('#needle-switch button').forEach(
-  b => b.addEventListener('click', () => setPlayheadMode(b.dataset.p)));
 document.getElementById('rec-btn').addEventListener('click', toggleSession);
-// + and - zoom too, so it can be driven without leaving the keyboard
-document.addEventListener('keydown', ev => {
-  if (ev.key === '+' || ev.key === '=') stepZoom(-1);
-  else if (ev.key === '-' || ev.key === '_') stepZoom(1);
-});
 
-setDeckCount(maxDecks);
-setZoom(zoomBars);
-setWaveStyle(waveStyle);
-setShowPhrases(showPhrases, false);
-setPlayheadMode(playheadMode);
+function alreadyFullscreen() {
+  if (params.get('kiosk') === '1') return true;
+  if (document.fullscreenElement) return true;
+  try {
+    if (matchMedia('(display-mode: fullscreen)').matches) return true;
+    if (matchMedia('(display-mode: standalone)').matches) return true;
+  } catch (_) {}
+  return false;
+}
+
+function hideFullscreenPrompt() {
+  const el = document.getElementById('fs-prompt');
+  if (el) el.hidden = true;
+}
+
+function showFullscreenPrompt() {
+  const el = document.getElementById('fs-prompt');
+  if (el) el.hidden = false;
+}
+
+document.getElementById('fs-go').addEventListener('click', async () => {
+  try { await document.documentElement.requestFullscreen(); } catch (_) {}
+  hideFullscreenPrompt();
+});
+document.addEventListener('fullscreenchange', () => {
+  if (document.fullscreenElement) hideFullscreenPrompt();
+});
+if (alreadyFullscreen()) hideFullscreenPrompt();
+else showFullscreenPrompt();
+
+function seedPanelWave(n) {
+  const h = new Uint8Array(n);
+  const rgb = new Uint8Array(n * 3);
+  const low = new Uint8Array(n);
+  const mid = new Uint8Array(n);
+  const high = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    h[i] = Math.min(31, Math.round(6 + (Math.sin(i / 11) * 0.5 + 0.5) * 24));
+    low[i] = Math.min(31, Math.round(4 + Math.pow(Math.max(0, Math.sin(i / 7)), 2) * 26));
+    mid[i] = Math.min(31, Math.round(5 + Math.pow(Math.max(0, Math.sin(i / 5 + 1)), 2) * 20));
+    high[i] = Math.min(31, Math.round(3 + Math.abs(Math.sin(i / 3)) * 14));
+    rgb[i * 3] = 40 + (i % 50);
+    rgb[i * 3 + 1] = 140;
+    rgb[i * 3 + 2] = 210;
+  }
+  return {n, cps: 150, dur: 240000, h, rgb, low, mid, high, bandPeak: 31};
+}
+
+function enablePanelMock() {
+  const titles = [
+    ['Night Drive', 'Demo Artist', '8A', 1, true],
+    ['Glasshouse', 'North Line', '4A', 2, false],
+    ['Second Sun', 'Kite Club', '11B', 3, false],
+    ['Harbour', 'Demo Artist', '8A', 4, false],
+  ];
+  const decks = [];
+  titles.forEach((row, i) => {
+    const id = i + 1;
+    const wave = seedPanelWave(1800);
+    tracks.set('id:' + id, {
+      meta: {
+        id, title: row[0], artist: row[1], key: row[2], album: 'Monitor',
+        duration_ms: 240000, has_artwork: false, cues: [],
+        phrases: [{beat: 1, text: 'Intro'}, {beat: 33, text: 'Drop'}],
+        beats: [[0, 1], [500, 2], [1000, 3], [1500, 4]],
+      },
+      detail: wave,
+      overview: wave,
+      track_id: id,
+    });
+    decks.push({
+      number: row[3], track_id: id, playing: row[4], on_air: row[4],
+      bpm: 126 + i, track_bpm: 126, pitch: 0, speed: row[4] ? 1 : 0,
+      position_ms: 48000 + i * 8000, duration_ms: 240000,
+      state: row[4] ? 'playing' : 'cued', master: row[4], name: 'XDJ-AZ',
+      beat: 1, bar: 1,
+    });
+  });
+  applyState({
+    decks,
+    devices: [{number: 1, name: 'XDJ-AZ'}],
+    mode_kind: 'vcdj',
+    mode: 'virtual device',
+    library: {tracks: 1280},
+    display: {
+      show_phrases: true, zoom_bars: 4, playhead_position: 'left',
+      max_decks: 4, waveform_style: 'rgb', show_empty_decks: true,
+      elements: {},
+    },
+    session: {recording: false, tracks: []},
+  });
+}
+
 applyStrings();
-connect();
+if (params.get('mock') === '1') enablePanelMock();
+else connect();
 render();
 </script>
 </body>

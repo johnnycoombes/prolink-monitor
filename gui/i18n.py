@@ -49,6 +49,16 @@ STRINGS = {
     "saved": "Settings saved",
     "apply_reconnect": "Save & reconnect",
     "open_web": "Open web panel",
+    "open_web_tip": (
+        "Opens the monitor panel in a fullscreen browser window "
+        "(Edge or Chrome kiosk on Windows). It follows the Monitor view settings."
+    ),
+    "overlay_spectrum_audio": "Bar visualiser: use system audio (optional)",
+    "overlay_spectrum_audio_tip": (
+        "Off by default. The bar uses the track waveform, because Pro DJ Link "
+        "carries no audio. Turn this on to drive it from the Windows output "
+        "(WASAPI loopback) instead. Needs the optional MIT package: pip install soundcard"
+    ),
     "open_overlay": "Open overlay",
     "copy_url": "Copy URL",
     "copied": "Copied to clipboard",

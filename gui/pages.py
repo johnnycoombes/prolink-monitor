@@ -229,6 +229,12 @@ class MonitorPage(Page):
         self._show_empty = bool(settings.get("show_empty_decks", True))
         self.set_show_phrases(bool(settings.get("show_phrases", True)))
         self.set_elements(settings)
+        self._notify_prefs()
+
+    def _notify_prefs(self) -> None:
+        cb = getattr(self, "on_prefs_changed", None)
+        if callable(cb):
+            cb(self.prefs_snapshot())
 
     def set_elements(self, settings: dict | None) -> None:
         self._elements = deck_elements_from(settings)
@@ -252,10 +258,12 @@ class MonitorPage(Page):
             b.setProperty("active", "true" if s == bars else "false")
             b.style().unpolish(b)
             b.style().polish(b)
+        self._notify_prefs()
 
     def clear_zoom_overrides(self) -> None:
         self._zoom_overrides.clear()
         self._apply_card_zooms()
+        self._notify_prefs()
 
     def _apply_card_zooms(self) -> None:
         for n, card in self._cards.items():
@@ -272,8 +280,10 @@ class MonitorPage(Page):
             self._zoom_overrides.pop(number, None)
             if number in self._cards:
                 self._cards[number].set_zoom(self._zoom, override=False)
+            self._notify_prefs()
             return
         self._zoom_overrides[number] = bars
+        self._notify_prefs()
 
     def set_max_decks(self, n: int) -> None:
         self._max_decks = normalize_max_decks(n)
@@ -285,6 +295,7 @@ class MonitorPage(Page):
             self.update_state(self._last_state)
         else:
             self._relayout_deck_heights()
+        self._notify_prefs()
 
     def set_wave_style(self, style: str) -> None:
         self._wave_style = style if style in ("rgb", "3band", "blue") else "rgb"
@@ -294,6 +305,7 @@ class MonitorPage(Page):
             b.style().polish(b)
         for card in self._cards.values():
             card.set_wave_style(self._wave_style)
+        self._notify_prefs()
 
     def set_show_phrases(self, enabled: bool) -> None:
         enabled = bool(enabled)
@@ -302,6 +314,7 @@ class MonitorPage(Page):
         self._show_phrases = enabled
         for card in self._cards.values():
             card.set_show_phrases(enabled)
+        self._notify_prefs()
 
     def set_playhead_mode(self, mode: str) -> None:
         mode = normalize_playhead_mode(mode)
@@ -312,6 +325,7 @@ class MonitorPage(Page):
             b.style().polish(b)
         for card in self._cards.values():
             card.set_playhead_mode(mode)
+        self._notify_prefs()
 
     def prefs_snapshot(self) -> dict:
         return {
@@ -1899,6 +1913,8 @@ class SettingsPage(Page):
         self.settings_now_pos_doc.setStyleSheet(f"color:{COLORS['dim']}; font-size:12px;")
         self.floating_now_topmost = QCheckBox(i18n.t("floating_now_topmost"))
         self.floating_now_transparent = QCheckBox(i18n.t("floating_now_transparent"))
+        self.overlay_spectrum_audio = QCheckBox(i18n.t("overlay_spectrum_audio"))
+        self.overlay_spectrum_audio.setToolTip(i18n.t("overlay_spectrum_audio_tip"))
         self.settings_floating_btn = QPushButton(i18n.t("open_floating_now"))
         self.settings_floating_btn.setCursor(Qt.PointingHandCursor)
         ov.addRow(i18n.t("overlay_layout"), self.overlay_layout)
@@ -1912,6 +1928,7 @@ class SettingsPage(Page):
         self._sync_settings_overlay_rows()
         ov.addRow("", self.floating_now_topmost)
         ov.addRow("", self.floating_now_transparent)
+        ov.addRow("", self.overlay_spectrum_audio)
         ov.addRow(i18n.t("floating_now"), self.settings_floating_btn)
         ov.addRow(i18n.t("overlay_decks"), self.overlay_decks)
         ov.addRow(i18n.t("overlay_wave"), self.overlay_wave)
@@ -2052,6 +2069,7 @@ class SettingsPage(Page):
         self._sync_settings_overlay_rows()
         self.floating_now_topmost.setChecked(bool(data.get("floating_now_topmost", True)))
         self.floating_now_transparent.setChecked(bool(data.get("floating_now_transparent", True)))
+        self.overlay_spectrum_audio.setChecked(bool(data.get("overlay_spectrum_audio", False)))
         idx = self.overlay_decks.findData(int(data.get("overlay_decks", 1)))
         self.overlay_decks.setCurrentIndex(max(0, idx))
         self.overlay_playing.setChecked(bool(data.get("overlay_playing_only", True)))
@@ -2102,6 +2120,7 @@ class SettingsPage(Page):
             "overlay_waveform_style": self.overlay_wave.currentData(),
             "floating_now_topmost": self.floating_now_topmost.isChecked(),
             "floating_now_transparent": self.floating_now_transparent.isChecked(),
+            "overlay_spectrum_audio": self.overlay_spectrum_audio.isChecked(),
             "session_autosave": self.session_autosave.isChecked(),
             "session_autosave_dir": self.session_autosave_dir.text().strip(),
             "wnp_enabled": self.wnp_enabled.isChecked(),

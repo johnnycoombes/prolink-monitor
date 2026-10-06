@@ -80,6 +80,11 @@ aggregates all mounted hosts — still worth validating on a multi-CDJ booth.
 ### OBS overlay
 
 Transparent HTML served at `/overlay`, driven by the same SSE API as the web panel.
+Now Playing **Card** uses the high-res cover. **Panel** (bar) uses the small cover
+and a waveform-driven spectrum above the scrolling wave (`?style=panel`). Pro DJ
+Link has no audio, so that spectrum follows the analysed low/mid/high waveform
+at the playhead and decays while paused. System-audio loopback is an opt-in
+desktop setting and needs the optional `soundcard` package.
 
 ![Now playing overlay](doc/overlay-nowplaying.png)
 
@@ -308,8 +313,12 @@ python app.py
 ```
 
 It finds the player, picks a mode, starts the server and opens
-<http://127.0.0.1:8777/>. The HTTP server listens on **all interfaces** by default
-(`0.0.0.0`), so a phone on the same Wi‑Fi can open the panel too.
+<http://127.0.0.1:8777/>. From the desktop app, **Open web panel** launches Edge
+or Chrome in kiosk fullscreen on Windows. The page follows the **Monitor** view
+(decks, waveform, phrases, playhead, zoom). Those controls are not on the web
+panel. A normal browser tab shows a one-tap fullscreen prompt, because browsers
+block fullscreen without a click. The HTTP server listens on **all interfaces**
+by default (`0.0.0.0`), so a phone on the same Wi‑Fi can open the panel too.
 
 | Option | What it does |
 |---|---|
@@ -430,10 +439,11 @@ it. Players with a **Waveform Current Position** setting report it in the CDJ
 status packet when settings block 1 is present (`12 34 56 78` at offset `0xD0`;
 byte `0xDD` is `01` centre or `02` left; byte `0xDA` is the waveform colour).
 CDJ-3000 defaults to Centre. XDJ-AZ and Opus Quad default to Left. Older players
-(CDJ-2000NXS2, XDJ-XZ) have no setting and are always centred. The desktop app
-and the web panel share a Playhead control: **Auto** (follow the player, with
-that model fallback when the byte is missing), **Centre**, or **Left**. Left
-places the needle at 25% of the strip width. Whether the XDJ-AZ actually sends
+(CDJ-2000NXS2, XDJ-XZ) have no setting and are always centred. The desktop
+Monitor view chooses the playhead: **Auto** (follow the player, with that model
+fallback when the byte is missing), **Centre**, or **Left**. The web panel
+follows that choice. Left places the needle at 25% of the strip width. Whether
+the XDJ-AZ actually sends
 the settings block is unverified — Auto still uses the Left fallback, and
 `python probe.py` names bytes `0xDA` and `0xDD` so toggling the setting on the
 player shows up. The OBS overlay wave is a full-track overview with a moving

@@ -1,0 +1,17 @@
+{
+  "name": "Prolink Listener",
+  "short_name": "Prolink",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "background_color": "#07080a",
+  "theme_color": "#07080a",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
