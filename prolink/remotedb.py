@@ -29,6 +29,8 @@ TYPE_TRACK_MENU = 0x1004
 TYPE_REKORDBOX_METADATA = 0x2002
 TYPE_GENERIC_METADATA = 0x2202   # unanalyzed files and audio CDs
 TYPE_ALBUM_ART = 0x2003
+TYPE_ANLZ_TAG = 0x2c04          # read one ANLZ tag (PWV5/EXT, PQTZ/DAT, …)
+TYPE_ANLZ_TAG_RESP = 0x4f02
 TYPE_RENDER_MENU = 0x3000
 TYPE_ALBUM_ART_RESP = 0x4002
 TYPE_MENU_AVAILABLE = 0x4000
@@ -378,6 +380,39 @@ def encode_album_art_request(
     if high_res:
         args.append((TAG_NUM, encode_number_arg(1)))
     return encode_message(tx_id, TYPE_ALBUM_ART, args)
+
+
+def fourcc_code(text: str) -> int:
+    """Pack up to four ASCII characters into a big-endian dbserver number.
+
+    ``PWV5`` is the bytes of the tag. ``EXT`` and ``2EX`` are padded with NUL.
+    """
+    raw = (text or "").encode("ascii", "replace")[:4]
+    raw = raw + (b"\x00" * (4 - len(raw)))
+    return struct.unpack(">I", raw)[0]
+
+
+def encode_anlz_tag_request(
+    tx_id: int,
+    requesting_player: int,
+    slot: int,
+    track_type: int,
+    track_id: int,
+    tag: str,
+    ext: str,
+) -> bytes:
+    """Read-only request for one analysis tag (Deep Symmetry type ``2c04``)."""
+    rmst = encode_number_arg(build_rmst(requesting_player, MENU_MAIN, slot, track_type))
+    return encode_message(
+        tx_id,
+        TYPE_ANLZ_TAG,
+        [
+            (TAG_NUM, rmst),
+            (TAG_NUM, encode_number_arg(int(track_id))),
+            (TAG_NUM, encode_number_arg(fourcc_code(tag))),
+            (TAG_NUM, encode_number_arg(fourcc_code(ext))),
+        ],
+    )
 
 
 def encode_metadata_request(

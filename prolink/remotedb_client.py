@@ -206,6 +206,38 @@ class RemoteDbBrowser:
             return bytes(blob)
         return None
 
+    def analysis_tag(
+        self,
+        track_id: int,
+        tag: str,
+        ext: str,
+        *,
+        track_type: int = wire.TRACK_REKORDBOX,
+    ) -> bytes | None:
+        """Read one ANLZ tag (PWV5/EXT, PQTZ/DAT, …). Never writes.
+
+        Used only when no analysis-file path is known. The NFS read of
+        ANLZ0000.DAT / .EXT / .2EX is the path that already works.
+        """
+        if self._sock is None:
+            raise wire.DbServerError("not connected")
+        if not track_id or not tag or not ext:
+            return None
+        tx = self._next_tx()
+        pkt = wire.encode_anlz_tag_request(
+            tx, self.requesting_player, self.slot, int(track_type),
+            int(track_id), tag, ext)
+        self._sock.sendall(pkt)
+        resp = wire.read_message(self._sock)
+        if resp.tx_id != tx:
+            raise wire.DbServerError("transaction id mismatch")
+        if resp.msg_type != wire.TYPE_ANLZ_TAG_RESP:
+            return None
+        for arg in reversed(resp.args):
+            if isinstance(arg, (bytes, bytearray)) and arg:
+                return bytes(arg)
+        return None
+
     def track_search_page(self, offset: int = 0, limit: int = 64) -> list[dict]:
         """First page of all tracks (live export.pdb equivalent ordering)."""
         avail = self._menu_request(wire.TYPE_TRACK_MENU, 0)

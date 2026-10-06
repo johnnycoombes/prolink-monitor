@@ -474,8 +474,13 @@ class MainWindow(QMainWindow):
             state.get("host") or "",
         )
         if library_sig != self._library_sig:
-            self._library_sig = library_sig
-            self.page_library.update_state(state)
+            try:
+                self.page_library.update_state(state)
+            except Exception:
+                # Leave the signature unset so the next tick tries again.
+                self._library_sig = None
+            else:
+                self._library_sig = library_sig
 
         self.page_session.update_state(state)
 

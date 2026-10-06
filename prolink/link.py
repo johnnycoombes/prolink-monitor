@@ -372,6 +372,21 @@ def _abs_track_length_ms(raw: int) -> int:
     return int(raw) * 1000
 
 
+def length_exceeds_known(length_ms: int, known_ms: int) -> bool:
+    """True when a packet length sits well above a length we already trust.
+
+    Some XDJ-AZ Absolute Position packets put a track length in this field
+    that is not the loaded track (655861 ms against a real 8:21). Once
+    dbserver metadata or the beat grid has a length, a later value more
+    than 5% and 2 seconds above it is ignored.
+    """
+    known = int(known_ms or 0)
+    length = int(length_ms or 0)
+    if known <= 0 or length <= 0:
+        return False
+    return length > known + int(known * 0.05) + 2000
+
+
 @dataclass
 class Deck:
     """Live state of one deck, with the playhead interpolated between beats.
@@ -396,12 +411,27 @@ class Deck:
     _last_beat: int = -1
     _beat_times: list[int] = field(default_factory=list, repr=False)
     track_length_ms: int = 0
+    # Length from dbserver metadata or the ANLZ beat grid. Absolute Position
+    # must not replace this with a longer, unrelated packet value.
+    metadata_duration_ms: int = 0
     _exact: bool = False
 
     def set_beat_grid(self, times: list[int], length_ms: int = 0) -> None:
         self._beat_times = times
-        self.track_length_ms = length_ms or (times[-1] if times else 0)
+        length = length_ms or (times[-1] if times else 0)
+        self.track_length_ms = length
+        if length > 0:
+            self.metadata_duration_ms = length
         self._last_beat = -1          # force a re-fix now the grid is loaded
+
+    def note_metadata_duration(self, duration_ms: int) -> None:
+        """Trust a library/dbserver length over an inflated Absolute Position."""
+        ms = int(duration_ms or 0)
+        if ms <= 0:
+            return
+        self.metadata_duration_ms = ms
+        if self.track_length_ms <= 0 or length_exceeds_known(self.track_length_ms, ms):
+            self.track_length_ms = ms
 
     def _beat_time(self, beat: int) -> int:
         """Millisecond a beat starts at, according to the analysed grid."""
@@ -432,6 +462,7 @@ class Deck:
         if new_track:
             self._beat_times = []
             self.track_length_ms = 0
+            self.metadata_duration_ms = 0
             self._last_beat = -1
             self._exact = False
             self.position_source = "none"
@@ -477,7 +508,13 @@ class Deck:
         self.last_seen = now
         if ap.track_length_s:
             length_ms = _abs_track_length_ms(ap.track_length_s)
-            if self.track_length_ms <= 0:
+            known = self.metadata_duration_ms
+            if known and length_exceeds_known(length_ms, known):
+                # Packet length is not the loaded track. Keep the metadata length.
+                if (self.track_length_ms <= 0
+                        or length_exceeds_known(self.track_length_ms, known)):
+                    self.track_length_ms = known
+            elif self.track_length_ms <= 0:
                 self.track_length_ms = length_ms
             elif length_ms <= max(self.track_length_ms * 2, self.track_length_ms + 2000):
                 # Agree with beat-grid / prior length — take the longer within reason.

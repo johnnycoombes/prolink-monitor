@@ -18,6 +18,7 @@ import time
 from collections import OrderedDict
 
 from . import anlz, onelibrary, pdb
+from .anlz_resolve import AnlzChoice, choose_by_id, match_by_title
 from .nfs import NfsClient
 
 PDB_PATH = "PIONEER/rekordbox/export.pdb"
@@ -250,30 +251,77 @@ class Media:
                      ) -> tuple[pdb.Track | None, str]:
         """NFS-cached lookup. Live dbserver is the caller's job, before this.
 
-        XDJ-AZ track ids are OneLibrary content ids. When that database is
-        readable, a hit in export.pdb at the same number is a different
-        namespace and is not used.
+        The status id is the rekordbox id. ``export.pdb`` is checked first
+        because that row holds the ANLZ path. OneLibrary is used when it has
+        the same id. A readable OneLibrary with no content row must not hide
+        the pdb row — that is what left every waveform blank on the XDJ-AZ.
         """
-        ol = self._safe_onelibrary_track(track_id)
+        choice = self.resolve_analysis_track(track_id)
+        if choice.track is None:
+            return None, ""
+        if choice.source.startswith("onelibrary"):
+            return choice.track, "onelibrary"
+        return choice.track, "nfs-cache"
+
+    def resolve_analysis_track(self, track_id: int, *,
+                               live: dict | None = None) -> AnlzChoice:
+        """Row to read ANLZ from: pdb id, OneLibrary id, then title match."""
+        live = live or {}
         pdb_track = self._safe_pdb_track(track_id)
-        ol_ok = _track_useful(ol)
-        pdb_ok = _track_useful(pdb_track)
-        if prefer_onelibrary:
-            if ol_ok and ol is not None:
-                return onelibrary.as_pdb_track(ol), "onelibrary"
-            summary = self.onelibrary
-            if summary.present and summary.readable:
-                return None, ""
-            if pdb_ok and pdb_track is not None:
-                return pdb_track, "nfs-cache"
-            return (pdb_track, "nfs-cache") if pdb_track is not None else (None, "")
-        if pdb_ok and pdb_track is not None:
-            return pdb_track, "nfs-cache"
-        if ol_ok and ol is not None:
-            return onelibrary.as_pdb_track(ol), "onelibrary"
-        if pdb_track is not None:
-            return pdb_track, "nfs-cache"
-        return None, ""
+        ol = self._safe_onelibrary_track(track_id)
+        ol_track = onelibrary.as_pdb_track(ol) if ol is not None else None
+        choice = choose_by_id(
+            pdb_track,
+            ol_track,
+            live_title=str(live.get("title") or ""),
+            live_artist=str(live.get("artist") or ""),
+        )
+        if choice.track is not None and getattr(choice.track, "analyze_path", ""):
+            return self._with_empty_onelibrary(choice)
+        duration_ms = int(live.get("duration_ms") or 0)
+        if not duration_ms:
+            duration_ms = int(live.get("duration_s") or 0) * 1000
+        title = str(live.get("title") or "")
+        artist = str(live.get("artist") or "")
+        if not title and choice.track is not None:
+            title = str(getattr(choice.track, "title", "") or "")
+            artist = artist or str(getattr(choice.track, "artist", "") or "")
+        matched = None
+        database = getattr(self, "db", None)
+        if title and database is not None:
+            matched = match_by_title(
+                database.tracks.values(),
+                title=title, artist=artist, duration_ms=duration_ms,
+            )
+        if matched is not None:
+            return self._with_empty_onelibrary(AnlzChoice(
+                matched, "pdb-match",
+                f"matched {matched.title!r} in export.pdb by title",
+            ))
+        return self._with_empty_onelibrary(choice)
+
+    def _with_empty_onelibrary(self, choice: AnlzChoice) -> AnlzChoice:
+        """Say so when OneLibrary is open but its content table has no rows.
+
+        Playlists can still list while ``get_content()`` returns nothing.
+        That must not be mistaken for a missing USB library.
+        """
+        summary = getattr(self, "onelibrary", None)
+        if summary is None:
+            return choice
+        if not (summary.present and summary.readable and summary.tracks == 0):
+            return choice
+        extra = summary.error or (
+            "OneLibrary is readable but its content table has 0 tracks"
+        )
+        note = choice.note or ""
+        if extra in note:
+            return choice
+        if note:
+            note = f"{note}; {extra}"
+        else:
+            note = extra
+        return AnlzChoice(choice.track, choice.source, note)
 
     def _safe_pdb_track(self, track_id: int) -> pdb.Track | None:
         try:

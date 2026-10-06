@@ -16,6 +16,7 @@ show that OneLibrary is present but not readable yet.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -87,11 +88,10 @@ def summarize(db: Any | None, *, present: bool, path: str = "",
         out.detail = error or "present (install pyrekordbox master to read)"
         return out
     out.readable = True
-    try:
-        contents = list(db.get_content())
-        out.tracks = len(contents)
-    except Exception:
-        out.tracks = 0
+    tracks, content_error = content_count(db)
+    out.tracks = tracks
+    if content_error:
+        out.error = content_error
     try:
         playlists = list(db.get_playlist())
         out.playlists = len(playlists)
@@ -110,7 +110,188 @@ def summarize(db: Any | None, *, present: bool, path: str = "",
     out.detail = (
         f"{out.tracks} tracks · {out.playlists} playlists · {out.history} history"
     )
+    if out.error:
+        out.detail = f"{out.detail} · {out.error}"
     return out
+
+
+_SAFE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_ID_COLUMNS = ("content_id", "ContentID", "ID", "id")
+_PATH_COLUMNS = (
+    "analysisDataFilePath", "AnalysisDataFilePath", "analysis_data_file_path",
+)
+_TITLE_COLUMNS = ("title", "Title")
+_ARTIST_COLUMNS = ("artist", "Artist")
+_LENGTH_COLUMNS = ("length", "Length")
+
+
+def content_count(db: Any) -> tuple[int, str | None]:
+    """How many content rows we can see, and why the ORM count may be zero.
+
+    Firmware 1.30 still serves playlists from this file while ``get_content()``
+    can return nothing (empty mapped table, or a query that raises). A raw
+    count of the real content table is what the Health page should show.
+    """
+    orm_error: str | None = None
+    try:
+        rows = list(db.get_content())
+        if rows:
+            return len(rows), None
+    except Exception as exc:
+        orm_error = f"get_content failed: {exc}"
+    counted, note = _raw_content_count(db)
+    if orm_error and note:
+        return counted, f"{orm_error}; {note}"
+    if orm_error:
+        return counted, orm_error
+    if counted and note:
+        return counted, note
+    if note:
+        return 0, note
+    return 0, None
+
+
+def _session(db: Any) -> Any:
+    return getattr(db, "session", None)
+
+
+def _sql_rows(session: Any, statement: str, params: dict | None = None) -> list[Any]:
+    from sqlalchemy import text
+
+    result = session.execute(text(statement), params or {})
+    if hasattr(result, "fetchall"):
+        return list(result.fetchall())
+    return list(result)
+
+
+def _rollback(session: Any) -> None:
+    rollback = getattr(session, "rollback", None)
+    if callable(rollback):
+        try:
+            rollback()
+        except Exception:
+            pass
+
+
+def _table_names(session: Any) -> list[str]:
+    try:
+        rows = _sql_rows(
+            session, "SELECT name FROM sqlite_master WHERE type='table'")
+    except Exception:
+        _rollback(session)
+        return []
+    names = []
+    for row in rows:
+        name = row[0] if not isinstance(row, str) else row
+        if isinstance(name, str) and _SAFE_IDENT.match(name):
+            names.append(name)
+    return names
+
+
+def _columns(session: Any, table: str) -> list[str]:
+    try:
+        rows = _sql_rows(session, f"PRAGMA table_info({table})")
+    except Exception:
+        _rollback(session)
+        return []
+    cols = []
+    for row in rows:
+        # PRAGMA table_info: cid, name, type, notnull, dflt_value, pk
+        name = row[1] if len(row) > 1 else None
+        if isinstance(name, str):
+            cols.append(name)
+    return cols
+
+
+def _content_tables(names: list[str]) -> list[str]:
+    exact = [n for n in names if n.lower() == "content"]
+    others = [
+        n for n in names
+        if "content" in n.lower() and n not in exact
+        and "playlist" not in n.lower() and "history" not in n.lower()
+    ]
+    return exact + others
+
+
+def _raw_content_count(db: Any) -> tuple[int, str | None]:
+    session = _session(db)
+    if session is None:
+        return 0, None
+    notes = []
+    best = 0
+    best_table = ""
+    for table in _content_tables(_table_names(session)):
+        try:
+            rows = _sql_rows(session, f"SELECT COUNT(*) FROM {table}")
+            n = int(rows[0][0]) if rows else 0
+        except Exception:
+            _rollback(session)
+            continue
+        notes.append(f"{table}={n}")
+        if n > best:
+            best = n
+            best_table = table
+    if not notes:
+        return 0, None
+    if best and best_table and best_table.lower() != "content":
+        return best, "ORM content empty; " + ", ".join(notes)
+    if best:
+        return best, "get_content returned no rows; " + ", ".join(notes)
+    return 0, "content tables empty (" + ", ".join(notes) + ")"
+
+
+def raw_content_track(db: Any, content_id: int) -> OneLibraryTrack | None:
+    """Read one content row when the ORM query cannot see it."""
+    session = _session(db)
+    if session is None or not content_id:
+        return None
+    for table in _content_tables(_table_names(session)):
+        cols = _columns(session, table)
+        if not cols:
+            continue
+        id_col = next((c for c in _ID_COLUMNS if c in cols), None)
+        if id_col is None:
+            continue
+        title_col = next((c for c in _TITLE_COLUMNS if c in cols), None)
+        artist_col = next((c for c in _ARTIST_COLUMNS if c in cols), None)
+        path_col = next((c for c in _PATH_COLUMNS if c in cols), None)
+        length_col = next((c for c in _LENGTH_COLUMNS if c in cols), None)
+        picked = [id_col]
+        for col in (title_col, artist_col, path_col, length_col):
+            if col and col not in picked:
+                picked.append(col)
+        sql = (
+            f"SELECT {', '.join(picked)} FROM {table} "
+            f"WHERE {id_col} = :id LIMIT 1"
+        )
+        try:
+            rows = _sql_rows(session, sql, {"id": int(content_id)})
+        except Exception:
+            _rollback(session)
+            continue
+        if not rows:
+            continue
+        row = rows[0]
+        values = {picked[i]: row[i] for i in range(len(picked))}
+        title = str(values.get(title_col) or "") if title_col else ""
+        artist = str(values.get(artist_col) or "") if artist_col else ""
+        path = str(values.get(path_col) or "") if path_col else ""
+        length = 0
+        if length_col and values.get(length_col):
+            try:
+                length = int(values[length_col])
+            except (TypeError, ValueError):
+                length = 0
+        if not title and not path:
+            continue
+        return OneLibraryTrack(
+            id=int(content_id),
+            title=title,
+            artist=artist,
+            duration_ms=length,
+            analyze_path=path,
+        )
+    return None
 
 
 def track_from_content(content: Any) -> OneLibraryTrack:
@@ -172,14 +353,31 @@ def as_pdb_track(track: OneLibraryTrack) -> pdb.Track:
 def find_content(db: Any, content_id: int) -> OneLibraryTrack | None:
     if db is None or not content_id:
         return None
-    try:
-        for content in db.get_content():
-            cid = getattr(content, "content_id", None)
-            if cid == content_id:
+    getter = getattr(db, "get_content", None)
+    if callable(getter):
+        for kwargs in ({"content_id": int(content_id)}, {"ID": int(content_id)}, {}):
+            try:
+                rows = list(getter(**kwargs))
+            except Exception:
+                continue
+            for content in rows:
+                cid = getattr(content, "content_id", None)
+                if cid is None:
+                    cid = getattr(content, "ID", None)
+                try:
+                    if int(cid or 0) != int(content_id):
+                        continue
+                except (TypeError, ValueError):
+                    continue
                 return track_from_content(content)
+            if kwargs:
+                # Filtered query ran. Still try SQL in case the ORM table is
+                # empty while another content table has the row.
+                break
+    try:
+        return raw_content_track(db, int(content_id))
     except Exception:
         return None
-    return None
 
 
 def _playlist_row(item: Any) -> dict[str, Any]:

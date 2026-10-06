@@ -69,6 +69,39 @@ def _u4(b: bytes, off: int) -> int:
     return struct.unpack_from(">I", b, off)[0]
 
 
+_TAG_MAGICS = (
+    b"PQTZ", b"PCOB", b"PCO2", b"PSSI", b"PWAV", b"PWV2",
+    b"PWV3", b"PWV4", b"PWV5", b"PWV6", b"PWV7",
+)
+
+
+def analysis_from_tag_blob(blob: bytes, into: Analysis | None = None) -> Analysis | None:
+    """Parse one dbserver ANLZ tag (or a whole PMAI file) into ``into``."""
+    if not blob:
+        return into
+    if blob[:4] == b"PMAI":
+        return parse(blob, into)
+    start = -1
+    for magic in _TAG_MAGICS:
+        found = blob.find(magic)
+        if found >= 0 and (start < 0 or found < start):
+            start = found
+    if start < 0:
+        return into
+    chunk = blob[start:]
+    if len(chunk) >= 12:
+        tag_len = struct.unpack_from(">I", chunk, 8)[0]
+        if 12 <= tag_len <= len(chunk):
+            chunk = chunk[:tag_len]
+    header_len = 28
+    file_len = header_len + len(chunk)
+    header = b"PMAI" + struct.pack(">II", header_len, file_len) + (b"\x00" * 16)
+    try:
+        return parse(header + chunk, into)
+    except ValueError:
+        return into
+
+
 def parse(data: bytes, into: Analysis | None = None) -> Analysis:
     """Parse an ANLZ file. .DAT + .EXT + .2EX can accumulate into one Analysis."""
     a = into or Analysis()
