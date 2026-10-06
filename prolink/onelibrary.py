@@ -16,8 +16,10 @@ show that OneLibrary is present but not readable yet.
 
 from __future__ import annotations
 
+import importlib
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from . import pdb
@@ -65,8 +67,123 @@ def pyrekordbox_available() -> bool:
         return False
 
 
+def parse_library_datetime(value: Any) -> datetime | None:
+    """Parse a library date. A bad cell becomes None and never raises.
+
+    Device Library Plus stores datetimes as text. pyrekordbox's converter
+    calls ``datetime.fromisoformat`` and lets ``ValueError`` escape, which
+    aborts the whole SQLAlchemy query. Firmware exports include values such
+    as ``2019t00-00-00z``, ``0000-00-00``, and blanks. Those rows still load;
+    only that field is blank.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            value = bytes(value).decode("utf-8", "replace")
+        except Exception:
+            return None
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    lowered = text.lower()
+    if "0000-00-00" in lowered:
+        return None
+    # Zero month or day (including the garbled '2019t00-00-00z' form).
+    head = lowered
+    if head.endswith("z"):
+        head = head[:-1]
+    head = head.split("+", 1)[0].split(".", 1)[0]
+    head = head.replace("t", "-").replace(" ", "-").replace("/", "-")
+    bits = [b for b in head.split("-") if b != ""]
+    if len(bits) >= 3:
+        try:
+            year, month, day = int(bits[0]), int(bits[1]), int(bits[2])
+        except ValueError:
+            return None
+        if year <= 0 or not (1 <= month <= 12) or not (1 <= day <= 31):
+            return None
+    normalized = text[:-1] + "+00:00" if text.endswith(("Z", "z")) else text
+    if len(normalized) > 10 and normalized[10] in ("t", "T"):
+        normalized = normalized[:10] + "T" + normalized[11:]
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        if " " in normalized:
+            try:
+                return datetime.fromisoformat(normalized.replace(" ", "T", 1))
+            except ValueError:
+                return None
+        return None
+
+
+def _safe_string_to_datetime(value: Any) -> datetime | None:
+    try:
+        return parse_library_datetime(value)
+    except Exception:
+        return None
+
+
+_safe_string_to_datetime._prolink_safe = True  # type: ignore[attr-defined]
+
+
+def _safe_process_result_value(_self: Any, value: Any, _dialect: Any) -> datetime | None:
+    if not value:
+        return None
+    return _safe_string_to_datetime(value)
+
+
+_safe_process_result_value._prolink_safe = True  # type: ignore[attr-defined]
+
+
+_DATETIME_MODULES = (
+    "pyrekordbox.devicelib_plus.models",
+    "pyrekordbox.masterdb.models",
+    "pyrekordbox.db6.tables",
+)
+
+
+def install_tolerant_datetimes_on(module: Any) -> None:
+    """Point one pyrekordbox models module at the never-raise parser."""
+    current = getattr(module, "string_to_datetime", None)
+    if not getattr(current, "_prolink_safe", False):
+        try:
+            module.string_to_datetime = _safe_string_to_datetime
+        except Exception:
+            pass
+    date_type = getattr(module, "DateTime", None)
+    if date_type is None:
+        return
+    existing = getattr(date_type, "process_result_value", None)
+    if getattr(existing, "_prolink_safe", False):
+        return
+    try:
+        date_type.process_result_value = _safe_process_result_value
+    except Exception:
+        pass
+
+
+def install_tolerant_datetimes(modules: tuple[str, ...] | None = None) -> None:
+    """Patch every pyrekordbox DateTime column so one bad cell cannot fail a query.
+
+    Content, cues, history, playlists, and artwork rows share this type.
+    Patching the class covers the ANLZ-path lookup as well as the library list.
+    """
+    for name in modules or _DATETIME_MODULES:
+        try:
+            module = importlib.import_module(name)
+        except Exception:
+            continue
+        install_tolerant_datetimes_on(module)
+
+
 def open_onelibrary(path: str) -> tuple[Any | None, str | None]:
     """Open ``exportLibrary.db``. Returns ``(db, error)``."""
+    install_tolerant_datetimes()
     try:
         from pyrekordbox import DeviceLibraryPlus
     except Exception as exc:
@@ -80,6 +197,7 @@ def open_onelibrary(path: str) -> tuple[Any | None, str | None]:
 
 def summarize(db: Any | None, *, present: bool, path: str = "",
               error: str | None = None) -> OneLibrarySummary:
+    install_tolerant_datetimes()
     out = OneLibrarySummary(present=present, path=path, error=error)
     if not present:
         out.detail = "not on medium"
@@ -132,12 +250,14 @@ def content_count(db: Any) -> tuple[int, str | None]:
     can return nothing (empty mapped table, or a query that raises). A raw
     count of the real content table is what the Health page should show.
     """
+    install_tolerant_datetimes()
     orm_error: str | None = None
     try:
         rows = list(db.get_content())
         if rows:
             return len(rows), None
     except Exception as exc:
+        _rollback(_session(db))
         orm_error = f"get_content failed: {exc}"
     counted, note = _raw_content_count(db)
     if orm_error and note:
@@ -351,6 +471,7 @@ def as_pdb_track(track: OneLibraryTrack) -> pdb.Track:
 
 
 def find_content(db: Any, content_id: int) -> OneLibraryTrack | None:
+    install_tolerant_datetimes()
     if db is None or not content_id:
         return None
     getter = getattr(db, "get_content", None)
@@ -359,6 +480,7 @@ def find_content(db: Any, content_id: int) -> OneLibraryTrack | None:
             try:
                 rows = list(getter(**kwargs))
             except Exception:
+                _rollback(_session(db))
                 continue
             for content in rows:
                 cid = getattr(content, "content_id", None)
@@ -403,6 +525,7 @@ def _playlist_row(item: Any) -> dict[str, Any]:
 
 
 def list_playlists(db: Any) -> list[dict[str, Any]]:
+    install_tolerant_datetimes()
     if db is None:
         return []
     try:
@@ -413,6 +536,7 @@ def list_playlists(db: Any) -> list[dict[str, Any]]:
 
 
 def list_history(db: Any) -> list[dict[str, Any]]:
+    install_tolerant_datetimes()
     if db is None:
         return []
     items = []
@@ -435,6 +559,7 @@ def list_history(db: Any) -> list[dict[str, Any]]:
 
 def playlist_tracks(db: Any, playlist_id: int, *, limit: int = 200) -> list[dict[str, Any]]:
     """Best-effort track list for a OneLibrary playlist / history entry."""
+    install_tolerant_datetimes()
     if db is None or not playlist_id:
         return []
     limit = max(1, min(500, int(limit)))
@@ -454,8 +579,10 @@ def playlist_tracks(db: Any, playlist_id: int, *, limit: int = 200) -> list[dict
                 if candidates:
                     break
             except Exception:
+                _rollback(_session(db))
                 continue
         except Exception:
+            _rollback(_session(db))
             continue
     if not candidates:
         return []
@@ -479,3 +606,161 @@ def playlist_tracks(db: Any, playlist_id: int, *, limit: int = 200) -> list[dict
             "source": "onelibrary",
         })
     return rows
+
+
+def _track_row(track: OneLibraryTrack) -> dict[str, Any]:
+    return {
+        "id": int(track.id or 0),
+        "title": track.title or "",
+        "artist": track.artist or "",
+        "album": track.album or "",
+        "genre": track.genre or "",
+        "key": track.key or "",
+        "bpm": float(track.tempo or 0),
+        "duration_s": int((track.duration_ms or 0) / 1000),
+        "has_artwork": bool(track.artwork_path),
+        "source": "onelibrary",
+    }
+
+
+def _orm_content_tracks(db: Any) -> list[dict[str, Any]] | None:
+    """ORM content rows, or None when the query itself fails."""
+    getter = getattr(db, "get_content", None)
+    if not callable(getter):
+        return None
+    try:
+        contents = list(getter())
+    except Exception:
+        _rollback(_session(db))
+        return None
+    out: list[dict[str, Any]] = []
+    for content in contents:
+        try:
+            track = track_from_content(content)
+        except Exception:
+            continue
+        if not track.id and not track.title:
+            continue
+        out.append(_track_row(track))
+    return out
+
+
+_DATE_COLUMN = re.compile(r"(date|time|created|updated)", re.IGNORECASE)
+_RAW_FIELD_COLUMNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("id", _ID_COLUMNS),
+    ("title", _TITLE_COLUMNS),
+    ("artist", _ARTIST_COLUMNS),
+    ("album", ("album", "Album")),
+    ("genre", ("genre", "Genre")),
+    ("key", ("key", "Key")),
+    ("label", ("label", "Label")),
+    ("length", _LENGTH_COLUMNS),
+    ("path", _PATH_COLUMNS),
+    ("bpm", ("bpm", "BPM", "bpmx100", "BpmX100")),
+    ("artwork", ("artworkPath", "ArtworkPath", "imagePath", "ImagePath")),
+)
+
+
+def _raw_content_tracks(db: Any) -> list[dict[str, Any]]:
+    """Read content without selecting date columns.
+
+    Used when the ORM query still fails. Date text is never fetched, so a
+    value like ``2019t00-00-00z`` cannot abort the listing.
+    """
+    session = _session(db)
+    if session is None:
+        return []
+    best_table = ""
+    best_n = -1
+    for table in _content_tables(_table_names(session)):
+        try:
+            counted = _sql_rows(session, f"SELECT COUNT(*) FROM {table}")
+            n = int(counted[0][0]) if counted else 0
+        except Exception:
+            _rollback(session)
+            continue
+        if n > best_n:
+            best_n = n
+            best_table = table
+    if not best_table or best_n <= 0:
+        return []
+    cols = _columns(session, best_table)
+    picked: list[tuple[str, str]] = []
+    for field_name, candidates in _RAW_FIELD_COLUMNS:
+        col = next((c for c in candidates if c in cols and not _DATE_COLUMN.search(c)), None)
+        if col and _SAFE_IDENT.match(col) and col not in [c for _, c in picked]:
+            picked.append((field_name, col))
+    if not any(name == "id" for name, _col in picked):
+        return []
+    sql = f"SELECT {', '.join(col for _name, col in picked)} FROM {best_table}"
+    try:
+        raw_rows = _sql_rows(session, sql)
+    except Exception:
+        _rollback(session)
+        return []
+    out: list[dict[str, Any]] = []
+    for raw in raw_rows:
+        values = {picked[i][0]: raw[i] for i in range(min(len(picked), len(raw)))}
+        try:
+            track_id = int(values.get("id") or 0)
+        except (TypeError, ValueError):
+            continue
+        title = str(values.get("title") or "")
+        if not track_id and not title:
+            continue
+        length = 0
+        if values.get("length"):
+            try:
+                length = int(values["length"])
+            except (TypeError, ValueError):
+                length = 0
+        tempo = 0.0
+        bpm = values.get("bpm")
+        if isinstance(bpm, int) and bpm > 500:
+            tempo = bpm / 100.0
+        else:
+            try:
+                tempo = float(bpm or 0)
+            except (TypeError, ValueError):
+                tempo = 0.0
+        artist = values.get("artist")
+        artist_text = "" if isinstance(artist, int) else str(artist or "")
+        out.append({
+            "id": track_id,
+            "title": title,
+            "artist": artist_text,
+            "album": str(values.get("album") or ""),
+            "genre": str(values.get("genre") or ""),
+            "key": str(values.get("key") or ""),
+            "bpm": tempo,
+            "duration_s": int(length / 1000),
+            "has_artwork": bool(values.get("artwork")),
+            "source": "onelibrary",
+        })
+    return out
+
+
+def list_tracks(db: Any, query: str = "", *, limit: int = 10000,
+                offset: int = 0) -> list[dict[str, Any]]:
+    """Content rows for the library page.
+
+    A bad date becomes blank for that row. The rest of the table still loads.
+    Live dbserver results stay preferred; callers use this only as a fallback.
+    """
+    install_tolerant_datetimes()
+    if db is None:
+        return []
+    limit = max(1, min(20000, int(limit)))
+    offset = max(0, int(offset))
+    orm_rows = _orm_content_tracks(db)
+    rows = orm_rows if orm_rows else _raw_content_tracks(db)
+    if not rows and orm_rows is not None:
+        rows = orm_rows
+    q = (query or "").strip().lower()
+    if q:
+        rows = [
+            row for row in rows
+            if q in (row.get("title") or "").lower()
+            or q in (row.get("artist") or "").lower()
+        ]
+    return rows[offset:offset + limit]

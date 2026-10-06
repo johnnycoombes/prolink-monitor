@@ -90,6 +90,50 @@ class FallbackOrderTests(unittest.TestCase):
             )
         self.assertEqual(source, "thumbnail")
 
+    def test_dbserver_hires_before_any_audio_read(self):
+        """A resolved file path must not pull the audio file ahead of album art."""
+        media = mock.Mock()
+        media._fetch = mock.Mock(return_value=b"\xff\xd8\xff" + b"a" * 40)
+        browser = mock.Mock()
+        browser.album_art.return_value = b"\xff\xd8\xff" + b"H" * 80
+        browser.__enter__ = lambda *_a: browser
+        browser.__exit__ = lambda *_a: False
+        track = mock.Mock(
+            file_path="contents/House/long-track.wav",
+            artwork_path="PIONEER/Artwork/a.jpg",
+            artwork_id=4242,
+        )
+        data, source = artmod.resolve_artwork(
+            track,
+            media,
+            host="192.168.1.212",
+            slot="usb",
+            open_remotedb=lambda: browser,
+            local_music_root="",
+            size="large",
+        )
+        self.assertEqual(source, "remotedb-hires")
+        self.assertTrue(data.startswith(b"\xff\xd8\xff"))
+        media._fetch.assert_not_called()
+        browser.album_art.assert_called_with(4242, high_res=True)
+
+    def test_audio_head_is_capped_when_nothing_else_matches(self):
+        seen = []
+
+        def fetch(remote, cache_name, max_bytes=None):
+            seen.append(max_bytes)
+            return b"ID3" + b"\x00" * 32
+
+        media = mock.Mock()
+        media._fetch = fetch
+        track = mock.Mock(file_path="contents/only.mp3", artwork_path="", artwork_id=0)
+        with mock.patch.object(artmod.embedded_art, "extract_embedded_cover", return_value=None):
+            artmod.resolve_artwork(
+                track, media, host="h", slot="usb",
+                open_remotedb=None, local_music_root="",
+            )
+        self.assertEqual(seen, [artmod.EMBEDDED_READ_LIMIT])
+
 
 class ArtCacheKeyTests(unittest.TestCase):
     def test_track_key_includes_slot(self):

@@ -122,7 +122,7 @@ def _resolve_large(
 
     fetch = _fetch_of(media, fetch_bytes)
 
-    # 1) Embedded cover from local library mirror
+    # 1) Embedded cover from a local library mirror. This does not touch the player.
     if track.file_path and local_music_root:
         local = map_player_path_to_local(local_music_root, track.file_path)
         if local and os.path.isfile(local):
@@ -135,23 +135,12 @@ def _resolve_large(
             except OSError as exc:
                 _log.debug("local embedded art failed %s: %s", local, exc)
 
-    # 2) Embedded cover from player/USB via NFS (read-only)
-    if track.file_path:
-        remote_audio = track.file_path.lstrip("/").replace("\\", "/")
-        try:
-            audio = fetch(remote_audio, _cache_name("audiohead", remote_audio, ".bin"))
-            if audio:
-                audio = audio[:EMBEDDED_READ_LIMIT]
-                raw = embedded_art.extract_embedded_cover(audio, hint=remote_audio)
-                if raw and looks_like_image(raw):
-                    return normalize_artwork_jpeg(raw), "embedded"
-        except Exception as exc:
-            _log.debug("nfs embedded art failed %s: %s", remote_audio, exc)
-
     artwork_id = int(getattr(track, "artwork_id", 0) or 0)
     slot_byte = _slot_byte(slot)
 
-    # 3) dbserver high-res album art (type 0x2003, extra arg 1 for high-res)
+    # 2) dbserver high-res album art. Do this before any audio-file read:
+    # export.pdb rows have a file path, and pulling the whole track over NFS
+    # stalled artwork after that path started resolving again.
     if artwork_id and open_remotedb is not None:
         browser = open_remotedb()
         if browser is not None:
@@ -192,7 +181,35 @@ def _resolve_large(
         if data and looks_like_image(data):
             return normalize_artwork_jpeg(data), "thumbnail"
 
+    # 7) Embedded cover from the audio file, last, and only the file head.
+    # The player and USB stay read-only; this is a capped NFS read.
+    if track.file_path:
+        remote_audio = track.file_path.lstrip("/").replace("\\", "/")
+        try:
+            audio = _fetch_capped(
+                fetch, remote_audio,
+                _cache_name("audiohead", remote_audio, ".bin"),
+                EMBEDDED_READ_LIMIT,
+            )
+            if audio:
+                raw = embedded_art.extract_embedded_cover(audio, hint=remote_audio)
+                if raw and looks_like_image(raw):
+                    return normalize_artwork_jpeg(raw), "embedded"
+        except Exception as exc:
+            _log.debug("nfs embedded art failed %s: %s", remote_audio, exc)
+
     return None, "none"
+
+
+def _fetch_capped(fetch: Callable, remote: str, cache_name: str, limit: int) -> bytes | None:
+    """Read at most ``limit`` bytes. Older fetch callbacks ignore ``max_bytes``."""
+    try:
+        data = fetch(remote, cache_name, max_bytes=limit)
+    except TypeError:
+        data = fetch(remote, cache_name)
+    if not data:
+        return None
+    return data[:limit]
 
 
 def _slot_byte(slot: str) -> int:

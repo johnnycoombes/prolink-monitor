@@ -403,18 +403,26 @@ class Media:
         return data
 
     # -- helpers ------------------------------------------------------------
-    def _fetch(self, remote: str, cache_name: str) -> bytes | None:
-        """Read a file off the medium, serving it from the disk cache if present."""
+    def _fetch(self, remote: str, cache_name: str,
+               max_bytes: int | None = None) -> bytes | None:
+        """Read a file off the medium, serving it from the disk cache if present.
+
+        ``max_bytes`` caps an audio-head read so album art does not pull the
+        whole track. The medium is still opened read-only.
+        """
         local = os.path.join(self.cache_dir, cache_name)
         if os.path.exists(local):
             try:
                 with open(local, "rb") as f:
-                    return f.read()
+                    return f.read() if not max_bytes else f.read(int(max_bytes))
             except OSError:
                 pass
         try:
             fh, attr = self.nfs.resolve(self.root, remote)
-            data = self.nfs.read(fh, attr.size)
+            nbytes = int(attr.size)
+            if max_bytes:
+                nbytes = min(nbytes, int(max_bytes))
+            data = self.nfs.read(fh, nbytes)
         except Exception:
             return None
         try:

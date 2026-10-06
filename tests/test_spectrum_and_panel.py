@@ -111,6 +111,55 @@ class DisplayPrefTests(unittest.TestCase):
         self.assertFalse(prefs["elements"]["deck_show_waveform"])
         self.assertTrue(prefs["elements"]["deck_show_artwork"])
         self.assertEqual(prefs["spectrum_source"], "waveform")
+        self.assertTrue(prefs["show_spectrum"])
+
+    def test_spectrum_toggle_is_separate_from_audio_input(self):
+        from gui.settings import DEFAULTS, display_prefs_from, save_settings, load_settings
+
+        prefs = display_prefs_from({
+            "overlay_show_spectrum": False,
+            "overlay_spectrum_audio": True,
+            "show_phrases": False,
+        })
+        self.assertFalse(prefs["show_spectrum"])
+        self.assertFalse(prefs["show_phrases"])
+        self.assertEqual(prefs["spectrum_source"], "loopback")
+        self.assertTrue(DEFAULTS["overlay_show_spectrum"])
+        with mock.patch.dict(os.environ, {"PROLINK_CONFIG_DIR": self._tmp()}):
+            save_settings({
+                "show_phrases": False,
+                "overlay_show_spectrum": False,
+                "overlay_spectrum_audio": False,
+            })
+            loaded = load_settings()
+        self.assertFalse(loaded["show_phrases"])
+        self.assertFalse(loaded["overlay_show_spectrum"])
+        self.assertFalse(loaded["overlay_spectrum_audio"])
+        again = display_prefs_from(loaded)
+        self.assertFalse(again["show_phrases"])
+        self.assertFalse(again["show_spectrum"])
+        self.assertEqual(again["spectrum_source"], "waveform")
+
+    def _tmp(self) -> str:
+        import tempfile
+        path = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(path, ignore_errors=True))
+        return path
+
+    def test_display_false_is_not_forced_back_on(self):
+        from app import Monitor
+
+        mon = Monitor.__new__(Monitor)
+        mon.show_phrases = True
+        mon.show_spectrum = True
+        mon._display = {
+            "show_phrases": False,
+            "show_spectrum": False,
+            "spectrum_source": "waveform",
+        }
+        prefs = Monitor._display_prefs(mon)
+        self.assertFalse(prefs["show_phrases"])
+        self.assertFalse(prefs["show_spectrum"])
 
     def test_loopback_is_opt_in(self):
         from gui.settings import display_prefs_from
@@ -146,6 +195,7 @@ class WebPanelSourceTests(unittest.TestCase):
         with open(path, encoding="utf-8") as f:
             html = f.read()
         self.assertIn("panel-spectrum", html)
+        self.assertIn("showSpectrum ? '<canvas class=\"panel-spectrum\"></canvas>' : ''", html)
         self.assertIn("spectrum.js", html)
         self.assertIn("artHtml(deck, pack, 'small')", html)
         self.assertIn("artHtml(deck, pack, 'large')", html)
