@@ -104,7 +104,10 @@ class FloatingNowPlayingWindow(QWidget):
     """Draggable, resizable always-on-top window showing ``web/overlay.html`` (now playing)."""
 
     _CARD_MIN = (380, 360)
-    _PANEL_MIN = (640, 160)
+    _PANEL_MIN = (640, 220)
+    # Card hugs a 500px cover plus title, readouts and the overview wave.
+    CARD_DEFAULT_SIZE = (600, 860)
+    PANEL_DEFAULT_SIZE = (960, 280)
 
     def __init__(
         self,
@@ -247,23 +250,27 @@ class FloatingNowPlayingWindow(QWidget):
 
     @staticmethod
     def _default_card_size() -> tuple[int, int]:
-        """Default size hugs now-playing card content (large art + meta + wave), not half the screen."""
+        """Default size hugs the tall card (large art + meta + wave)."""
+        content_w, content_h = FloatingNowPlayingWindow.CARD_DEFAULT_SIZE
         screen = QApplication.primaryScreen()
-        content_w, content_h = 520, 680
         if screen is None:
             return content_w, content_h
         geo = screen.availableGeometry()
-        w = max(380, min(920, min(content_w, int(geo.width() * 0.38))))
-        h = max(360, min(content_h, int(geo.height() * 0.72)))
+        w = max(480, min(content_w, int(geo.width() * 0.46)))
+        h = max(720, min(content_h, int(geo.height() * 0.9)))
         return w, h
 
     @staticmethod
     def _default_panel_size() -> tuple[int, int]:
+        content_w, content_h = FloatingNowPlayingWindow.PANEL_DEFAULT_SIZE
         screen = QApplication.primaryScreen()
         if screen is None:
-            return 960, 200
+            return content_w, content_h
         geo = screen.availableGeometry()
-        return max(640, int(geo.width() * 0.55)), max(160, int(geo.height() * 0.22))
+        return (
+            max(640, min(content_w, int(geo.width() * 0.62))),
+            max(250, min(content_h, int(geo.height() * 0.32))),
+        )
 
     def _apply_window_flags(self) -> None:
         settings = self._settings_getter()

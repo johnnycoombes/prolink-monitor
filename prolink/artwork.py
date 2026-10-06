@@ -31,12 +31,96 @@ def resolve_artwork(
     open_remotedb: Callable[[], RemoteDbBrowser | None] | None = None,
     local_music_root: str = "",
     fetch_bytes: Callable[[str], bytes | None] | None = None,
+    size: str = "large",
 ) -> tuple[bytes | None, str]:
-    """Try sources in priority order. Returns (jpeg_bytes, source_label)."""
+    """Try sources in priority order. Returns (jpeg_bytes, source_label).
+
+    ``size="large"`` is the high-res chain (embedded, dbserver hires, NFS ``_m``).
+    ``size="small"`` prefers the rekordbox thumbnail and does not read the audio
+    file unless nothing smaller exists. The panel bar uses small; the card uses large.
+    """
+    if track is None:
+        return None, "none"
+    if str(size).lower() == "small":
+        data, source = _resolve_small(
+            track, media, host=host, slot=slot, open_remotedb=open_remotedb,
+            fetch_bytes=fetch_bytes,
+        )
+        if data:
+            return normalize_artwork_jpeg(data, max_px=160, quality=80), source
+        data, source = _resolve_large(
+            track, media, host=host, slot=slot, open_remotedb=open_remotedb,
+            local_music_root=local_music_root, fetch_bytes=fetch_bytes,
+        )
+        if data:
+            return normalize_artwork_jpeg(data, max_px=160, quality=80), source
+        return None, "none"
+    return _resolve_large(
+        track, media, host=host, slot=slot, open_remotedb=open_remotedb,
+        local_music_root=local_music_root, fetch_bytes=fetch_bytes,
+    )
+
+
+def _fetch_of(media: Any, fetch_bytes: Callable[[str], bytes | None] | None):
+    return fetch_bytes or media._fetch  # noqa: SLF001 — library Media API
+
+
+def _resolve_small(
+    track: Track,
+    media: Any,
+    *,
+    host: str,
+    slot: str,
+    open_remotedb: Callable[[], RemoteDbBrowser | None] | None,
+    fetch_bytes: Callable[[str], bytes | None] | None,
+) -> tuple[bytes | None, str]:
+    """Thumbnail and standard dbserver art. No embedded-audio read."""
+    fetch = _fetch_of(media, fetch_bytes)
+    artwork_id = int(getattr(track, "artwork_id", 0) or 0)
+    slot_byte = _slot_byte(slot)
+
+    if track.artwork_path:
+        remote = track.artwork_path.lstrip("/")
+        data = fetch(remote, _cache_name("art", remote, ".jpg"))
+        if data and looks_like_image(data):
+            return data, "thumbnail"
+
+    if artwork_id and open_remotedb is not None:
+        browser = open_remotedb()
+        if browser is not None:
+            browser.slot = slot_byte
+            try:
+                with browser:
+                    raw = browser.album_art(artwork_id, high_res=False)
+                    if raw and looks_like_image(raw):
+                        return raw, "remotedb"
+            except Exception as exc:
+                _log.debug("remotedb small art failed id=%s: %s", artwork_id, exc)
+
+    if track.artwork_path:
+        hi_path = highres_nfs_art_path(track.artwork_path)
+        if hi_path and hi_path != track.artwork_path:
+            data = fetch(hi_path.lstrip("/"), _cache_name("arthi", hi_path, ".jpg"))
+            if data and looks_like_image(data):
+                return data, "nfs-hires"
+    return None, "none"
+
+
+def _resolve_large(
+    track: Track | None,
+    media: Any,
+    *,
+    host: str,
+    slot: str,
+    open_remotedb: Callable[[], RemoteDbBrowser | None] | None = None,
+    local_music_root: str = "",
+    fetch_bytes: Callable[[str], bytes | None] | None = None,
+) -> tuple[bytes | None, str]:
+    """High-res chain. Returns (jpeg_bytes, source_label)."""
     if track is None:
         return None, "none"
 
-    fetch = fetch_bytes or media._fetch  # noqa: SLF001 — library Media API
+    fetch = _fetch_of(media, fetch_bytes)
 
     # 1) Embedded cover from local library mirror
     if track.file_path and local_music_root:

@@ -18,7 +18,6 @@ import struct
 import sys
 import threading
 import time
-import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -35,6 +34,7 @@ from prolink.audience_deck import AudienceDeckTracker, merge_live_deck  # noqa: 
 from prolink.capture import idle_capture_status  # noqa: E402
 from prolink.track_key import keys_match, track_cache_key, track_key_token  # noqa: E402
 from prolink.wnp import WnpPublisher  # noqa: E402
+from prolink.loopback_audio import LoopbackCapturer  # noqa: E402
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
@@ -100,9 +100,11 @@ class Monitor:
         self._library_cache_key: tuple | None = None
         self._library_cache: tuple[dict | None, str | None, dict | None] = (None, None, None)
         self._remotedb_fail: dict[str, str] = {}
-        self._art_cache: dict[tuple, tuple[bytes, str]] = {}
+        self._art_cache: dict[tuple, dict[str, tuple[bytes, str]] | tuple[bytes, str]] = {}
         self._art_source_by_deck: dict[int, str] = {}
         self._last_art_source: str = "none"
+        self._display: dict[str, Any] = {}
+        self.loopback = LoopbackCapturer()
         self.wnp = WnpPublisher()
 
     def _device_number_for_host(self, host: str) -> int | None:
@@ -180,8 +182,20 @@ class Monitor:
         threading.Thread(target=self._preload, daemon=True).start()
 
     def stop(self) -> None:
+        self.loopback.stop()
         self.engine.stop()
         self.library.close()
+
+    def configure_display(self, prefs: dict | None) -> None:
+        """Live Monitor-view prefs for the web panel and overlay."""
+        from gui.settings import display_prefs_from
+
+        self._display = display_prefs_from(prefs)
+        self.show_phrases = bool(self._display.get("show_phrases", True))
+        if self._display.get("spectrum_source") == "loopback":
+            self.loopback.start()
+        else:
+            self.loopback.stop()
 
     def _preload(self) -> None:
         """Open the NFS connection in the background so the first track is instant."""
@@ -493,14 +507,53 @@ class Monitor:
         with self._lock:
             return self._meta.get(key)
 
-    def artwork(self, track_id: int, *, deck: int | None = None) -> bytes | None:
+    @staticmethod
+    def _art_size(size: str | None) -> str:
+        return "small" if str(size or "").lower() == "small" else "large"
+
+    def _cached_art(self, key: tuple, size: str) -> tuple[bytes, str] | None:
+        cached = self._art_cache.get(key)
+        if cached is None:
+            return None
+        if isinstance(cached, dict):
+            hit = cached.get(size)
+            return hit if hit else None
+        # Older callers stored a single (bytes, source) pair — that is the large image.
+        if size == "large" and isinstance(cached, tuple) and len(cached) == 2:
+            if isinstance(cached[0], (bytes, bytearray)):
+                return cached[0], str(cached[1])
+        return None
+
+    def _store_art(self, key: tuple, size: str, data: bytes, source: str,
+                   deck: int | None) -> None:
+        with self._lock:
+            slot = self._art_cache.get(key)
+            sizes: dict[str, tuple[bytes, str]]
+            if isinstance(slot, dict):
+                sizes = slot
+            else:
+                sizes = {}
+                if (isinstance(slot, tuple) and len(slot) == 2
+                        and isinstance(slot[0], (bytes, bytearray))):
+                    sizes["large"] = (slot[0], str(slot[1]))
+            sizes[size] = (data, source)
+            self._art_cache[key] = sizes
+            self._last_art_source = source
+            if deck is not None:
+                self._art_source_by_deck[int(deck)] = source
+            while len(self._art_cache) > 48:
+                self._art_cache.pop(next(iter(self._art_cache)))
+
+    def artwork(self, track_id: int, *, deck: int | None = None,
+                size: str | None = None) -> bytes | None:
         from prolink.artwork import resolve_artwork
 
+        size = self._art_size(size)
         key = self._resolve_key(track_id, deck)
         if key is None:
             return None
         with self._lock:
-            cached = self._art_cache.get(key)
+            cached = self._cached_art(key, size)
             if cached is not None:
                 self._last_art_source = cached[1]
                 if deck is not None:
@@ -519,13 +572,12 @@ class Monitor:
         cached_meta = self.meta(track_id, deck=deck, load=False) or {}
         art_id = int(cached_meta.get("artwork_id") or 0)
         if not media:
-            data = self._artwork_from_db(host or "", art_id, byte) if host and art_id else None
+            data = self._artwork_from_db(
+                host or "", art_id, byte, high_res=(size == "large"),
+            ) if host and art_id else None
             if data:
-                with self._lock:
-                    self._art_cache[key] = (data, "remotedb")
-                    self._last_art_source = "remotedb"
-                    if deck is not None:
-                        self._art_source_by_deck[int(deck)] = "remotedb"
+                source = "remotedb-hires" if size == "large" else "remotedb"
+                self._store_art(key, size, data, source, deck)
             return data
         prefer = proto.is_xdj_az(getattr(status, "name", "") or "")
         track, _src = media.copied_track(track_id, prefer_onelibrary=prefer)
@@ -549,18 +601,14 @@ class Monitor:
             slot=slot,
             open_remotedb=open_db,
             local_music_root=local_root,
+            size=size,
         )
         if data:
-            with self._lock:
-                self._art_cache[key] = (data, source)
-                self._last_art_source = source
-                if deck is not None:
-                    self._art_source_by_deck[int(deck)] = source
-                while len(self._art_cache) > 48:
-                    self._art_cache.pop(next(iter(self._art_cache)))
+            self._store_art(key, size, data, source, deck)
         return data
 
-    def _artwork_from_db(self, host: str, artwork_id: int, slot: int) -> bytes | None:
+    def _artwork_from_db(self, host: str, artwork_id: int, slot: int,
+                         *, high_res: bool = True) -> bytes | None:
         """Read-only album-art query when the NFS copy of the track is unavailable."""
         if not host or not artwork_id:
             return None
@@ -571,13 +619,16 @@ class Monitor:
 
         try:
             with browser:
-                raw = browser.album_art(int(artwork_id), high_res=True)
+                raw = None
+                if high_res:
+                    raw = browser.album_art(int(artwork_id), high_res=True)
                 if not raw:
                     raw = browser.album_art(int(artwork_id), high_res=False)
         except Exception:
             return None
         if raw and looks_like_image(raw):
-            return normalize_artwork_jpeg(raw)
+            cap = 1000 if high_res else 160
+            return normalize_artwork_jpeg(raw, max_px=cap, quality=88 if high_res else 80)
         return None
 
     def artwork_source(self, *, deck: int | None = None) -> str:
@@ -938,24 +989,21 @@ class Monitor:
 
     def _display_prefs(self) -> dict:
         """GUI display prefs pushed to web clients (overlay + panel)."""
-        show_phrases = bool(getattr(self, "show_phrases", True))
-        zoom_bars = 4
-        playhead_position = "auto"
+        live = getattr(self, "_display", None)
+        if isinstance(live, dict) and live:
+            prefs = dict(live)
+            prefs["show_phrases"] = bool(getattr(self, "show_phrases", prefs.get("show_phrases", True)))
+            return prefs
         try:
-            from gui.settings import load_settings
+            from gui.settings import display_prefs_from, load_settings
 
-            prefs = load_settings()
-            zoom_bars = int(prefs.get("zoom_bars") or 4)
-            if zoom_bars not in (1, 2, 4, 8, 16):
-                zoom_bars = 4
-            playhead_position = str(prefs.get("playhead_position") or "auto")
+            prefs = display_prefs_from(load_settings())
         except Exception:
-            pass
-        return {
-            "show_phrases": show_phrases,
-            "zoom_bars": zoom_bars,
-            "playhead_position": playhead_position,
-        }
+            from gui.settings import display_prefs_from
+
+            prefs = display_prefs_from(None)
+        prefs["show_phrases"] = bool(getattr(self, "show_phrases", prefs.get("show_phrases", True)))
+        return prefs
 
     def paint_state(self) -> dict:
         """Lightweight playhead snapshot for high-rate SSE / paint clients."""
@@ -989,12 +1037,17 @@ class Monitor:
         self.audience = tracker
         tracker.observe(decks)
         audience_deck = merge_live_deck(tracker.pick(decks), decks)
-        return {
+        payload = {
             "t": time.time(),
             "paint": True,
             "decks": decks,
             "audience_deck": audience_deck,
         }
+        if self._display_prefs().get("spectrum_source") == "loopback":
+            bins = self.loopback.snapshot()
+            if bins:
+                payload["spectrum"] = [round(v, 4) for v in bins]
+        return payload
 
     def state(self, *, notify_wnp: bool = True) -> dict:
         decks = []
@@ -1107,6 +1160,10 @@ class Monitor:
             "paint": False,
             "decks": decks,
             "display": self._display_prefs(),
+            "spectrum": (
+                [round(v, 4) for v in (self.loopback.snapshot() or [])]
+                if self._display_prefs().get("spectrum_source") == "loopback" else None
+            ),
             "devices": devices,
             "packets": self.engine.packets,
             "mode": getattr(self.engine.source, "description", ""),
@@ -1237,7 +1294,8 @@ class Handler(BaseHTTPRequestHandler):
 
     TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
              ".js": "text/javascript; charset=utf-8", ".png": "image/png",
-             ".jpg": "image/jpeg", ".svg": "image/svg+xml", ".woff2": "font/woff2"}
+             ".jpg": "image/jpeg", ".svg": "image/svg+xml", ".woff2": "font/woff2",
+             ".webmanifest": "application/manifest+json"}
 
     def log_message(self, fmt, *args):    # keep the console quiet
         pass
@@ -1350,10 +1408,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, data, "application/octet-stream", "no-store")
             if path.startswith("/api/artwork/"):
                 track_id, deck, want_key = self._parse_track_request(parsed)
+                from urllib.parse import parse_qs
+                size = (parse_qs(parsed.query).get("size") or ["large"])[0]
                 meta = self.monitor.meta(track_id, deck=deck, load=False)
                 if want_key and (not meta or meta.get("track_key") != want_key):
                     return self._json({"error": "no_artwork"}, 404)
-                art = self.monitor.artwork(track_id, deck=deck)
+                art = self.monitor.artwork(track_id, deck=deck, size=size)
                 if not art:
                     return self._json({"error": "no_artwork"}, 404)
                 return self._send(200, art, "image/jpeg", "no-store")
@@ -1581,7 +1641,7 @@ def main() -> int:
     try:
         from gui.settings import load_settings
 
-        monitor.show_phrases = bool(load_settings().get("show_phrases", True))
+        monitor.configure_display(load_settings())
     except Exception:
         pass
     Handler.monitor = monitor
@@ -1628,7 +1688,9 @@ def main() -> int:
                   "    (rekordbox) is linked to the player.")
 
     if not args.no_open:
-        threading.Timer(0.5, lambda: webbrowser.open(url)).start()
+        from prolink.panel_launch import open_monitor_panel
+
+        threading.Timer(0.5, lambda: open_monitor_panel(url)).start()
 
     try:
         server.serve_forever()
