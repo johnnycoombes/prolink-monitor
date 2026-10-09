@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
+from gui.deck_layout import CARD_GAP, PAGE_MARGINS, DECK_ORDER as DECK_LAYOUT
 from gui.health_timing import LinkHealthPanel
 from gui.overlay_now import migrate_now_pos_for_style, normalize_now_pos, normalize_now_style
 from gui.theme import COLORS
@@ -23,12 +24,6 @@ from gui.settings import deck_elements_from
 from prolink.link import wrap_loop_position
 from prolink.proto import normalize_playhead_mode
 from prolink.session import ZOOM_BARS, DEFAULT_ZOOM_BARS
-
-# Visual stack order for Monitor cards (Pioneer-style 4-deck layout).
-DECK_LAYOUT = {
-    2: (1, 2),
-    4: (3, 1, 2, 4),
-}
 
 
 def extrapolate_playhead(pos_ms: float, *, playing: bool, speed: float, dt: float,
@@ -137,7 +132,7 @@ class MonitorPage(Page):
         self._last_state: dict[str, Any] | None = None
         self._received_at = 0.0
 
-        self.layout_root.setContentsMargins(20, 14, 20, 12)
+        self.layout_root.setContentsMargins(*PAGE_MARGINS)
         self.layout_root.setSpacing(10)
 
         tools = QHBoxLayout()
@@ -226,7 +221,7 @@ class MonitorPage(Page):
         self.decks_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.decks_layout = QVBoxLayout(self.decks_host)
         self.decks_layout.setContentsMargins(0, 0, 0, 0)
-        self.decks_layout.setSpacing(8)
+        self.decks_layout.setSpacing(CARD_GAP)
         self.scroll.setWidget(self.decks_host)
         self.layout_root.addWidget(self.scroll, 1)
         self.scroll.viewport().installEventFilter(self)
