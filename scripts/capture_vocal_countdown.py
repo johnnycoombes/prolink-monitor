@@ -105,13 +105,14 @@ class _Backend:
         return self.wave
 
 
-def _state() -> dict:
+def _state(position_ms: float = 48000, playing: bool = True) -> dict:
     return {
         "decks": [
             {
-                "number": 1, "track_id": 1, "playing": True, "on_air": True,
-                "bpm": 126, "track_bpm": 126, "pitch": 1.25, "speed": 1.0,
-                "position_ms": 48000, "duration_ms": 240000, "state": "playing",
+                "number": 1, "track_id": 1, "playing": playing, "on_air": True,
+                "bpm": 126, "track_bpm": 126, "pitch": 1.25, "speed": 1.0 if playing else 0.0,
+                "position_ms": position_ms, "duration_ms": 240000,
+                "state": "playing" if playing else "cued",
                 "master": True, "sync": False, "name": "XDJ-AZ",
                 "beat": 1, "bar": 1, "waveform_position": "left",
             },
@@ -127,7 +128,8 @@ def _state() -> dict:
     }
 
 
-def _grab_monitor(app: QApplication, vocals: bool, path: str) -> None:
+def _grab_monitor(app: QApplication, vocals: bool, path: str,
+                  position_ms: float = 48000, playing: bool = False) -> None:
     page = MonitorPage(I18n(), _Backend())
     page.setStyleSheet(STYLESHEET)
     page.resize(W, H)
@@ -144,10 +146,10 @@ def _grab_monitor(app: QApplication, vocals: bool, path: str) -> None:
     })
     for _ in range(6):
         app.processEvents()
-    page.update_state(_state())
+    page.update_state(_state(position_ms, playing))
     for _ in range(10):
         app.processEvents()
-    page.update_state(_state())
+    page.update_state(_state(position_ms, playing))
     for _ in range(6):
         app.processEvents()
     pix = page.grab()
@@ -172,24 +174,57 @@ def _chrome(url: str, path: str, width: int, height: int) -> None:
         raise SystemExit(f"chrome grab failed: {url}")
 
 
+def _side_by_side(left: str, right: str, out: str, left_label: str, right_label: str) -> None:
+    a = QImage(left)
+    b = QImage(right)
+    gap = 16
+    label_h = 32
+    canvas = QImage(a.width() + gap + b.width(), label_h + max(a.height(), b.height()), QImage.Format_RGB32)
+    canvas.fill(QColor("#07080a"))
+    p = QPainter(canvas)
+    p.setPen(QColor("#e8eaf0"))
+    p.drawText(12, 22, left_label)
+    p.drawText(a.width() + gap + 12, 22, right_label)
+    p.drawImage(0, label_h, a)
+    p.drawImage(a.width() + gap, label_h, b)
+    p.end()
+    canvas.save(out)
+    print(out)
+
+
 def main() -> int:
     os.makedirs(OUT, exist_ok=True)
     app = QApplication(sys.argv)
     app.setStyleSheet(STYLESHEET)
-    _grab_monitor(app, True, os.path.join(OUT, "monitor_vocal_lane_on.png"))
-    _grab_monitor(app, False, os.path.join(OUT, "monitor_vocal_lane_off.png"))
+    mon_on = os.path.join(OUT, "monitor_vocal_lane_on.png")
+    mon_off = os.path.join(OUT, "monitor_vocal_lane_off.png")
+    # Drop is at 54s. 48s is about six seconds out (amber). 52s is about two (red).
+    _grab_monitor(app, True, mon_on, position_ms=48000)
+    _grab_monitor(app, False, mon_off, position_ms=48000)
+    mon_amber = os.path.join(OUT, "monitor_countdown_amber.png")
+    mon_red = os.path.join(OUT, "monitor_countdown_red.png")
+    _grab_monitor(app, True, mon_amber, position_ms=48000)
+    _grab_monitor(app, True, mon_red, position_ms=52000)
+    web_on = os.path.join(OUT, "vocal_lane_on.png")
+    web_off = os.path.join(OUT, "vocal_lane_off.png")
+    _chrome(f"file://{ROOT}/web/index.html?mock=1&decks=2", web_on, W, H)
+    _chrome(f"file://{ROOT}/web/index.html?mock=1&decks=2&vocals=0", web_off, W, H)
+    ov_amber = os.path.join(OUT, "overlay_countdown_amber.png")
+    ov_red = os.path.join(OUT, "overlay_countdown_red.png")
     _chrome(
-        f"file://{ROOT}/web/index.html?mock=1&decks=2",
-        os.path.join(OUT, "vocal_lane_on.png"), W, H,
+        f"file://{ROOT}/web/overlay.html?mock=1&style=panel&pos=14000",
+        ov_amber, 1280, 720,
     )
     _chrome(
-        f"file://{ROOT}/web/index.html?mock=1&decks=2&vocals=0",
-        os.path.join(OUT, "vocal_lane_off.png"), W, H,
+        f"file://{ROOT}/web/overlay.html?mock=1&style=panel&pos=18500",
+        ov_red, 1280, 720,
     )
-    _chrome(
-        f"file://{ROOT}/web/overlay.html?mock=1&style=panel&spread=1",
-        os.path.join(OUT, "overlay_countdown.png"), 1280, 720,
-    )
+    _side_by_side(mon_off, mon_on, os.path.join(OUT, "vocal_lane_before_after.png"),
+                  "Vocal lane off", "Vocal lane on")
+    _side_by_side(mon_amber, mon_red, os.path.join(OUT, "monitor_countdown_amber_red.png"),
+                  "NEXT countdown, amber", "NEXT countdown, red")
+    _side_by_side(ov_amber, ov_red, os.path.join(OUT, "overlay_countdown_amber_red.png"),
+                  "Overlay NEXT, amber", "Overlay NEXT, red")
     print("wrote vocal and countdown screenshots")
     return 0
 

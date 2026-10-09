@@ -1683,13 +1683,13 @@ function enableMockPreview() {
   tracks.set('id:1', {
     meta: {
       id: 1,
-      title: 'Example Track',
+      title: 'Night Drive',
       artist: 'Demo Artist',
       key: '8A',
       duration_ms: 300000,
       has_artwork: true,
       phrases: [{beat: 1, text: 'Intro'}, {beat: 33, text: 'Drop'}],
-      cues: [{t: 14000, type: 'cue', hot: 1, text: 'Drop'}],
+      cues: [{t: 20000, type: 'cue', hot: 2, text: 'Drop'}],
       vocals: [{t: 8000, end: 48000}, {t: 90000, end: 140000}],
       beats: [[0, 1], [468, 2], [937, 3], [1406, 4], [15468, 33]],
     },
@@ -1697,17 +1697,21 @@ function enableMockPreview() {
     overview: ov,
     track_id: 1,
   });
+  const held = params.get('pos');
+  const position = held ? +held : 14000;
   applyState({
     decks: [{
       number: 1,
       track_id: 1,
-      playing: true,
+      playing: !held,
       bpm: 128,
       track_bpm: 128,
-      position_ms: 8087,
+      speed: held ? 0 : 1,
+      position_ms: position,
       duration_ms: 300000,
       name: 'XDJ-AZ',
       master: true,
+      on_air: true,
     }],
     display: {
       show_phrases: true, show_vocals: params.get('vocals') !== '0',
