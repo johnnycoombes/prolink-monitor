@@ -26,15 +26,15 @@ def pytest_pycollect_makeitem(collector, name, obj):
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """Leave before Qt's atexit handler on GitHub-hosted Ubuntu.
+    """Leave before Qt's atexit handler on GitHub-hosted runners.
 
-    The suite itself finishes cleanly. ``setup-python`` still points
-    ``LD_LIBRARY_PATH`` at its own ``lib/``, and Qt then dies with SIGBUS
-    (exit 135) while destroying a QObject, which fails the job after
+    The suite itself finishes cleanly, then Qt crashes while shutting down.
+    Ubuntu reports that as SIGBUS (exit 135). Windows Git bash turns the
+    same teardown crash into exit 127. Either one fails the job after
     "passed". This runs only when every test passed, so a real failure
     still exits through pytest.
     """
-    if os.environ.get("CI") != "true" or os.environ.get("RUNNER_OS") != "Linux":
+    if os.environ.get("CI") != "true":
         return
     if exitstatus != 0:
         return
