@@ -59,6 +59,11 @@ class Analysis:
     color_detail: bytes = b""     # PWV5  2 bytes per column
     band3_preview: bytes = b""    # PWV6  3 bytes per column
     band3_detail: bytes = b""     # PWV7  3 bytes per column
+    # PWVC thresholds. The lane is computed from these plus the 3-band columns.
+    vocal_low: int = 0
+    vocal_mid: int = 0
+    vocal_high: int = 0
+    has_vocals: bool = False
 
     @property
     def duration_ms(self) -> int:
@@ -71,7 +76,7 @@ def _u4(b: bytes, off: int) -> int:
 
 _TAG_MAGICS = (
     b"PQTZ", b"PCOB", b"PCO2", b"PSSI", b"PWAV", b"PWV2",
-    b"PWV3", b"PWV4", b"PWV5", b"PWV6", b"PWV7",
+    b"PWV3", b"PWV4", b"PWV5", b"PWV6", b"PWV7", b"PWVC",
 )
 
 
@@ -158,6 +163,15 @@ def _section(a: Analysis, fourcc: bytes, body: bytes, tag_header: int) -> None:
     elif fourcc == b"PWV7":
         entry, count = struct.unpack_from(">II", body, 0)
         a.band3_detail = body[12:12 + count * entry]
+    elif fourcc == b"PWVC":
+        from .vocal import thresholds_from_body
+
+        thresholds = thresholds_from_body(body)
+        if thresholds is not None:
+            a.vocal_low = thresholds.low
+            a.vocal_mid = thresholds.mid
+            a.vocal_high = thresholds.high
+            a.has_vocals = True
 
     elif fourcc == b"PCOB":
         _cues_basic(a, body)
@@ -394,6 +408,26 @@ def decode_blue_colors(data: bytes) -> tuple[bytearray, bytearray]:
         color = BLUE_COLOR_MAP[(b >> 5) & 0x07]
         rgb[i * 3:i * 3 + 3] = bytes(color)
     return heights, rgb
+
+
+def vocal_spans(analysis: Analysis, duration_ms: float | None = None) -> list[dict]:
+    """Vocal regions for the strip. Prefers the whole-track PWV6 preview.
+
+    The detection rule is adapted from chrisle/alphatheta-connect (MIT):
+    a column is vocal when mid is above its threshold and low and high stay
+    under theirs. Byte order is ours (mid, high, low).
+    """
+    from .vocal import VocalThresholds, vocal_regions
+
+    if not analysis.has_vocals:
+        return []
+    band = analysis.band3_preview or analysis.band3_detail
+    dur = analysis.duration_ms if duration_ms is None else duration_ms
+    return vocal_regions(
+        band,
+        VocalThresholds(analysis.vocal_low, analysis.vocal_mid, analysis.vocal_high),
+        float(dur or 0),
+    )
 
 
 def decode_3band_heights(data: bytes) -> tuple[bytearray, bytearray, bytearray]:

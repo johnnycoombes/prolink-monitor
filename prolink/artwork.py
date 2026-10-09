@@ -7,6 +7,7 @@ import os
 from typing import Any, Callable
 
 from . import embedded_art
+from .art_header import cover_from_ranges
 from . import remotedb as wire
 from .artwork_util import (
     highres_nfs_art_path,
@@ -181,24 +182,45 @@ def _resolve_large(
         if data and looks_like_image(data):
             return normalize_artwork_jpeg(data), "thumbnail"
 
-    # 7) Embedded cover from the audio file, last, and only the file head.
-    # The player and USB stay read-only; this is a capped NFS read.
+    # 7) Embedded cover from the audio file, last. A real NFS medium reads
+    # only the ID3/FLAC/MP4 header (partial reads). Older callers that only
+    # offer a whole-file fetch still get a capped head, never past the limit.
+    # The player and USB stay read-only.
     if track.file_path:
         remote_audio = track.file_path.lstrip("/").replace("\\", "/")
         try:
-            audio = _fetch_capped(
-                fetch, remote_audio,
-                _cache_name("audiohead", remote_audio, ".bin"),
-                EMBEDDED_READ_LIMIT,
-            )
-            if audio:
-                raw = embedded_art.extract_embedded_cover(audio, hint=remote_audio)
-                if raw and looks_like_image(raw):
-                    return normalize_artwork_jpeg(raw), "embedded"
+            raw = _embedded_over_nfs(media, fetch, remote_audio)
+            if raw and looks_like_image(raw):
+                return normalize_artwork_jpeg(raw), "embedded"
         except Exception as exc:
             _log.debug("nfs embedded art failed %s: %s", remote_audio, exc)
 
     return None, "none"
+
+
+def _has_ranged_read(media: Any) -> bool:
+    """True for Media (and test doubles), false for a Mock that only stubs ``_fetch``."""
+    return callable(getattr(type(media), "read_range", None)) and callable(
+        getattr(type(media), "remote_size", None))
+
+
+def _embedded_over_nfs(media: Any, fetch: Callable, remote: str) -> bytes | None:
+    """Cover bytes from the audio file, without downloading the audio."""
+    if _has_ranged_read(media):
+        try:
+            size = int(media.remote_size(remote) or 0)
+        except Exception:
+            size = 0
+
+        def read(offset: int, length: int) -> bytes | None:
+            return media.read_range(remote, offset, length)
+
+        return cover_from_ranges(read, size, remote)
+    audio = _fetch_capped(
+        fetch, remote, _cache_name("audiohead", remote, ".bin"), EMBEDDED_READ_LIMIT)
+    if not audio:
+        return None
+    return embedded_art.extract_embedded_cover(audio, hint=remote)
 
 
 def _fetch_capped(fetch: Callable, remote: str, cache_name: str, limit: int) -> bytes | None:

@@ -28,6 +28,12 @@ from typing import Callable
 from . import proto
 from .capture import PacketCapture
 from .link_timing import LinkTiming
+from .playhead_smooth import (
+    NOMINAL_INTERVAL_S,
+    correction_ms,
+    freeze_instant,
+    normalize_mode,
+)
 
 Handler = Callable[[bytes, str, float], None]
 
@@ -450,6 +456,8 @@ class Deck:
     _loop_start_ms: float | None = None
     _loop_end_ms: float | None = None
     _loop_from_packet: bool = False
+    # direct | normal | strong. Snaps (seek, pause, reverse, loop wrap) ignore it.
+    smoothing: str = "normal"
 
     def set_beat_grid(self, times: list[int], length_ms: int = 0) -> None:
         self._beat_times = times
@@ -489,6 +497,8 @@ class Deck:
     def on_status(self, s: proto.Status, now: float) -> None:
         prev = self.status
         self.status = s
+        prev_seen = self.last_seen
+        prev_speed = self._model[2]
         self.last_seen = now
         if s.beat_in_bar:
             self.beat_in_bar = s.beat_in_bar
@@ -536,13 +546,16 @@ class Deck:
         # of the loop a little further on every cycle.
         # A beat time of 0 with no grid is "unknown", not the loop start.
         beat_known = bool(self._beat_times or s.bpm)
+        reversed_play = bool(prev_speed and speed and (prev_speed > 0) != (speed > 0))
         if s.play_state == "looping" and error < -LOOP_WRAP_MIN_MS and beat_known:
             self._learn_loop_from_wrap(pos, target)
             self._model = (target, now, speed)
-        elif new_track or not s.speed or abs(error) > JUMP_MS:
+        elif new_track or not s.speed or abs(error) > JUMP_MS or reversed_play:
             self._model = (target, now, speed)          # real jump: re-place it
         else:
-            self._model = (pos + error * SMOOTHING, now, speed)
+            interval = (now - prev_seen) if prev_seen > 0 and now > prev_seen else NOMINAL_INTERVAL_S
+            step = correction_ms(error, speed, self.smoothing, interval)
+            self._model = (pos + step, now, speed)
         if self.position_source == "none":
             self.position_source = "beat_grid"
         self._fold_model()
@@ -690,14 +703,19 @@ class Deck:
 
     @property
     def position_ms(self) -> float:
-        """Estimated playhead position, in milliseconds."""
+        """Estimated playhead position, in milliseconds.
+
+        Between packets the model keeps moving. If packets stop, that coast
+        lasts at most a second and then the playhead holds.
+        """
         s = self.status
+        when = freeze_instant(time.monotonic(), self.last_seen)
         if not s or not s.has_track:
             # Absolute packets can arrive before status on some firmwares.
             if self._exact:
-                return self._bounded(self._project(time.monotonic()))
+                return self._bounded(self._project(when))
             return 0.0
-        return self._bounded(self._project(time.monotonic()))
+        return self._bounded(self._project(when))
 
     @property
     def is_playing(self) -> bool:
@@ -719,6 +737,7 @@ class ProLink:
         # Health diagnostics. Both only look at packets already received.
         self.link_timing = LinkTiming()
         self.capture = PacketCapture()
+        self.playhead_smoothing = "normal"
         self._saw_az = False
         self._az_on_air_at: float | None = None
 
@@ -733,6 +752,7 @@ class ProLink:
         d = self.decks.get(number)
         if d is None:
             d = Deck(number)
+            d.smoothing = normalize_mode(getattr(self, "playhead_smoothing", "normal"))
             self.decks[number] = d
         return d
 

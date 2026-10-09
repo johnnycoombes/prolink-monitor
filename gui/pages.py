@@ -29,16 +29,22 @@ from prolink.session import ZOOM_BARS, DEFAULT_ZOOM_BARS
 def extrapolate_playhead(pos_ms: float, *, playing: bool, speed: float, dt: float,
                          duration_ms: float = 0, looping: bool = False,
                          loop_start_ms: float | None = None,
-                         loop_end_ms: float | None = None) -> float:
+                         loop_end_ms: float | None = None,
+                         packet_age_s: float = 0.0) -> float:
     """Move the playhead between polls, and keep it inside an active loop.
 
     The published position is already the server's estimate. Adding ``dt``
     again bridges the gap until the next poll. Without the wrap, that extra
     time runs past the loop end and the highlight walks away from the needle.
+    Coasting stops once a second has passed since the last packet.
     """
+    from prolink.playhead_smooth import FREEZE_AFTER_S
+
     pos = float(pos_ms or 0)
     if playing:
-        pos += float(dt) * 1000.0 * float(speed if speed else 1.0)
+        room = FREEZE_AFTER_S - max(0.0, float(packet_age_s or 0))
+        step = min(max(0.0, float(dt)), max(0.0, room))
+        pos += step * 1000.0 * float(speed if speed else 1.0)
     pos = wrap_loop_position(pos, looping, loop_start_ms, loop_end_ms)
     if duration_ms:
         pos = min(pos, float(duration_ms))
@@ -231,6 +237,9 @@ class MonitorPage(Page):
         self.set_wave_style("rgb")
         self.set_playhead_mode("auto")
         self._show_phrases = True
+        self._show_vocals = True
+        self._show_next_cue = True
+        self._playhead_smoothing = "normal"
         self._applying_prefs = False
 
     def apply_prefs(self, settings: dict) -> None:
@@ -240,6 +249,9 @@ class MonitorPage(Page):
         self._applying_prefs = True
         try:
             self.set_show_phrases(bool(settings.get("show_phrases", True)))
+            self.set_show_vocals(bool(settings.get("show_vocals", True)))
+            self.set_show_next_cue(bool(settings.get("show_next_cue", True)))
+            self.set_playhead_smoothing(str(settings.get("playhead_smoothing") or "normal"))
             self.set_zoom(int(settings.get("zoom_bars", DEFAULT_ZOOM_BARS)))
             raw = settings.get("zoom_bars_by_deck") or {}
             if isinstance(raw, dict):
@@ -344,6 +356,33 @@ class MonitorPage(Page):
         if changed:
             self._notify_prefs()
 
+    def set_show_vocals(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        changed = getattr(self, "_show_vocals", True) != enabled
+        self._show_vocals = enabled
+        for card in self._cards.values():
+            card.set_show_vocals(enabled)
+        if changed:
+            self._notify_prefs()
+
+    def set_show_next_cue(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        changed = getattr(self, "_show_next_cue", True) != enabled
+        self._show_next_cue = enabled
+        for card in self._cards.values():
+            card.set_show_next_cue(enabled)
+        if changed:
+            self._notify_prefs()
+
+    def set_playhead_smoothing(self, mode: str) -> None:
+        from prolink.playhead_smooth import normalize_mode
+
+        mode = normalize_mode(mode)
+        changed = getattr(self, "_playhead_smoothing", "normal") != mode
+        self._playhead_smoothing = mode
+        if changed:
+            self._notify_prefs()
+
     def set_playhead_mode(self, mode: str) -> None:
         mode = normalize_playhead_mode(mode)
         self._playhead_mode = mode
@@ -363,6 +402,9 @@ class MonitorPage(Page):
             "waveform_style": self._wave_style,
             "playhead_position": self._playhead_mode,
             "show_phrases": bool(getattr(self, "_show_phrases", True)),
+            "show_vocals": bool(getattr(self, "_show_vocals", True)),
+            "show_next_cue": bool(getattr(self, "_show_next_cue", True)),
+            "playhead_smoothing": getattr(self, "_playhead_smoothing", "normal"),
             **self._elements,
         }
 
@@ -461,6 +503,8 @@ class MonitorPage(Page):
                 card.set_wave_style(self._wave_style)
                 card.set_playhead_mode(self._playhead_mode)
                 card.set_show_phrases(bool(getattr(self, "_show_phrases", True)))
+                card.set_show_vocals(bool(getattr(self, "_show_vocals", True)))
+                card.set_show_next_cue(bool(getattr(self, "_show_next_cue", True)))
                 card.apply_elements(self._elements)
                 card.focused.connect(self._on_deck_focus)
                 card.zoom_override_changed.connect(self._on_deck_zoom_override)
@@ -480,6 +524,7 @@ class MonitorPage(Page):
                 looping=(d.get("state") == "looping"),
                 loop_start_ms=d.get("loop_start_ms"),
                 loop_end_ms=d.get("loop_end_ms"),
+                packet_age_s=float(d.get("playhead_age_s") or 0),
             )
 
             tid = d.get("track_id") or 0
@@ -573,6 +618,7 @@ class MonitorPage(Page):
                 looping=(d.get("state") == "looping"),
                 loop_start_ms=d.get("loop_start_ms"),
                 loop_end_ms=d.get("loop_end_ms"),
+                packet_age_s=float(d.get("playhead_age_s") or 0),
             )
             card.advance_playhead(
                 pos,
@@ -746,10 +792,14 @@ class HealthPage(Page):
         self._art_src_val = QLabel("—")
         self._art_src_val.setWordWrap(True)
         self._art_src_val.setStyleSheet("font-family:monospace; font-size:13px;")
+        self._db_val = QLabel("0")
+        self._db_val.setWordWrap(True)
+        self._db_val.setStyleSheet("font-family:monospace; font-size:13px;")
         for col, (title, value) in enumerate((
             (i18n.t("health_onelibrary_status"), self._ol_status_val),
             (i18n.t("health_library_source"), self._lib_src_val),
             (i18n.t("health_artwork_source"), self._art_src_val),
+            (i18n.t("health_dbserver"), self._db_val),
             (i18n.t("health_onelibrary_pyrekordbox"), self._ol_pkg_val),
             (i18n.t("health_onelibrary_path"), self._ol_path_val),
         )):
@@ -865,6 +915,7 @@ class HealthPage(Page):
             self._i18n.t("health_onelibrary_status"),
             self._i18n.t("health_library_source"),
             self._i18n.t("health_artwork_source"),
+            self._i18n.t("health_dbserver"),
             self._i18n.t("health_onelibrary_pyrekordbox"),
             self._i18n.t("health_onelibrary_path"),
         )
@@ -1000,6 +1051,13 @@ class HealthPage(Page):
             self._art_src_val.setText("\n".join(parts))
         else:
             self._art_src_val.setText(last_art if last_art != "none" else "—")
+        db = state.get("dbserver") or {}
+        try:
+            reconnects = int(db.get("reconnects") or 0)
+        except (TypeError, ValueError):
+            reconnects = 0
+        err = str(db.get("last_error") or "").strip()
+        self._db_val.setText(f"{reconnects:,}" + (f"\n{err}" if err else ""))
         if ol.get("present"):
             if ol.get("readable"):
                 status = ol.get("detail") or "readable"
@@ -2039,6 +2097,15 @@ class SettingsPage(Page):
         self.playhead.setToolTip(i18n.t("playhead_tip"))
         self.show_phrases = QCheckBox(i18n.t("show_phrases"))
         self.show_phrases.setToolTip(i18n.t("show_phrases_tip"))
+        self.show_vocals = QCheckBox(i18n.t("show_vocals"))
+        self.show_vocals.setToolTip(i18n.t("show_vocals_tip"))
+        self.show_next_cue = QCheckBox(i18n.t("show_next_cue"))
+        self.show_next_cue.setToolTip(i18n.t("show_next_cue_tip"))
+        self.smoothing = QComboBox()
+        self.smoothing.addItem(i18n.t("smoothing_direct"), "direct")
+        self.smoothing.addItem(i18n.t("smoothing_normal"), "normal")
+        self.smoothing.addItem(i18n.t("smoothing_strong"), "strong")
+        self.smoothing.setToolTip(i18n.t("playhead_smoothing_tip"))
         self.show_empty = QCheckBox(i18n.t("show_empty"))
         self.poll_hz = QSpinBox()
         self.poll_hz.setRange(5, 60)
@@ -2047,6 +2114,9 @@ class SettingsPage(Page):
         disp.addRow(i18n.t("wave"), self.wave_style)
         disp.addRow(i18n.t("playhead"), self.playhead)
         disp.addRow("", self.show_phrases)
+        disp.addRow("", self.show_vocals)
+        disp.addRow("", self.show_next_cue)
+        disp.addRow(i18n.t("playhead_smoothing"), self.smoothing)
         disp.addRow(i18n.t("poll_hz"), self.poll_hz)
         disp.addRow("", self.show_empty)
 
@@ -2213,6 +2283,9 @@ class SettingsPage(Page):
             "host": conn.labelForField(self.host),
         }
         self.show_phrases.toggled.connect(self._emit_display_live)
+        self.show_vocals.toggled.connect(self._emit_display_live)
+        self.show_next_cue.toggled.connect(self._emit_display_live)
+        self.smoothing.currentIndexChanged.connect(self._emit_display_live)
         self.overlay_show_spectrum.toggled.connect(self._emit_display_live)
 
     def _emit_display_live(self, *_args) -> None:
@@ -2221,6 +2294,9 @@ class SettingsPage(Page):
             return
         self.display_live.emit({
             "show_phrases": self.show_phrases.isChecked(),
+            "show_vocals": self.show_vocals.isChecked(),
+            "show_next_cue": self.show_next_cue.isChecked(),
+            "playhead_smoothing": self.smoothing.currentData() or "normal",
             "overlay_show_spectrum": self.overlay_show_spectrum.isChecked(),
         })
 
@@ -2269,6 +2345,16 @@ class SettingsPage(Page):
         self.show_phrases.blockSignals(True)
         self.show_phrases.setChecked(bool(data.get("show_phrases", True)))
         self.show_phrases.blockSignals(False)
+        self.show_vocals.blockSignals(True)
+        self.show_vocals.setChecked(bool(data.get("show_vocals", True)))
+        self.show_vocals.blockSignals(False)
+        self.show_next_cue.blockSignals(True)
+        self.show_next_cue.setChecked(bool(data.get("show_next_cue", True)))
+        self.show_next_cue.blockSignals(False)
+        self.smoothing.blockSignals(True)
+        smooth_idx = self.smoothing.findData(str(data.get("playhead_smoothing") or "normal"))
+        self.smoothing.setCurrentIndex(max(0, smooth_idx))
+        self.smoothing.blockSignals(False)
         self.overlay_show_spectrum.blockSignals(True)
         self.overlay_show_spectrum.setChecked(bool(data.get("overlay_show_spectrum", True)))
         self.overlay_show_spectrum.blockSignals(False)
@@ -2330,6 +2416,9 @@ class SettingsPage(Page):
             "waveform_style": self.wave_style.currentData(),
             "playhead_position": self.playhead.currentData(),
             "show_phrases": self.show_phrases.isChecked(),
+            "show_vocals": self.show_vocals.isChecked(),
+            "show_next_cue": self.show_next_cue.isChecked(),
+            "playhead_smoothing": self.smoothing.currentData() or "normal",
             "show_empty_decks": self.show_empty.isChecked(),
             "poll_hz": self.poll_hz.value(),
             "overlay_layout": self.overlay_layout.currentData(),

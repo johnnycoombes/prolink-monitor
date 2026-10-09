@@ -357,10 +357,17 @@ class NfsClient:
     def read(self, fh: bytes, size: int | None = None, chunk: int = 8192) -> bytes:
         if size is None:
             size = self.getattr(fh).size
+        return self.read_at(fh, 0, int(size), chunk=chunk)
+
+    def read_at(self, fh: bytes, offset: int, size: int, chunk: int = 8192) -> bytes:
+        """Read ``size`` bytes starting at ``offset``. Does not read the rest of the file."""
         buf = bytearray()
-        while len(buf) < size:
-            n = min(chunk, size - len(buf))
-            u = self._nfs.call(NFSPROC_READ, fh + struct.pack(">III", len(buf), n, 0))
+        start = max(0, int(offset))
+        want = max(0, int(size))
+        while len(buf) < want:
+            n = min(chunk, want - len(buf))
+            u = self._nfs.call(
+                NFSPROC_READ, fh + struct.pack(">III", start + len(buf), n, 0))
             status = u.uint()
             if status != NFS_OK:
                 raise NfsError(status)

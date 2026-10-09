@@ -176,6 +176,15 @@ body.hide-el-bpm.hide-el-tempo.hide-el-time.hide-el-key.hide-el-state .readouts{
   position:relative;border-bottom:1px solid var(--line);background:#0a0c0f;display:none;
 }
 .phrases.on{display:block}
+.vocals{
+  flex:0 0 8px;height:8px;min-height:8px;
+  position:relative;border-bottom:1px solid var(--line);background:#141018;display:none;
+}
+.vocals.on{display:block}
+.next-cue{
+  font-family:var(--mono);font-size:11px;font-weight:700;color:#e8eaf0;
+  white-space:nowrap;font-variant-numeric:tabular-nums;
+}
 .detail{flex:1;min-height:0;position:relative;background:#080a0c}
 canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .no-wave{
@@ -413,6 +422,8 @@ const decks = new Map();          // number -> deck view
 const tracks = new Map();         // cacheId -> {meta, detail, overview, track_id}
 const pending = new Set();
 let showPhrases = true;
+let showVocals = true;
+let showNextCue = true;
 
 function deckCacheId(deck) {
   if (deck && deck.track_key) return String(deck.track_key);
@@ -490,6 +501,17 @@ function setShowPhrases(on) {
   for (const d of decks.values()) {
     d.phrasesWrap.classList.toggle('on', showPhrases);
   }
+}
+
+function setShowVocals(on) {
+  showVocals = !!on;
+  for (const d of decks.values()) {
+    if (d.vocalsWrap) d.vocalsWrap.classList.toggle('on', showVocals);
+  }
+}
+
+function setShowNextCue(on) {
+  showNextCue = !!on;
 }
 
 function setWaveStyle(style) {
@@ -598,6 +620,8 @@ function applyElements(elements) {
 function applyMonitorDisplay(display) {
   const d = display || {};
   if (typeof d.show_phrases === 'boolean') setShowPhrases(d.show_phrases);
+  if (typeof d.show_vocals === 'boolean') setShowVocals(d.show_vocals);
+  if (typeof d.show_next_cue === 'boolean') setShowNextCue(d.show_next_cue);
   if (d.zoom_bars != null) setZoom(+d.zoom_bars);
   if (d.waveform_style) setWaveStyle(d.waveform_style);
   if (d.playhead_position) setPlayheadMode(d.playhead_position);
@@ -774,11 +798,13 @@ function createDeck(n) {
     <div class="wave-col">
       <div class="wave-tools">
         <div class="cue" data-scrub></div>
+        <div class="next-cue" data-next></div>
         <div class="zoom-chip" data-zoom>4b</div>
       </div>
       <div class="canvases">
         <div class="overview"><canvas data-cv-overview></canvas></div>
         <div class="phrases" data-phrases><canvas data-cv-phrases></canvas></div>
+        <div class="vocals" data-vocals><canvas data-cv-vocals></canvas></div>
         <div class="detail"><canvas data-cv-detail></canvas><div class="no-wave" data-nowave></div></div>
       </div>
     </div>
@@ -817,11 +843,14 @@ function createDeck(n) {
     barDots: [...q('[data-bar]').children],
     cvOverview: q('[data-cv-overview]'), cvDetail: q('[data-cv-detail]'),
     phrasesWrap: q('[data-phrases]'), cvPhrases: q('[data-cv-phrases]'),
+    vocalsWrap: q('[data-vocals]'), cvVocals: q('[data-cv-vocals]'),
+    nextCue: q('[data-next]'),
     trackId: 0, trackKey: '', metaKey: '', artKey: '', lastBar: 0
   };
   d.ctxOverview = d.cvOverview.getContext('2d');
   d.ctxDetail = d.cvDetail.getContext('2d');
   d.ctxPhrases = d.cvPhrases.getContext('2d');
+  d.ctxVocals = d.cvVocals.getContext('2d');
   d.scrub = q('[data-scrub]');
   d.cueMs = null;
   d.posMs = 0;
@@ -989,6 +1018,80 @@ function phraseColor(label) {
   if (t.startsWith('up')) return 'rgba(255,190,80,.92)';
   if (t.startsWith('outro')) return 'rgba(160,160,180,.92)';
   return 'rgba(200,200,210,.88)';
+}
+
+function nextMark(pos, meta) {
+  if (!meta) return null;
+  let best = null;
+  for (const cue of (meta.cues || [])) {
+    if (cue.type === 'loop') continue;
+    const t = +(cue.t != null ? cue.t : cue.time);
+    if (!isFinite(t) || t <= pos + 1) continue;
+    const hot = +(cue.hot || cue.hot_cue || 0);
+    const named = String(cue.text || cue.comment || '').trim();
+    const name = named || (hot > 0 ? ('CUE ' + (hot <= 26 ? String.fromCharCode(64 + hot) : hot)) : 'MEMORY');
+    if (!best || t < best.t) best = {name, t, remain: t - pos};
+  }
+  const beats = meta.beats || [];
+  for (const ph of (meta.phrases || [])) {
+    let t = ph.t != null ? +ph.t : NaN;
+    if (!isFinite(t)) {
+      const beat = (ph.beat | 0) - 1;
+      if (beat >= 0 && beat < beats.length) t = +beats[beat][0];
+    }
+    if (!isFinite(t) || t <= pos + 1) continue;
+    const name = String(ph.text || ph.label || 'PHRASE').trim() || 'PHRASE';
+    if (!best || t < best.t) best = {name, t, remain: t - pos};
+  }
+  return best;
+}
+
+function formatNext(mark) {
+  if (!mark) return '';
+  const total = Math.floor(Math.max(0, mark.remain) / 1000);
+  return 'NEXT: ' + mark.name + ' in ' + Math.floor(total / 60) + ':' + String(total % 60).padStart(2, '0');
+}
+
+function nextColor(remain) {
+  if (remain <= 3000) return '#ff3b30';
+  if (remain <= 10000) return '#ff9f45';
+  return '#e8eaf0';
+}
+
+function paintNext(el, pos, meta) {
+  if (!el) return;
+  if (!showNextCue || !meta) { el.textContent = ''; return; }
+  const mark = nextMark(pos, meta);
+  el.textContent = formatNext(mark);
+  el.style.color = mark ? nextColor(mark.remain) : '';
+}
+
+function drawVocals(d, track, pos) {
+  const wrap = d.vocalsWrap;
+  const cv = d.cvVocals;
+  const ctx = d.ctxVocals;
+  if (!wrap || !cv || !ctx) return;
+  const spans = (showVocals && track && track.meta && track.meta.vocals) || [];
+  const on = spans.length > 0;
+  wrap.classList.toggle('on', on);
+  if (!on) { ctx.clearRect(0, 0, cv.width, cv.height); return; }
+  fitCanvas(cv);
+  const r = window.devicePixelRatio || 1;
+  const W = cv.width, H = cv.height;
+  const cssW = Math.max(1, Math.round(cv.clientWidth));
+  ctx.clearRect(0, 0, W, H);
+  const dur = track.meta.duration_ms || (track.overview && track.overview.dur) || 1;
+  ctx.fillStyle = '#f472b6';
+  for (const span of spans) {
+    const x1 = (span.t / dur) * cssW * r;
+    const x2 = (span.end / dur) * cssW * r;
+    ctx.fillRect(x1, r, Math.max(1, x2 - x1), Math.max(1, H - 2 * r));
+  }
+  const px = Math.max(0, Math.min(W, (pos / dur) * W));
+  if (px < W) {
+    ctx.fillStyle = 'rgba(8,10,12,.45)';
+    ctx.fillRect(px, 0, W - px, H);
+  }
 }
 
 function drawPhrases(d, track, pos) {
@@ -1252,7 +1355,10 @@ function render() {
     if (s.track_id && !track) loadTrack(s);
     const dur = durationMs(s, track);
     const looping = s.state === 'looping';
-    let pos = s.position_ms + (s.playing ? dt * 1000 * s.speed : 0);
+    const age = +(s.playhead_age_s || 0);
+    const room = Math.max(0, 1 - Math.max(0, age));
+    const step = s.playing ? Math.min(Math.max(0, dt), room) : 0;
+    let pos = +(s.position_ms || 0) + step * 1000 * (+s.speed || 0);
     pos = wrapLoopPosition(pos, looping, s.loop_start_ms, s.loop_end_ms);
     if (dur) pos = Math.min(pos, dur);
 
@@ -1285,6 +1391,8 @@ function render() {
 
     drawOverview(d, track, pos, looping, s);
     drawPhrases(d, track, pos);
+    drawVocals(d, track, pos);
+    paintNext(d.nextCue, pos, track && track.meta);
     drawDetail(d, track, pos, s.playing, looping, playheadAnchor(s), s);
   }
 }
@@ -1308,6 +1416,12 @@ function applyState(e) {
     receivedAt = performance.now();
     if (e.display && typeof e.display.show_phrases === 'boolean') {
       setShowPhrases(e.display.show_phrases);
+    }
+    if (e.display && typeof e.display.show_vocals === 'boolean') {
+      setShowVocals(e.display.show_vocals);
+    }
+    if (e.display && typeof e.display.show_next_cue === 'boolean') {
+      setShowNextCue(e.display.show_next_cue);
     }
     return;
   }
@@ -1458,6 +1572,7 @@ function enablePanelMock() {
         duration_ms: 240000, has_artwork: true, mock_art: art.toDataURL('image/png'),
         cues: [{t: 30000, type: 'cue', hot: 1, color: [255, 212, 94]}],
         phrases: [{beat: 1, text: 'Intro'}, {beat: 33, text: 'Drop'}, {beat: 129, text: 'Outro'}],
+        vocals: [{t: 16000, end: 64000}, {t: 96000, end: 140000}],
         beats,
       },
       detail: wave,
@@ -1479,7 +1594,10 @@ function enablePanelMock() {
     mode_kind: 'vcdj',
     mode: 'virtual device',
     display: {
-      show_phrases: true, zoom_bars: 4, playhead_position: 'left',
+      show_phrases: true,
+      show_vocals: params.get('vocals') !== '0',
+      show_next_cue: params.get('next') !== '0',
+      zoom_bars: 4, playhead_position: 'left',
       max_decks: deckCount, waveform_style: 'rgb', show_empty_decks: true,
       elements: {},
     },

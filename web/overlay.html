@@ -249,6 +249,15 @@ body.float-window canvas{-webkit-app-region:no-drag}
   width:100%;height:calc(14px * var(--scale));display:none;border-radius:3px;overflow:hidden;
 }
 .now-panel .panel-phrases.on{display:block}
+.now-panel .panel-vocals{
+  width:100%;height:calc(8px * var(--scale));display:none;border-radius:2px;overflow:hidden;
+  background:#141018;
+}
+.now-panel .panel-vocals.on{display:block}
+.now-panel .next-cue,.now-card .next-cue,.now .next-cue{
+  font-family:var(--mono);font-size:calc(13px * var(--scale));font-weight:700;
+  font-variant-numeric:tabular-nums;
+}
 .now-panel .panel-detail{
   width:100%;height:calc(96px * var(--scale));display:block;border-radius:calc(8px * var(--scale));
   background:rgba(0,0,0,.28);
@@ -319,6 +328,8 @@ body.float-window canvas{-webkit-app-region:no-drag}
   box-sizing:border-box;flex:0 0 auto;
 }
 .wave canvas{display:block;width:100%;height:100%}
+.wave-vocals{width:100%;height:8px;display:none;margin-top:4px;border-radius:2px;background:#141018}
+.wave-vocals.on{display:block}
 
 .dual{
   display:grid;gap:12px;padding:14px;
@@ -483,6 +494,8 @@ const PLAYHEAD_LEFT_FRACTION = 0.25;
 const DEFAULT_BPM = 120;
 const ZOOM_BARS_OPTS = [1, 2, 4, 8, 16];
 let showPhrasesDisplay = true;
+let showVocalsDisplay = true;
+let showNextCueDisplay = true;
 let showSpectrum = true;
 let zoomBarsDisplay = 4;
 let playheadModeDisplay = 'auto';
@@ -789,7 +802,84 @@ function progressPct(pos, dur){
 }
 
 function waveHtml(trackId){
-  return `<div class="wave"><canvas data-wave="${trackId||0}"></canvas></div>`;
+  return `<div class="wave"><canvas data-wave="${trackId||0}"></canvas></div>`
+    + `<canvas class="wave-vocals" data-vocals="${trackId||0}"></canvas>`;
+}
+
+function nextMark(pos, meta) {
+  if (!meta) return null;
+  let best = null;
+  for (const cue of (meta.cues || [])) {
+    if (cue.type === 'loop') continue;
+    const t = +(cue.t != null ? cue.t : cue.time);
+    if (!isFinite(t) || t <= pos + 1) continue;
+    const hot = +(cue.hot || cue.hot_cue || 0);
+    const named = String(cue.text || cue.comment || '').trim();
+    const name = named || (hot > 0 ? ('CUE ' + (hot <= 26 ? String.fromCharCode(64 + hot) : hot)) : 'MEMORY');
+    if (!best || t < best.t) best = {name, t, remain: t - pos};
+  }
+  const beats = meta.beats || [];
+  for (const ph of (meta.phrases || [])) {
+    let t = ph.t != null ? +ph.t : NaN;
+    if (!isFinite(t)) {
+      const beat = (ph.beat | 0) - 1;
+      if (beat >= 0 && beat < beats.length) t = +beats[beat][0];
+    }
+    if (!isFinite(t) || t <= pos + 1) continue;
+    const name = String(ph.text || ph.label || 'PHRASE').trim() || 'PHRASE';
+    if (!best || t < best.t) best = {name, t, remain: t - pos};
+  }
+  return best;
+}
+
+function formatNext(mark) {
+  if (!mark) return '';
+  const total = Math.floor(Math.max(0, mark.remain) / 1000);
+  return 'NEXT: ' + mark.name + ' in ' + Math.floor(total / 60) + ':' + String(total % 60).padStart(2, '0');
+}
+
+function nextColor(remain) {
+  if (remain <= 3000) return '#ff3b30';
+  if (remain <= 10000) return '#ff9f45';
+  return '#e8eaf0';
+}
+
+function nextCueHtml() {
+  return '<div class="next-cue" data-next></div>';
+}
+
+function paintNextEl(el, pos, meta) {
+  if (!el) return;
+  if (!showNextCueDisplay || !meta) { el.textContent = ''; return; }
+  const mark = nextMark(pos, meta);
+  el.textContent = formatNext(mark);
+  el.style.color = mark ? nextColor(mark.remain) : '';
+}
+
+function paintVocalCanvas(cv, pack, pos) {
+  if (!cv) return;
+  const spans = (showVocalsDisplay && pack && pack.meta && pack.meta.vocals) || [];
+  cv.classList.toggle('on', spans.length > 0);
+  if (!spans.length) return;
+  const r = window.devicePixelRatio || 1;
+  const cssW = Math.max(1, Math.round(cv.clientWidth || 800));
+  const cssH = Math.max(1, Math.round(cv.clientHeight || 8));
+  const W = Math.round(cssW * r), H = Math.round(cssH * r);
+  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+  const ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+  const dur = (pack.meta && pack.meta.duration_ms) || 1;
+  ctx.fillStyle = '#f472b6';
+  for (const span of spans) {
+    const x1 = (span.t / dur) * W;
+    const x2 = (span.end / dur) * W;
+    ctx.fillRect(x1, r, Math.max(1, x2 - x1), Math.max(1, H - 2 * r));
+  }
+  const px = Math.max(0, Math.min(W, (pos / dur) * W));
+  if (px < W) {
+    ctx.fillStyle = 'rgba(8,10,12,.45)';
+    ctx.fillRect(px, 0, W - px, H);
+  }
 }
 
 function paintWaveCanvas(cv, pack, pos, color, looping, deck){
@@ -1093,10 +1183,11 @@ function renderNowPanel(deck, pos) {
           <div class="bpm">${deck.bpm ? deck.bpm.toFixed(2) : '—'}<small>BPM</small></div>
           ${key ? `<div class="key">${escapeHtml(key)}</div>` : ''}
           <div class="deck-tag">DECK ${deck.number}</div>
+          ${nextCueHtml()}
         </div>
       </div>
     </div>`;
-  const phrases = '<canvas class="panel-phrases"></canvas>';
+  const phrases = '<canvas class="panel-phrases"></canvas><canvas class="panel-vocals"></canvas>';
   const spectrum = showSpectrum ? '<canvas class="panel-spectrum"></canvas>' : '';
   const detail = '<canvas class="panel-detail"></canvas>';
   // Spectrum sits in the gap the smaller artwork leaves next to the waveform.
@@ -1122,6 +1213,7 @@ function renderNow(deck, pos, compact=false){
           <div class="bpm">${deck.bpm ? deck.bpm.toFixed(2) : '—'}<small>BPM</small></div>
           ${key ? `<div class="key">${escapeHtml(key)}</div>` : ''}
           <div class="time" data-time>${timeHtml(pos, overlayDuration(deck, pack))}</div>
+          ${nextCueHtml()}
         </div>
         ${compact ? waveHtml(deck.track_id) : ''}
         <div class="progress"><i style="width:${progressPct(pos, overlayDuration(deck, pack))}%"></i></div>`;
@@ -1365,6 +1457,8 @@ function paintPanelWaves(deck, pos, playing) {
   try { paintPanelDetail(det, pack, pos, deck, playing, deck.state === 'looping'); }
   catch (_) {}
   try { paintPanelPhrases(ph, pack, pos); } catch (_) {}
+  try { paintVocalCanvas(card.querySelector('.panel-vocals'), pack, pos); } catch (_) {}
+  try { paintNextEl(card.querySelector('[data-next]'), pos, pack && pack.meta); } catch (_) {}
   try { paintSpectrum(spec, pack, pos, deck, playing); } catch (_) {}
 }
 
@@ -1405,7 +1499,10 @@ function paint(){
   const positions = decks.map(d => {
     const pack = trackPack(d);
     const dur = overlayDuration(d, pack);
-    let pos = +(d.position_ms||0) + (d.playing ? dt*1000*(d.speed||1) : 0);
+    const age = +(d.playhead_age_s || 0);
+    const room = Math.max(0, 1 - Math.max(0, age));
+    const step = d.playing ? Math.min(Math.max(0, dt), room) : 0;
+    let pos = +(d.position_ms||0) + step * 1000 * (d.speed || (d.playing ? 1 : 0));
     pos = wrapLoopPosition(pos, d.state === 'looping', d.loop_start_ms, d.loop_end_ms);
     if (dur) pos = Math.min(pos, dur);
     return pos;
@@ -1440,7 +1537,7 @@ function paint(){
     }).join(',');
   }
   const sig = waveSig + '|' + layout + audSig + mixSig + setlistSig + '|' + histSig
-    + `|d${maxDecks}|ns${nowStyle}${nowPos}|zb${zoomBarsDisplay}|ph${playheadModeDisplay}|sp${showPhrasesDisplay}|viz${showSpectrum ? 1 : 0}`;
+    + `|d${maxDecks}|ns${nowStyle}${nowPos}|zb${zoomBarsDisplay}|ph${playheadModeDisplay}|sp${showPhrasesDisplay}|voc${showVocalsDisplay ? 1 : 0}|nx${showNextCueDisplay ? 1 : 0}|viz${showSpectrum ? 1 : 0}`;
   if (layout === 'nowplaying' || layout === 'minimal' || layout === 'setlist') {
     syncNowPlayingCache(decks[0]);
   }
@@ -1475,6 +1572,17 @@ function paint(){
     paintPanelWaves(decks[0], positions[0], decks[0].playing);
   } else if (layout === 'setlist') paintWaves([decks[0]], [positions[0]]);
   else paintWaves(decks, positions);
+  card.querySelectorAll('[data-vocals]').forEach((cv, i) => {
+    const d = decks[i] || decks[0];
+    if (!d) return;
+    try { paintVocalCanvas(cv, trackPack(d), positions[i] ?? positions[0]); } catch (_) {}
+  });
+  card.querySelectorAll('[data-next]').forEach((el, i) => {
+    const d = decks[i] || decks[0];
+    if (!d) return;
+    const pack = trackPack(d);
+    try { paintNextEl(el, positions[i] ?? positions[0], pack && pack.meta); } catch (_) {}
+  });
   card.classList.add('show');
   const pending = (last.mix && last.mix.pending) || last.pending || null;
   renderNextThird(pending);
@@ -1507,6 +1615,12 @@ function applyState(state){
       if (typeof state.display.show_phrases === 'boolean') {
         showPhrasesDisplay = state.display.show_phrases;
       }
+      if (typeof state.display.show_vocals === 'boolean') {
+        showVocalsDisplay = state.display.show_vocals;
+      }
+      if (typeof state.display.show_next_cue === 'boolean') {
+        showNextCueDisplay = state.display.show_next_cue;
+      }
       if (typeof state.display.show_spectrum === 'boolean') {
         showSpectrum = state.display.show_spectrum;
       }
@@ -1524,6 +1638,12 @@ function applyState(state){
   if (state && state.display) {
     if (typeof state.display.show_phrases === 'boolean') {
       showPhrasesDisplay = state.display.show_phrases;
+    }
+    if (typeof state.display.show_vocals === 'boolean') {
+      showVocalsDisplay = state.display.show_vocals;
+    }
+    if (typeof state.display.show_next_cue === 'boolean') {
+      showNextCueDisplay = state.display.show_next_cue;
     }
     if (typeof state.display.show_spectrum === 'boolean') {
       showSpectrum = state.display.show_spectrum;
@@ -1563,31 +1683,41 @@ function enableMockPreview() {
   tracks.set('id:1', {
     meta: {
       id: 1,
-      title: 'Example Track',
+      title: 'Night Drive',
       artist: 'Demo Artist',
       key: '8A',
       duration_ms: 300000,
       has_artwork: true,
       phrases: [{beat: 1, text: 'Intro'}, {beat: 33, text: 'Drop'}],
-      beats: [[0, 1], [468, 2], [937, 3], [1406, 4]],
+      cues: [{t: 20000, type: 'cue', hot: 2, text: 'Drop'}],
+      vocals: [{t: 8000, end: 48000}, {t: 90000, end: 140000}],
+      beats: [[0, 1], [468, 2], [937, 3], [1406, 4], [15468, 33]],
     },
     detail: det,
     overview: ov,
     track_id: 1,
   });
+  const held = params.get('pos');
+  const position = held ? +held : 14000;
   applyState({
     decks: [{
       number: 1,
       track_id: 1,
-      playing: true,
+      playing: !held,
       bpm: 128,
       track_bpm: 128,
-      position_ms: 8087,
+      speed: held ? 0 : 1,
+      position_ms: position,
       duration_ms: 300000,
       name: 'XDJ-AZ',
       master: true,
+      on_air: true,
     }],
-    display: {show_phrases: true, zoom_bars: 4, playhead_position: 'left'},
+    display: {
+      show_phrases: true, show_vocals: params.get('vocals') !== '0',
+      show_next_cue: params.get('next') !== '0',
+      zoom_bars: 4, playhead_position: 'left',
+    },
   });
 }
 

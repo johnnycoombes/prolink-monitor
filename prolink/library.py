@@ -402,6 +402,26 @@ class Media:
                     self._artwork.popitem(last=False)
         return data
 
+    def remote_size(self, remote: str) -> int:
+        """Byte length of a remote file. Does not download it."""
+        try:
+            _fh, attr = self.nfs.resolve(self.root, remote)
+            return int(attr.size)
+        except Exception:
+            return 0
+
+    def read_range(self, remote: str, offset: int, length: int) -> bytes | None:
+        """Read one slice of a remote file. The player and USB stay read-only.
+
+        Used for tag-header artwork so a cover does not pull the whole track.
+        The slice is not written into the disk cache.
+        """
+        try:
+            fh, _attr = self.nfs.resolve(self.root, remote)
+            return self.nfs.read_at(fh, int(offset), int(length))
+        except Exception:
+            return None
+
     # -- helpers ------------------------------------------------------------
     def _fetch(self, remote: str, cache_name: str,
                max_bytes: int | None = None) -> bytes | None:

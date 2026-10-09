@@ -38,6 +38,12 @@ from prolink.capture import idle_capture_status  # noqa: E402
 from prolink.track_key import keys_match, track_cache_key, track_key_token  # noqa: E402
 from prolink.wnp import WnpPublisher  # noqa: E402
 from prolink.loopback_audio import LoopbackCapturer  # noqa: E402
+from prolink.db_recovery import STATS as _DB_STATS  # noqa: E402
+
+
+def _dbserver_health() -> dict:
+    """Reconnects the Health page should show. Reads nothing from the player."""
+    return _DB_STATS.snapshot()
 
 WEB_DIR = os.path.join(bundle_root(), "web")
 
@@ -144,6 +150,8 @@ class Monitor:
         # Latest resolved medium for each deck (see track_cache_key).
         self._deck_keys: dict[int, tuple] = {}
         self.show_phrases = True
+        self.show_vocals = True
+        self.show_next_cue = True
         self.show_spectrum = True
         self._lock = threading.RLock()
         self.mixstatus = MixStatus(MixStatusConfig())
@@ -247,7 +255,17 @@ class Monitor:
 
         self._display = display_prefs_from(prefs)
         self.show_phrases = bool(self._display.get("show_phrases", True))
+        self.show_vocals = bool(self._display.get("show_vocals", True))
+        self.show_next_cue = bool(self._display.get("show_next_cue", True))
         self.show_spectrum = bool(self._display.get("show_spectrum", True))
+        from prolink.playhead_smooth import normalize_mode
+
+        mode = normalize_mode(self._display.get("playhead_smoothing"))
+        engine = getattr(self, "engine", None)
+        if engine is not None:
+            engine.playhead_smoothing = mode
+            for deck in getattr(engine, "decks", {}).values():
+                deck.smoothing = mode
         if self._display.get("spectrum_source") == "loopback":
             self.loopback.start()
         else:
@@ -637,6 +655,7 @@ class Monitor:
                      for c in a.cues],
             "phrases": [{"beat": p.beat, "kind": p.kind, "text": p.label}
                         for p in a.phrases],
+            "vocals": anlz.vocal_spans(a, length),
             "detail_columns": len(heights),
             "overview_columns": len(ov_h),
         }
@@ -1313,6 +1332,18 @@ class Monitor:
         return {"loop_start_ms": None, "loop_end_ms": None}
 
     @staticmethod
+    def _packet_age_s(deck) -> float:
+        """Seconds since the last status or absolute packet. 0 if unknown."""
+        seen = getattr(deck, "last_seen", 0)
+        try:
+            seen_f = float(seen)
+        except (TypeError, ValueError):
+            return 0.0
+        if seen_f <= 0:
+            return 0.0
+        return max(0.0, time.monotonic() - seen_f)
+
+    @staticmethod
     def _waveform_report(status) -> dict:
         """Player-reported waveform settings, or null when absent/unknown.
 
@@ -1366,6 +1397,7 @@ class Monitor:
                 "pitch": round(s.pitch_percent, 2),
                 "speed": round(s.speed, 6),
                 "position_ms": round(d.position_ms, 1),
+                "playhead_age_s": round(self._packet_age_s(d), 3),
                 "duration_ms": self._deck_duration_ms(d),
                 "beat": s.beat_count,
                 "bar": s.beat_in_bar,
@@ -1390,6 +1422,9 @@ class Monitor:
         display = self._display_prefs()
         payload["display"] = {
             "show_phrases": bool(display.get("show_phrases", True)),
+            "show_vocals": bool(display.get("show_vocals", True)),
+            "show_next_cue": bool(display.get("show_next_cue", True)),
+            "playhead_smoothing": display.get("playhead_smoothing") or "normal",
             "show_spectrum": bool(display.get("show_spectrum", True)),
             "spectrum_source": display.get("spectrum_source") or "waveform",
         }
@@ -1422,6 +1457,7 @@ class Monitor:
                 "pitch": round(s.pitch_percent, 2),
                 "speed": round(s.speed, 6),
                 "position_ms": round(d.position_ms, 1),
+                "playhead_age_s": round(self._packet_age_s(d), 3),
                 "duration_ms": self._deck_duration_ms(d),
                 "beat": s.beat_count,
                 "bar": s.beat_in_bar,
@@ -1538,6 +1574,7 @@ class Monitor:
             "onelibrary": onelibrary_info,
             "anlz": anlz_rows,
             "nfs": nfs_health,
+            "dbserver": _dbserver_health(),
             "link_timing": link_timing,
             "capture": capture,
             "mix": mix,
