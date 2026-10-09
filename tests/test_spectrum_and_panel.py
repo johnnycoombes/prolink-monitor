@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import json
 import os
 import shutil
 import subprocess
@@ -189,6 +190,59 @@ class WebPanelSourceTests(unittest.TestCase):
         self.assertIn("requestFullscreen", html)
         self.assertIn("decodeWavePack", html)
         self.assertNotIn("buf[off]", html)
+
+    def test_panel_has_no_library_ui(self):
+        path = os.path.join(ROOT, "web", "index.html")
+        with open(path, encoding="utf-8") as f:
+            html = f.read()
+        self.assertNotIn('id="p-lib"', html)
+        self.assertNotIn("/api/library", html)
+        self.assertNotIn("e.library", html)
+
+    def test_panel_layout_matches_monitor_cards(self):
+        from gui.deck_layout import (
+            ACCENT_PX, ART_PX, ART_RADIUS, BODY_GAP, BODY_MARGINS, BPM_PX,
+            CARD_GAP, CARD_RADIUS, DECK_ORDER, IDENT_COLLAPSED, IDENT_WIDTH,
+            OVERVIEW_FRAC, OVERVIEW_MAX, OVERVIEW_MIN, PAGE_MARGINS, PHASE_H,
+            PHASE_W, PHRASE_H, PITCH_PX, READOUT_PANEL_MAX, READOUT_PANEL_MIN,
+            TIME_PX,
+        )
+
+        path = os.path.join(ROOT, "web", "index.html")
+        with open(path, encoding="utf-8") as f:
+            html = f.read()
+        start = html.find('<script id="monitor-layout"')
+        self.assertGreater(start, 0)
+        blob = html[start:html.find("</script>", start)]
+        data = json.loads(blob[blob.find("{"):blob.rfind("}") + 1])
+        self.assertEqual(data["identWidth"], IDENT_WIDTH)
+        self.assertEqual(data["identCollapsed"], IDENT_COLLAPSED)
+        self.assertEqual(data["readoutMin"], READOUT_PANEL_MIN)
+        self.assertEqual(data["readoutMax"], READOUT_PANEL_MAX)
+        self.assertEqual(data["art"], ART_PX)
+        self.assertEqual(data["artRadius"], ART_RADIUS)
+        self.assertEqual(data["accent"], ACCENT_PX)
+        self.assertEqual(data["cardRadius"], CARD_RADIUS)
+        self.assertEqual(data["cardGap"], CARD_GAP)
+        self.assertEqual(data["pageMargins"], list(PAGE_MARGINS))
+        self.assertEqual(data["bodyMargins"], list(BODY_MARGINS))
+        self.assertEqual(data["bodyGap"], BODY_GAP)
+        self.assertEqual(data["phraseH"], PHRASE_H)
+        self.assertEqual(data["overviewFrac"], OVERVIEW_FRAC)
+        self.assertEqual(data["overviewMin"], OVERVIEW_MIN)
+        self.assertEqual(data["overviewMax"], OVERVIEW_MAX)
+        self.assertEqual(data["bpm"], BPM_PX)
+        self.assertEqual(data["pitch"], PITCH_PX)
+        self.assertEqual(data["time"], TIME_PX)
+        self.assertEqual(data["phaseW"], PHASE_W)
+        self.assertEqual(data["phaseH"], PHASE_H)
+        self.assertEqual(data["order2"], list(DECK_ORDER[2]))
+        self.assertEqual(data["order4"], list(DECK_ORDER[4]))
+        self.assertIn('class="accent"', html)
+        self.assertIn('class="tags" data-tags', html)
+        self.assertNotIn("num-row", html)
+        self.assertIn("applyMonitorLayout", html)
+        self.assertIn("layoutWave", html)
 
     def test_overlay_panel_and_card_art(self):
         path = os.path.join(ROOT, "web", "overlay.html")

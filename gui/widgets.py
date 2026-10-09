@@ -11,16 +11,15 @@ from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
+from gui.deck_layout import (
+    ACCENT_PX, ART_PX, ART_RADIUS, BODY_GAP, BODY_MARGINS, BPM_PX,
+    IDENT_COLLAPSED, IDENT_WIDTH, PHRASE_H, PHASE_H, PHASE_W, PITCH_PX,
+    READOUT_PANEL_MAX, READOUT_PANEL_MIN, TIME_PX, overview_height,
+)
 from gui.theme import COLORS, DECK_COLORS
 from gui.settings import deck_elements_from
 from prolink.proto import playhead_fraction, resolve_playhead_position
 from prolink.session import ZOOM_BARS, bars_to_seconds
-
-# Left identity column: room for artwork + MASTER / SYNC / ON AIR chips.
-IDENT_WIDTH = 300
-# Right readout column: wide enough for "174.00 BPM" at 28px monospace.
-READOUT_PANEL_MIN = 188
-READOUT_PANEL_MAX = 220
 
 
 def mmss(ms: float) -> str:
@@ -600,11 +599,11 @@ class WaveformView(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, False)
         w, h = self.width(), self.height()
-        overview_h = max(28, min(48, int(h * 0.14)))
+        overview_h = overview_height(h)
         self._overview_h = overview_h
         dur = self._duration_ms()
         phrase_segments = _phrase_segments(self._meta, dur) if self._show_phrases else []
-        phrase_h = 16 if phrase_segments else 0
+        phrase_h = PHRASE_H if phrase_segments else 0
         self._phrase_h = phrase_h
         gap = 1
         y_detail = overview_h + gap + phrase_h + (gap if phrase_h else 0)
@@ -907,13 +906,13 @@ class DeckCard(QFrame):
         root.setSpacing(0)
 
         accent = QFrame()
-        accent.setFixedWidth(4)
+        accent.setFixedWidth(ACCENT_PX)
         accent.setStyleSheet(f"background:{self._color}; border:none; border-radius:0;")
         root.addWidget(accent)
 
         body = QHBoxLayout()
-        body.setContentsMargins(12, 10, 12, 10)
-        body.setSpacing(12)
+        body.setContentsMargins(*BODY_MARGINS)
+        body.setSpacing(BODY_GAP)
         root.addLayout(body, 1)
         self._body = body
 
@@ -922,11 +921,11 @@ class DeckCard(QFrame):
         ident.setSpacing(6)
         top = QHBoxLayout()
         self.art = QLabel("♪")
-        self.art.setFixedSize(72, 72)
+        self.art.setFixedSize(ART_PX, ART_PX)
         self.art.setAlignment(Qt.AlignCenter)
         self.art.setStyleSheet(
             f"background:{COLORS['panel_high']}; border:1px solid {COLORS['line']};"
-            f"border-radius:4px; color:{COLORS['dimmest']}; font-size:22px;"
+            f"border-radius:{ART_RADIUS}px; color:{COLORS['dimmest']}; font-size:22px;"
         )
         top.addWidget(self.art)
 
@@ -1001,21 +1000,25 @@ class DeckCard(QFrame):
         self.bpm = QLabel("— BPM")
         self.bpm.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.bpm.setStyleSheet(
-            "font-family:monospace; font-size:28px; font-weight:700;"
+            f"font-family:monospace; font-size:{BPM_PX}px; font-weight:700;"
         )
         self.bpm.setMinimumWidth(READOUT_PANEL_MIN - 8)
         self.pitch = QLabel("")
         self.pitch.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.pitch.setStyleSheet(f"font-family:monospace; font-size:12px; color:{COLORS['dim']};")
+        self.pitch.setStyleSheet(
+            f"font-family:monospace; font-size:{PITCH_PX}px; color:{COLORS['dim']};"
+        )
         self.times_wrap = QWidget()
         times = QHBoxLayout(self.times_wrap)
         times.setContentsMargins(0, 0, 0, 0)
         times.setSpacing(0)
         self.elapsed = QLabel("00:00")
-        self.elapsed.setStyleSheet("font-family:monospace; font-size:15px; font-weight:700;")
+        self.elapsed.setStyleSheet(
+            f"font-family:monospace; font-size:{TIME_PX}px; font-weight:700;"
+        )
         self.remaining = QLabel("-00:00")
         self.remaining.setStyleSheet(
-            f"font-family:monospace; font-size:15px; font-weight:700; color:{COLORS['dim']};"
+            f"font-family:monospace; font-size:{TIME_PX}px; font-weight:700; color:{COLORS['dim']};"
         )
         times.addWidget(self.elapsed)
         times.addSpacing(12)
@@ -1046,7 +1049,7 @@ class DeckCard(QFrame):
         self._phase_dots: list[QFrame] = []
         for _ in range(4):
             dot = QFrame()
-            dot.setFixedSize(12, 4)
+            dot.setFixedSize(PHASE_W, PHASE_H)
             dot.setStyleSheet(
                 f"background:{COLORS['line']}; border:none; border-radius:1px;"
             )
@@ -1105,7 +1108,7 @@ class DeckCard(QFrame):
             or e["deck_show_meta"] or e["deck_show_tags"]
         )
         self.wrap_ident.setVisible(True)  # deck number always present
-        self.wrap_ident.setFixedWidth(IDENT_WIDTH if left_bits else 44)
+        self.wrap_ident.setFixedWidth(IDENT_WIDTH if left_bits else IDENT_COLLAPSED)
 
         right_bits = (
             e["deck_show_bpm"] or e["deck_show_tempo"] or e["deck_show_time"]
@@ -1213,7 +1216,7 @@ class DeckCard(QFrame):
                 self._art_miss_key = token
             return
         pix = QPixmap.fromImage(img).scaled(
-            72, 72, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            ART_PX, ART_PX, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
         self.art.setPixmap(pix)
         self.art.setText("")
         self._art_key = token
@@ -1255,7 +1258,7 @@ class DeckCard(QFrame):
             img = QImage.fromData(art)
             if not img.isNull():
                 pix = QPixmap.fromImage(img).scaled(
-                    72, 72, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                    ART_PX, ART_PX, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
                 self.art.setPixmap(pix)
                 self.art.setText("")
                 self._art_id = (meta or {}).get("id", 0)
@@ -1288,7 +1291,7 @@ class DeckCard(QFrame):
         self.remaining.setText(("-" + mmss(remain)) if dur else "—")
         low = bool(dur and remain < 30000)
         self.remaining.setStyleSheet(
-            "font-family:monospace; font-size:15px; font-weight:700; color:"
+            f"font-family:monospace; font-size:{TIME_PX}px; font-weight:700; color:"
             + (COLORS["danger"] if low else COLORS["dim"]) + ";"
         )
         self._set_phase(bar)
@@ -1414,15 +1417,15 @@ class DeckCard(QFrame):
         self.pitch.setText(f"{sign}{pitch:.2f} %" if tid else "")
         if pitch > 0.01:
             self.pitch.setStyleSheet(
-                f"font-family:monospace; font-size:12px; color:#ff9f45;"
+                f"font-family:monospace; font-size:{PITCH_PX}px; color:#ff9f45;"
             )
         elif pitch < -0.01:
             self.pitch.setStyleSheet(
-                f"font-family:monospace; font-size:12px; color:#5eb0ff;"
+                f"font-family:monospace; font-size:{PITCH_PX}px; color:#5eb0ff;"
             )
         else:
             self.pitch.setStyleSheet(
-                f"font-family:monospace; font-size:12px; color:{COLORS['dim']};"
+                f"font-family:monospace; font-size:{PITCH_PX}px; color:{COLORS['dim']};"
             )
 
         self.state.setText(self._i18n.state(deck.get("state") or "unknown"))
