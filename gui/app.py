@@ -35,6 +35,13 @@ def main() -> int:
 
     window = MainWindow()
     window.show()
+    try:
+        from updater.startup import schedule_update_check
+
+        schedule_update_check(window)
+    except Exception:
+        # A broken update check must not stop the link to the players.
+        pass
     return app.exec()
 
 

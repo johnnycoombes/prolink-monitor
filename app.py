@@ -25,6 +25,7 @@ from urllib.parse import urlparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from prolink import anlz, link, proto                     # noqa: E402
+from prolink.bundle import bundle_root                    # noqa: E402
 from prolink.anlz_resolve import AnlzChoice               # noqa: E402
 from prolink.library import Library, Media                # noqa: E402
 from prolink import onelibrary                            # noqa: E402
@@ -38,7 +39,7 @@ from prolink.track_key import keys_match, track_cache_key, track_key_token  # no
 from prolink.wnp import WnpPublisher  # noqa: E402
 from prolink.loopback_audio import LoopbackCapturer  # noqa: E402
 
-WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+WEB_DIR = os.path.join(bundle_root(), "web")
 
 
 def _az_mode_value(engine) -> str | None:

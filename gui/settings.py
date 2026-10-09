@@ -80,6 +80,7 @@ DEFAULTS: dict[str, Any] = {
     "session_autosave_dir": "",       # empty → ~/.prolink-monitor/sessions
     "minimize_to_tray": True,         # when connected, minimize hides to tray
     "close_to_tray": True,            # when connected, window close hides to tray
+    "check_for_updates": True,        # look for a signed release on startup
     # What's Now Playing remote input. Off until the user opts in.
     "wnp_enabled": False,
     "wnp_host": "localhost",
@@ -322,6 +323,7 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     out["session_autosave_dir"] = str(data.get("session_autosave_dir") or "").strip()
     out["minimize_to_tray"] = bool(data.get("minimize_to_tray", True))
     out["close_to_tray"] = bool(data.get("close_to_tray", True))
+    out["check_for_updates"] = bool(data.get("check_for_updates", True))
     out["local_music_root"] = str(data.get("local_music_root") or "").strip()
     out["wnp_enabled"] = bool(data.get("wnp_enabled", False))
     host, port = normalize_target(data.get("wnp_host", "localhost"), data.get("wnp_port", 8899))

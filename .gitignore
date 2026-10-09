@@ -5,6 +5,17 @@ __pycache__/
 .venv/
 venv/
 
+# PyInstaller
+build/
+dist/
+
+# Signing keys. packaging/tuf/root.json is public and is committed after keygen.
+packaging/tuf/keystore/
+packaging/tuf/initial-repo/
+packaging/tuf/tuf-keys.zip
+packaging/tuf/work/
+.tufup-repo-config
+
 # Caché local de la biblioteca del reproductor (export.pdb, análisis, carátulas)
 .prolink-cache/
 

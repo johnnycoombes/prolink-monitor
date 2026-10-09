@@ -1,0 +1,146 @@
+name: Windows release
+
+on:
+  pull_request:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# A pull request uploads the zip as an Actions artifact so the build can be
+# checked before a tag exists. Pushing a tag vX.Y.Z also creates a GitHub
+# Release. Signed update metadata is published only when the secrets exist.
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Build Windows app
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            packaging/requirements-build.txt
+
+      - name: Version matches the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+          ver="$(python -c 'from prolink import __version__; print(__version__)')"
+          echo "tag=$tag version=$ver"
+          test "$tag" = "$ver"
+
+      - name: Install build tools
+        run: python -m pip install --upgrade pip -r packaging/requirements-build.txt
+
+      - name: PyInstaller
+        run: python -m PyInstaller packaging/prolink_listener.spec --noconfirm --clean
+
+      - name: Check the bundle
+        run: python packaging/verify_bundle.py dist/ProlinkListener
+
+      - name: Zip
+        shell: bash
+        run: |
+          ver="$(python -c 'from prolink import __version__; print(__version__)')"
+          python -c "import shutil, sys; shutil.make_archive(sys.argv[1], 'zip', 'dist', 'ProlinkListener')" \
+            "ProlinkListener-${ver}-win64"
+          ls -lh "ProlinkListener-${ver}-win64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prolink-listener-windows
+          path: ProlinkListener-*-win64.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: GitHub Release
+    needs: build-windows
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: prolink-listener-windows
+          path: release-zip
+
+      - name: Publish the zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ver="$(python -c 'from prolink import __version__; print(__version__)')"
+          tag="v${ver}"
+          zip="$(echo release-zip/ProlinkListener-*-win64.zip)"
+          test -f "$zip"
+          cat > release-notes.md <<EOF
+          Prolink Listener ${ver} for Windows.
+
+          Download ProlinkListener-${ver}-win64.zip, extract it, and run ProlinkListener.exe.
+
+          Settings stay in the .prolink-monitor folder in your user profile. The library cache stays in .prolink-cache.
+
+          The updates release is signed metadata for the in-app updater. Do not install that one by hand.
+          EOF
+          gh release create "$tag" "$zip" \
+            --title "Prolink Listener ${ver}" \
+            --notes-file release-notes.md \
+            --verify-tag
+
+      - name: Sign and publish update metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TUFUP_KEYS_B64: ${{ secrets.TUFUP_KEYS_B64 }}
+          TUFUP_KEY_PASSWORD: ${{ secrets.TUFUP_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ver="$(python -c 'from prolink import __version__; print(__version__)')"
+          python -m pip install --upgrade pip "tufup>=0.10,<0.11" packaging
+          rm -rf release-app
+          python -c "import shutil, sys; shutil.unpack_archive(sys.argv[1], 'release-app')" release-zip/ProlinkListener-*-win64.zip
+          mkdir -p previous-metadata tuf-out
+          require_flag=()
+          if gh release view updates >/dev/null 2>&1; then
+            echo "Downloading previous update metadata"
+            gh release download updates --dir previous-metadata --pattern "*.json" --clobber
+            require_flag=(--require-existing)
+          else
+            echo "No updates release yet. The committed root.json will anchor the first metadata."
+          fi
+          # Missing secrets: the script prints a reason and exits 0.
+          python scripts/publish_tuf_release.py \
+            --bundle release-app/ProlinkListener \
+            --version "$ver" \
+            --metadata-dir previous-metadata \
+            --out tuf-out \
+            "${require_flag[@]}"
+          if ! compgen -G "tuf-out/*" >/dev/null; then
+            echo "No signed metadata was produced. The versioned zip is already on the release."
+            exit 0
+          fi
+          if ! gh release view updates >/dev/null 2>&1; then
+            gh release create updates \
+              --latest=false \
+              --title "Update metadata (do not install this)" \
+              --notes "Signed TUF metadata for the in-app updater. Install Prolink Listener from a versioned release instead (the ProlinkListener-*-win64.zip asset)."
+          fi
+          gh release upload updates tuf-out/* --clobber
