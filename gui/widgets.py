@@ -23,7 +23,6 @@ from gui.settings import deck_elements_from
 from prolink.proto import playhead_fraction, resolve_playhead_position
 from prolink.session import ZOOM_BARS, bars_to_seconds
 
-
 def _draw_vocal_strip(p: QPainter, x: int, y: int, w: int, h: int,
                       spans: list, dur: float, pos_ms: float) -> None:
     """Thin lane of vocal regions. Same idea as the phrase strip, shorter."""

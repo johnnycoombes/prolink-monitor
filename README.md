@@ -159,6 +159,98 @@ are remembered. A **Record session** button captures a chronological playlist wi
 
 ---
 
+## Install on Windows
+
+You do not need Python installed for this path. The zip is the app.
+
+1. Open the [Releases](https://github.com/johnnycoombes/prolink-monitor/releases) page and download `ProlinkListener-<version>-win64.zip` from a versioned release (for example `v1.0.0`). Leave the release named `updates` alone. That one is for the updater, not for installing by hand.
+2. Extract the zip to a folder you will keep, for example `C:\Users\User\Prolink Listener`. Do not run the program from inside the zip.
+3. Open that folder and double-click `ProlinkListener.exe`.
+4. If Windows asks whether the app may use private networks, allow it. That is the same prompt Python used to get, so a phone on the booth Wi-Fi can open the panel.
+5. Your existing settings are still read from `C:\Users\User\.prolink-monitor` (the file is `settings.json`). The USB library cache is still `C:\Users\User\.prolink-cache`. Nothing is copied or reset on first launch.
+
+Npcap is still only needed when rekordbox is open. Virtual device mode (rekordbox closed) does not need it. The first time you use passive capture, point the app at your existing tshark install under Settings if it is not on `PATH`.
+
+Running from a checkout (`python desktop.py`) is unchanged. The zip is an extra way to start the same program.
+
+## Updating
+
+A couple of seconds after the Windows app opens, it looks for a newer signed release. If it finds one, a dialog shows the version you have and the version that is available. Choose **Yes** and the app downloads that build, replaces its own files, closes, and opens again. Choose **No** and it stays on the version you have.
+
+Settings and the library cache are not part of the update. They stay in `.prolink-monitor` and `.prolink-cache`.
+
+To turn the check off, open **Settings → Desktop** and clear **Check for updates when the app starts**, then Save.
+
+The check trusts only updates signed with the key pair that matches `root.json` inside the app ([tufup](https://github.com/dennisvang/tufup), which is The Update Framework). A zip somebody else uploaded is ignored.
+
+If you started the app with `python desktop.py`, it can still tell you that a newer Windows build exists. It will not overwrite your checkout. Say yes on that dialog only if you want the Releases page opened in a browser.
+
+If GitHub cannot be reached, or signing has not been set up yet, the app starts as usual and writes a line to `.prolink-monitor\update.log`.
+
+## For developers: release process
+
+Tests run on every pull request and every push to `main`, on Ubuntu and Windows, with Python 3.12 and 3.14. Python 3.10 is still enough to run from source. 3.14 is in CI because that is the interpreter used on the booth PC, and current PySide6 wheels allow it (3.10 up to, not including, 3.15). PyInstaller 6.16 or newer is what builds that interpreter.
+
+The Windows app is a PyInstaller **folder** build (not a single exe, and not `pyside6-deploy`). Qt WebEngine needs `QtWebEngineProcess.exe` and its resource files sitting next to the Qt libraries. PyInstaller's PySide6 hooks collect those. `pyside6-deploy` often misses them unless Visual Studio's `dumpbin` is installed. A one-file exe is a poor fit for the same reason: WebEngine wants a real executable on disk.
+
+### Cut a release
+
+1. Set `__version__` in `prolink/__init__.py` to the new number, for example `1.1.0`. Merge that to `main`.
+2. Tag that commit and push the tag. The tag is the version with a leading `v`:
+
+   ```bash
+   git tag v1.1.0
+   git push origin v1.1.0
+   ```
+
+3. The **Windows release** workflow builds `ProlinkListener-1.1.0-win64.zip` and attaches it to the GitHub Release for that tag. The tag text after `v` has to match `__version__`, or the build stops.
+4. If the signing secrets below are set, the same workflow also publishes signed update files on a release named `updates`. If they are not set, it prints a note and skips that step. The zip is still published.
+
+Pull requests also run the Windows build and upload the zip as an Actions artifact, so you can see the folder before you tag anything. Install the copy from the GitHub Release, not a pull-request artifact, once signing is turned on.
+
+### Signing keys (once)
+
+Private keys are never committed. GitHub Actions reads them from secrets.
+
+1. On your PC, from the repository root:
+
+   ```bash
+   pip install "tufup>=0.10,<0.11"
+   python scripts/tuf_init_keys.py
+   ```
+
+2. Type a password when asked, and keep it. The script writes:
+   - `packaging/tuf/keystore/` — the private keys. Git ignores this folder.
+   - `packaging/tuf/tuf-keys.zip` — those same keys, for the secret below. Git ignores this file.
+   - `packaging/tuf/root.json` — the public half. Commit this file and push it to `main`. The Windows build copies it into the app so the app knows which keys to trust.
+3. On GitHub: **Settings → Secrets and variables → Actions → New repository secret**.
+   - Name `TUFUP_KEYS_B64`. Value is the base64 of `packaging/tuf/tuf-keys.zip`.
+   - Name `TUFUP_KEY_PASSWORD`. Value is the password from step 2.
+
+   PowerShell, from the repository root:
+
+   ```powershell
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes("packaging\tuf\tuf-keys.zip")) | Set-Clipboard
+   ```
+
+   bash:
+
+   ```bash
+   base64 -w 0 packaging/tuf/tuf-keys.zip
+   ```
+
+4. Tag a release **after** `root.json` is on `main` and both secrets exist. The build has to contain that `root.json`, or the app has nothing to trust.
+
+There are four keys, one for each TUF role: `root`, `targets`, `snapshot`, and `timestamp`. They are encrypted with the password. The workflow decrypts them from `TUFUP_KEY_PASSWORD` and does not prompt (a prompt would hang the job). Metadata is signed again on each tagged release. The signature stays valid for 90 days, so a quiet couple of months does not stop the next update. Root lasts a year.
+
+If `TUFUP_KEYS_B64` or `packaging/tuf/root.json` is missing, the release workflow still uploads the zip and skips the signed metadata. It does not fail the release for that.
+
+Do not regenerate the keys after people are running a build that contains the old `root.json`. Those copies will ignore updates signed by a different key. If the zip or the password leaks, install the next build by hand and treat the old updater as untrusted until you have shipped a new `root.json` inside a build you installed yourself.
+
+The `updates` tag is created by the workflow. It holds `timestamp.json`, `snapshot.json`, `targets.json`, `root.json`, and `prolink-listener-<version>.tar.gz`. Do not install that tar.gz by hand. The zip on the versioned release is the installer.
+
+---
+
 ## Usage
 
 ### Desktop app (PySide6)
@@ -536,6 +628,9 @@ web/index.html      the panel
 web/overlay.html    transparent OBS Browser Source overlay
 doc/                README screenshots
 requirements.txt    desktop dependency (PySide6)
+updater/             signed update check (tufup); does not touch the players
+packaging/           PyInstaller spec and the Windows bundle check
+.github/workflows/   tests, and the Windows build / release
 prolink/
   proto.py          Pro DJ Link packets (keep-alive, beat, status)
   link.py           engine: virtual device, passive capture, deck state

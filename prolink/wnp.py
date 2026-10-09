@@ -21,6 +21,7 @@ process must not block the caller: ``observe`` only queues work.
 
 from __future__ import annotations
 
+import http.client
 import json
 import socket
 import threading
@@ -253,16 +254,41 @@ def _endpoint(cfg: WnpSettings, path: str) -> str:
     return f"http://{cfg.host}:{cfg.port}{path}"
 
 
+def _connection_refused(reason: object, text: str) -> bool:
+    """True when nothing is listening.
+
+    On Windows, ``socket.settimeout`` (which urllib sets) turns a refused
+    connect into ``TimeoutError`` whose ``winerror`` is still 10061 and whose
+    text says the target actively refused it. That has to be checked before
+    the timeout branch, or a closed port is reported as a slow peer.
+    """
+    errno = getattr(reason, "errno", None)
+    winerror = getattr(reason, "winerror", None)
+    return (
+        isinstance(reason, ConnectionRefusedError)
+        or errno in (111, 10061)
+        or winerror == 10061
+        or "refused" in text.lower()
+    )
+
+
 def _explain_transport(reason: object, cfg: WnpSettings) -> str:
     where = f"{cfg.host}:{cfg.port}"
     text = str(reason or "")
-    errno = getattr(reason, "errno", None)
-    if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in text.lower():
-        return f"What's Now Playing at {where} did not answer in time."
-    if isinstance(reason, ConnectionRefusedError) or errno in (111, 10061) or "refused" in text.lower():
+    if _connection_refused(reason, text):
         return f"What's Now Playing is not running at {where}."
     if isinstance(reason, socket.gaierror):
         return f"Could not find What's Now Playing host {cfg.host}."
+    # GitHub-hosted Windows drops a closed port instead of refusing it, so the
+    # connect itself times out. That is still "nothing is listening". A peer
+    # that accepts and then stalls times out later, during the read, and keeps
+    # the slow-peer message.
+    if getattr(reason, "prolink_phase", None) == "connect" and (
+        isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in text.lower()
+    ):
+        return f"What's Now Playing is not running at {where}."
+    if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in text.lower():
+        return f"What's Now Playing at {where} did not answer in time."
     if text:
         return f"Could not reach What's Now Playing at {where}."
     return f"Could not reach What's Now Playing at {where}."
@@ -279,6 +305,30 @@ def _error_text(raw: bytes) -> str:
     if isinstance(parsed, dict) and parsed.get("error"):
         return str(parsed["error"])[:180]
     return text[:180]
+
+
+class _PhaseConnection(http.client.HTTPConnection):
+    """Marks a failure that happens before TCP is up.
+
+    urllib uses one timeout for the connect and the read, and both surface as
+    ``TimeoutError``. The phase lets a dropped connect (Windows CI) say the
+    app is not running, while a read timeout still says the peer did not answer.
+    """
+
+    def connect(self) -> None:
+        try:
+            super().connect()
+        except OSError as exc:
+            exc.prolink_phase = "connect"  # type: ignore[attr-defined]
+            raise
+
+
+class _PhaseHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_PhaseConnection, req)
+
+
+urllib.request.install_opener(urllib.request.build_opener(_PhaseHandler))
 
 
 def _request(cfg: WnpSettings, path: str, payload: dict[str, str] | None, timeout: float) -> tuple[int, bytes]:

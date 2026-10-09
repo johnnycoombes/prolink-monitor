@@ -1,0 +1,5 @@
+# Installed on the Windows release runner. Not required to run from source.
+-r ../requirements.txt
+pyinstaller>=6.16
+tufup>=0.10,<0.11
+packaging>=24
