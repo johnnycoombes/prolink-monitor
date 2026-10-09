@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from unittest import mock
@@ -20,7 +21,7 @@ class ArtPathTests(unittest.TestCase):
     def test_local_map_strips_contents_prefix(self):
         with tempfile.TemporaryDirectory() as tmp:
             mapped = map_player_path_to_local(tmp, "/contents/House/track.mp3")
-            self.assertEqual(mapped, f"{tmp}/House/track.mp3")
+            self.assertEqual(mapped, os.path.join(tmp, "House", "track.mp3"))
 
 
 class FallbackOrderTests(unittest.TestCase):

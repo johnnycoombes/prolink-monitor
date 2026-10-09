@@ -253,14 +253,31 @@ def _endpoint(cfg: WnpSettings, path: str) -> str:
     return f"http://{cfg.host}:{cfg.port}{path}"
 
 
+def _connection_refused(reason: object, text: str) -> bool:
+    """True when nothing is listening.
+
+    On Windows, ``socket.settimeout`` (which urllib sets) turns a refused
+    connect into ``TimeoutError`` whose ``winerror`` is still 10061 and whose
+    text says the target actively refused it. That has to be checked before
+    the timeout branch, or a closed port is reported as a slow peer.
+    """
+    errno = getattr(reason, "errno", None)
+    winerror = getattr(reason, "winerror", None)
+    return (
+        isinstance(reason, ConnectionRefusedError)
+        or errno in (111, 10061)
+        or winerror == 10061
+        or "refused" in text.lower()
+    )
+
+
 def _explain_transport(reason: object, cfg: WnpSettings) -> str:
     where = f"{cfg.host}:{cfg.port}"
     text = str(reason or "")
-    errno = getattr(reason, "errno", None)
+    if _connection_refused(reason, text):
+        return f"What's Now Playing is not running at {where}."
     if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in text.lower():
         return f"What's Now Playing at {where} did not answer in time."
-    if isinstance(reason, ConnectionRefusedError) or errno in (111, 10061) or "refused" in text.lower():
-        return f"What's Now Playing is not running at {where}."
     if isinstance(reason, socket.gaierror):
         return f"Could not find What's Now Playing host {cfg.host}."
     if text:

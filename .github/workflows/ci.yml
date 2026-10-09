@@ -49,6 +49,17 @@ jobs:
           python -m pip install -r requirements.txt pytest "tufup>=0.10,<0.11" packaging
 
       - name: Test
+        shell: bash
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q
+          QTWEBENGINE_DISABLE_SANDBOX: "1"
+          QT_OPENGL: software
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          # setup-python prepends its own lib/ to LD_LIBRARY_PATH. Qt then
+          # loads the wrong libssl and the process bus-errors (exit 135)
+          # after pytest has already passed.
+          if [ "${RUNNER_OS}" = "Linux" ]; then
+            unset LD_LIBRARY_PATH
+          fi
+          python -m pytest -q

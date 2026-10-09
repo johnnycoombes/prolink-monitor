@@ -8,6 +8,8 @@ starts with ``test_``.
 from __future__ import annotations
 
 import inspect
+import os
+import sys
 
 
 def pytest_pycollect_makeitem(collector, name, obj):
@@ -21,3 +23,21 @@ def pytest_pycollect_makeitem(collector, name, obj):
     if getattr(obj, "__module__", None) != owner.__name__:
         return []
     return None
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Leave before Qt's atexit handler on GitHub-hosted Ubuntu.
+
+    The suite itself finishes cleanly. ``setup-python`` still points
+    ``LD_LIBRARY_PATH`` at its own ``lib/``, and Qt then dies with SIGBUS
+    (exit 135) while destroying a QObject, which fails the job after
+    "passed". This runs only when every test passed, so a real failure
+    still exits through pytest.
+    """
+    if os.environ.get("CI") != "true" or os.environ.get("RUNNER_OS") != "Linux":
+        return
+    if exitstatus != 0:
+        return
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
