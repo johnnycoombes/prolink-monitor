@@ -11,6 +11,8 @@ from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
+from prolink.countdown import format_countdown, next_mark, urgency_color
+from prolink.vocal import VOCAL_STRIP_H
 from gui.deck_layout import (
     ACCENT_PX, ART_PX, ART_RADIUS, BODY_GAP, BODY_MARGINS, BPM_PX,
     IDENT_COLLAPSED, IDENT_WIDTH, PHRASE_H, PHASE_H, PHASE_W, PITCH_PX,
@@ -20,6 +22,25 @@ from gui.theme import COLORS, DECK_COLORS
 from gui.settings import deck_elements_from
 from prolink.proto import playhead_fraction, resolve_playhead_position
 from prolink.session import ZOOM_BARS, bars_to_seconds
+
+
+def _draw_vocal_strip(p: QPainter, x: int, y: int, w: int, h: int,
+                      spans: list, dur: float, pos_ms: float) -> None:
+    """Thin lane of vocal regions. Same idea as the phrase strip, shorter."""
+    if dur <= 0:
+        return
+    for span in spans:
+        try:
+            t0 = float(span.get("t") or 0)
+            t1 = float(span.get("end") or t0)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        x0 = int((t0 / dur) * w)
+        x1 = int((t1 / dur) * w)
+        p.fillRect(x + x0, y + 1, max(1, x1 - x0), max(1, h - 2), QColor("#f472b6"))
+    px = max(0, min(w, int((pos_ms / max(1, dur)) * w)))
+    if px < w:
+        p.fillRect(x + px, y, w - px, h, QColor(8, 10, 12, 120))
 
 
 def mmss(ms: float) -> str:
@@ -444,13 +465,22 @@ class WaveformView(QWidget):
         self._hover_ms: float | None = None
         self._overview_h = 36
         self._phrase_h = 0
+        self._vocal_h = 0
         self._show_phrases = True
+        self._show_vocals = True
 
     def set_show_phrases(self, enabled: bool) -> None:
         enabled = bool(enabled)
         if enabled == self._show_phrases:
             return
         self._show_phrases = enabled
+        self.update()
+
+    def set_show_vocals(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if enabled == self._show_vocals:
+            return
+        self._show_vocals = enabled
         self.update()
 
     def _visible_seconds(self) -> float:
@@ -605,18 +635,26 @@ class WaveformView(QWidget):
         phrase_segments = _phrase_segments(self._meta, dur) if self._show_phrases else []
         phrase_h = PHRASE_H if phrase_segments else 0
         self._phrase_h = phrase_h
+        vocals = (self._meta or {}).get("vocals") or []
+        vocal_h = VOCAL_STRIP_H if (self._show_vocals and vocals and dur) else 0
+        self._vocal_h = vocal_h
         gap = 1
-        y_detail = overview_h + gap + phrase_h + (gap if phrase_h else 0)
+        y_after_phrase = overview_h + gap + phrase_h + (gap if phrase_h else 0)
+        y_detail = y_after_phrase + vocal_h + (gap if vocal_h else 0)
         detail_h = max(1, h - y_detail)
 
         p.fillRect(0, 0, w, overview_h, QColor("#0b0d10"))
         if phrase_h:
             p.fillRect(0, overview_h + gap, w, phrase_h, QColor("#0a0c0f"))
+        if vocal_h:
+            p.fillRect(0, y_after_phrase, w, vocal_h, QColor("#141018"))
         p.fillRect(0, y_detail, w, detail_h, QColor("#080a0c"))
         p.setPen(QColor(COLORS["line"]))
         p.drawLine(0, overview_h, w, overview_h)
         if phrase_h:
             p.drawLine(0, overview_h + gap + phrase_h, w, overview_h + gap + phrase_h)
+        if vocal_h:
+            p.drawLine(0, y_after_phrase + vocal_h, w, y_after_phrase + vocal_h)
 
         self._blit_overview(p, 0, 0, w, overview_h)
         if phrase_h:
@@ -624,6 +662,8 @@ class WaveformView(QWidget):
             px = max(0, min(w, int((self._pos_ms / max(1, dur)) * w)))
             if px < w:
                 p.fillRect(px, overview_h + gap, w - px, phrase_h, QColor(8, 10, 12, 120))
+        if vocal_h:
+            _draw_vocal_strip(p, 0, y_after_phrase, w, vocal_h, vocals, dur, self._pos_ms)
         self._blit_detail(p, 0, y_detail, w, detail_h)
 
         # Hover scrub line + time badge.
@@ -977,6 +1017,14 @@ class DeckCard(QFrame):
             f"font-family:monospace; font-size:11px; color:{COLORS['dim']};"
         )
         wave_tools.addWidget(self.cue_readout)
+        self.next_cue = QLabel("")
+        self.next_cue.setObjectName("NextCue")
+        self.next_cue.setStyleSheet(
+            "font-family:monospace; font-size:11px; font-weight:700; color:#e8eaf0;"
+        )
+        self.next_cue.hide()
+        self._show_next_cue = True
+        wave_tools.addWidget(self.next_cue)
         wave_tools.addStretch(1)
         self.zoom_btn = QPushButton(f"{self._zoom_bars}b")
         self.zoom_btn.setObjectName("Chip")
@@ -1094,6 +1142,8 @@ class DeckCard(QFrame):
         self.wave.setVisible(e["deck_show_waveform"])
         self.zoom_btn.setVisible(e["deck_show_waveform"])
         self.cue_readout.setVisible(e["deck_show_waveform"])
+        if not e["deck_show_waveform"]:
+            self.next_cue.hide()
         self.bpm.setVisible(e["deck_show_bpm"])
         self.pitch.setVisible(e["deck_show_tempo"])
         self.times_wrap.setVisible(e["deck_show_time"])
@@ -1174,6 +1224,34 @@ class DeckCard(QFrame):
             return
         self.cue_readout.setText(mmss(ms))
 
+    def _paint_next(self, pos_ms: float) -> None:
+        """NEXT: <name> in m:ss, coloured as the mark gets close. Seek-aware."""
+        label = getattr(self, "next_cue", None)
+        if label is None:
+            return
+        if not getattr(self, "_show_next_cue", True) or not self._meta or not self.wave.isVisible():
+            label.hide()
+            label.setText("")
+            return
+        meta = self._meta or {}
+        mark = next_mark(
+            pos_ms,
+            cues=meta.get("cues"),
+            phrases=meta.get("phrases"),
+            beats=meta.get("beats"),
+        )
+        text = format_countdown(mark)
+        if not text:
+            label.hide()
+            label.setText("")
+            return
+        label.setText(text)
+        label.setStyleSheet(
+            "font-family:monospace; font-size:11px; font-weight:700; color:"
+            + urgency_color(mark["remain_ms"]) + ";"
+        )
+        label.show()
+
     def _on_cue_ms(self, ms: float) -> None:
         self._cue_ms = ms
         self.cue_readout.setText(f"cue {mmss(ms)}")
@@ -1186,6 +1264,13 @@ class DeckCard(QFrame):
 
     def set_show_phrases(self, enabled: bool) -> None:
         self.wave.set_show_phrases(enabled)
+
+    def set_show_vocals(self, enabled: bool) -> None:
+        self.wave.set_show_vocals(enabled)
+
+    def set_show_next_cue(self, enabled: bool) -> None:
+        self._show_next_cue = bool(enabled)
+        self._paint_next(self.wave._pos_ms)
 
     def needs_artwork(self, token: str = "") -> bool:
         """True when this card has no image yet for the loaded track."""
@@ -1247,6 +1332,7 @@ class DeckCard(QFrame):
             self._wave_track_id = (meta or {}).get("id") or self._track_id
             self._wave_track_key = token
         self.wave.set_track(detail, overview, meta)
+        self._paint_next(self.wave._pos_ms)
         if meta:
             self.title.setText(meta.get("title") or "—")
             self.artist.setText(meta.get("artist") or "")
@@ -1296,6 +1382,7 @@ class DeckCard(QFrame):
         )
         self._set_phase(bar)
         self._apply_loop_region(pos_ms, looping)
+        self._paint_next(pos_ms)
         self.wave.set_position(pos_ms, playing)
 
     def _set_phase(self, bar: int) -> None:
@@ -1430,6 +1517,7 @@ class DeckCard(QFrame):
 
         self.state.setText(self._i18n.state(deck.get("state") or "unknown"))
         self._last_deck = deck
+        self._paint_next(pos_ms)
         self._apply_playhead()
         if empty and not self._meta:
             self.title.setText("—")

@@ -8,6 +8,7 @@ from copy import deepcopy
 from typing import Any
 
 from gui.overlay_now import normalize_now_pos, normalize_now_style
+from prolink.playhead_smooth import normalize_mode as _smoothing_mode
 from prolink.proto import normalize_playhead_mode
 from prolink.wnp import normalize_target
 
@@ -28,6 +29,9 @@ DEFAULTS: dict[str, Any] = {
     "zoom_bars_by_deck": {},        # optional per-deck overrides { "1": 8, ... }
     "waveform_style": "rgb",       # rgb | 3band | blue
     "show_phrases": True,          # Rekordbox-style phrase strip under overview
+    "show_vocals": True,           # vocal lane under the phrase strip
+    "show_next_cue": True,         # NEXT cue / phrase countdown
+    "playhead_smoothing": "normal",  # direct | normal | strong
     "playhead_position": "auto",   # auto | centre | left — scrolling needle
     "auto_connect": True,
     "start_web_server": True,
@@ -141,6 +145,9 @@ def display_prefs_from(data: dict[str, Any] | None = None) -> dict[str, Any]:
         audio = True
     return {
         "show_phrases": bool(src.get("show_phrases", True)),
+        "show_vocals": bool(src.get("show_vocals", True)),
+        "show_next_cue": bool(src.get("show_next_cue", True)),
+        "playhead_smoothing": _smoothing_mode(src.get("playhead_smoothing")),
         "show_spectrum": bool(src.get("overlay_show_spectrum", src.get("show_spectrum", True))),
         "zoom_bars": zoom,
         "zoom_bars_by_deck": by_deck,
@@ -250,6 +257,9 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     style = str(data.get("waveform_style") or "rgb").lower()
     out["waveform_style"] = style if style in ("rgb", "3band", "blue") else "rgb"
     out["show_phrases"] = bool(data.get("show_phrases", True))
+    out["show_vocals"] = bool(data.get("show_vocals", True))
+    out["show_next_cue"] = bool(data.get("show_next_cue", True))
+    out["playhead_smoothing"] = _smoothing_mode(data.get("playhead_smoothing"))
     out["playhead_position"] = normalize_playhead_mode(data.get("playhead_position"))
     out["auto_connect"] = bool(data.get("auto_connect", True))
     out["start_web_server"] = bool(data.get("start_web_server", True))

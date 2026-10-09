@@ -1,12 +1,21 @@
-"""High-level read-only dbserver session for library menus (playlists, history, tracks)."""
+"""High-level read-only dbserver session for library menus (playlists, history, tracks).
+
+A dropped socket is retried with backoff. The idea — throw away a dead
+remotedb connection and open a new one, rather than failing until restart —
+follows chrisle/alphatheta-connect (MIT). The retry loop is ours. Nothing
+here writes to the player or to a Rekordbox database.
+"""
 
 from __future__ import annotations
 
 import socket
 import threading
+import time
 from dataclasses import dataclass, field
+from typing import Callable
 
 from . import remotedb as wire
+from .db_recovery import RECONNECT_BACKOFF_S, STATS, backoff_delay, is_connection_drop
 
 DEFAULT_TIMEOUT = 4.0
 
@@ -45,7 +54,9 @@ class RemoteDbBrowser:
     timeout: float = DEFAULT_TIMEOUT
     _sock: socket.socket | None = field(default=None, init=False, repr=False)
     _tx: int = field(default=0, init=False, repr=False)
+    _dead: bool = field(default=False, init=False, repr=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
+    sleeper: Callable[[float], None] = field(default=time.sleep, repr=False)
     last_status: RemoteDbStatus = field(default_factory=RemoteDbStatus, init=False)
 
     def connect(self) -> None:
@@ -83,17 +94,56 @@ class RemoteDbBrowser:
         sock = self._sock
         self._sock = None
         if sock is not None:
-            try:
-                sock.close()
-            except OSError:
-                pass
+            closer = getattr(sock, "close", None)
+            if callable(closer):
+                try:
+                    closer()
+                except OSError:
+                    pass
 
     def __enter__(self) -> RemoteDbBrowser:
-        self.connect()
+        # Opening the session is itself a request: a player that just rebooted
+        # gets the same backoff as a query that dies mid-flight.
+        self.call(lambda: None)
         return self
 
     def __exit__(self, *exc) -> None:
         self.close()
+
+    def call(self, fn: Callable):
+        """Run ``fn``. If the socket drops, wait, handshake again, and retry it.
+
+        A normal reply such as "menu unavailable" is not a drop and is not
+        retried. The in-flight request is the whole ``fn``, so a menu render
+        that dies halfway starts again from the top.
+        """
+        last: BaseException | None = None
+        for attempt in range(1 + len(RECONNECT_BACKOFF_S)):
+            try:
+                if self._sock is None or self._dead:
+                    if attempt:
+                        self.sleeper(backoff_delay(attempt - 1))
+                    self.connect()
+                    if attempt:
+                        STATS.note(str(last) if last else "connection dropped")
+                    self._dead = False
+                return fn()
+            except Exception as exc:
+                if not is_connection_drop(exc):
+                    raise
+                last = exc
+                self._dead = True
+                self.close()
+                self.last_status = RemoteDbStatus(
+                    ok=False,
+                    error=str(exc),
+                    requesting_player=self.requesting_player,
+                    target_player=self.target_player,
+                    slot=self.slot,
+                )
+        if last is not None:
+            raise last
+        raise wire.DbServerError("not connected")
 
     def _next_tx(self) -> int:
         self._tx += 1
@@ -143,12 +193,18 @@ class RemoteDbBrowser:
         return items
 
     def playlist_folder(self, folder_id: int = 0) -> list[dict]:
+        return self.call(lambda: self._playlist_folder(folder_id))
+
+    def _playlist_folder(self, folder_id: int = 0) -> list[dict]:
         """List playlists/folders under *folder_id* (0 = root). folder flag = 1."""
         avail = self._menu_request(wire.TYPE_PLAYLIST, 0, folder_id, 1)
         count = int(avail.args[1]) if len(avail.args) > 1 else 0
         return [wire.menu_item_row(m) for m in self._render_all(count)]
 
     def playlist_tracks(self, playlist_id: int) -> list[dict]:
+        return self.call(lambda: self._playlist_tracks(playlist_id))
+
+    def _playlist_tracks(self, playlist_id: int) -> list[dict]:
         avail = self._menu_request(wire.TYPE_PLAYLIST, 0, playlist_id, 0)
         count = int(avail.args[1]) if len(avail.args) > 1 else 0
         rows = []
@@ -160,12 +216,18 @@ class RemoteDbBrowser:
         return rows
 
     def history_entries(self) -> list[dict]:
+        return self.call(self._history_entries)
+
+    def _history_entries(self) -> list[dict]:
         avail = self._menu_request(wire.TYPE_HISTORY_MENU, 0)
         count = int(avail.args[1]) if len(avail.args) > 1 else 0
         return [wire.menu_item_row(m) for m in self._render_all(count)]
 
     def track_metadata(self, track_id: int, *, track_type: int = wire.TRACK_REKORDBOX) -> dict:
         """Read one track's title, artist, and related fields. Never writes."""
+        return self.call(lambda: self._track_metadata(track_id, track_type=track_type))
+
+    def _track_metadata(self, track_id: int, *, track_type: int = wire.TRACK_REKORDBOX) -> dict:
         if self._sock is None:
             raise wire.DbServerError("not connected")
         if not track_id:
@@ -186,6 +248,9 @@ class RemoteDbBrowser:
 
     def album_art(self, artwork_id: int, *, high_res: bool = True) -> bytes | None:
         """Fetch album art bytes via dbserver (high-res when *high_res* and player supports it)."""
+        return self.call(lambda: self._album_art(artwork_id, high_res=high_res))
+
+    def _album_art(self, artwork_id: int, *, high_res: bool = True) -> bytes | None:
         if self._sock is None:
             raise wire.DbServerError("not connected")
         if not artwork_id:
@@ -219,6 +284,17 @@ class RemoteDbBrowser:
         Used only when no analysis-file path is known. The NFS read of
         ANLZ0000.DAT / .EXT / .2EX is the path that already works.
         """
+        return self.call(
+            lambda: self._analysis_tag(track_id, tag, ext, track_type=track_type))
+
+    def _analysis_tag(
+        self,
+        track_id: int,
+        tag: str,
+        ext: str,
+        *,
+        track_type: int = wire.TRACK_REKORDBOX,
+    ) -> bytes | None:
         if self._sock is None:
             raise wire.DbServerError("not connected")
         if not track_id or not tag or not ext:
@@ -240,6 +316,9 @@ class RemoteDbBrowser:
 
     def track_search_page(self, offset: int = 0, limit: int = 64) -> list[dict]:
         """First page of all tracks (live export.pdb equivalent ordering)."""
+        return self.call(lambda: self._track_search_page(offset, limit))
+
+    def _track_search_page(self, offset: int = 0, limit: int = 64) -> list[dict]:
         avail = self._menu_request(wire.TYPE_TRACK_MENU, 0)
         count = int(avail.args[1]) if len(avail.args) > 1 else 0
         if count <= 0:
