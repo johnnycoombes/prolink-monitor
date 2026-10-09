@@ -204,6 +204,7 @@ STRINGS = {
     "nav_menu": "Navigate",
     "minimize_to_tray": "Minimize to tray while connected",
     "close_to_tray": "Close to tray while connected (Quit from tray menu)",
+    "check_for_updates": "Check for updates when the app starts",
     "tray_show": "Show window",
     "tray_quit": "Quit",
     "tray_tooltip": "Prolink Listener",

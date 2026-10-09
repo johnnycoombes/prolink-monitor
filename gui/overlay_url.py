@@ -7,8 +7,9 @@ from typing import Any
 from urllib.parse import urlencode
 
 from gui.overlay_now import normalize_now_pos, normalize_now_style
+from prolink.bundle import bundle_root
 
-WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web")
+WEB_DIR = os.path.join(bundle_root(), "web")
 
 
 def overlay_asset_version() -> str:

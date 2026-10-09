@@ -14,9 +14,11 @@ from unittest.mock import MagicMock, patch
 from prolink.wnp import (
     AUTH_HEADER,
     WnpPublisher,
+    _explain_transport,
     audience_token,
     build_payload,
     normalize_target,
+    post_metadata,
     settings_from,
     test_connection,
 )
@@ -323,6 +325,44 @@ class MockServerTests(unittest.TestCase):
         self.assertIn("9.9.9-test", empty.detail)
         self.assertIn("secret was not checked", empty.detail)
         self.assertEqual(len(self._posts()), 1)
+
+
+class TransportMessageTests(unittest.TestCase):
+    def _cfg(self):
+        return settings_from({"wnp_host": "127.0.0.1", "wnp_port": 9923})
+
+    def test_refused_connect_is_not_running(self):
+        text = _explain_transport(ConnectionRefusedError(111, "Connection refused"), self._cfg())
+        self.assertIn("not running", text)
+
+    def test_windows_timeout_that_refused_is_not_running(self):
+        # urllib sets a socket timeout. Windows then raises TimeoutError for a
+        # closed port, with winerror 10061 and "actively refused" in the text.
+        reason = TimeoutError("No connection could be made because the target machine actively refused it")
+        reason.winerror = 10061
+        reason.errno = 10061
+        text = _explain_transport(reason, self._cfg())
+        self.assertIn("not running", text)
+        self.assertNotIn("did not answer", text)
+
+    def test_plain_timeout_stays_a_slow_peer(self):
+        text = _explain_transport(TimeoutError("timed out"), self._cfg())
+        self.assertIn("did not answer", text)
+        self.assertNotIn("not running", text)
+
+    def test_connect_timeout_is_not_running(self):
+        calls = {"n": 0}
+
+        def boom(*args, **kwargs):
+            calls["n"] += 1
+            raise TimeoutError("timed out")
+
+        with patch("socket.create_connection", boom):
+            result = post_metadata(self._cfg(), {"title": "Midnight", "artist": "North Sea"})
+        self.assertEqual(calls["n"], 1)
+        self.assertFalse(result.ok)
+        self.assertIn("not running", result.detail)
+        self.assertNotIn("did not answer", result.detail)
 
 
 class DownServerTests(unittest.TestCase):

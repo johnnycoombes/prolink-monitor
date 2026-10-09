@@ -71,7 +71,9 @@ def _repopulate_overlay_now_pos(combo: QComboBox, i18n, style: str, pos=None) ->
 
 def _overlay_asset_version() -> str:
     """Cache-bust OBS browser sources when overlay.html changes."""
-    root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "overlay.html")
+    from prolink.bundle import bundle_root
+
+    root = os.path.join(bundle_root(), "web", "overlay.html")
     try:
         return str(int(os.path.getmtime(root)))
     except OSError:
@@ -2184,8 +2186,10 @@ class SettingsPage(Page):
         desk = section("section_desktop")
         self.minimize_to_tray = QCheckBox(i18n.t("minimize_to_tray"))
         self.close_to_tray = QCheckBox(i18n.t("close_to_tray"))
+        self.check_for_updates = QCheckBox(i18n.t("check_for_updates"))
         desk.addRow(self.minimize_to_tray)
         desk.addRow(self.close_to_tray)
+        desk.addRow(self.check_for_updates)
 
         form_wrap.addStretch(1)
         scroll.setWidget(body)
@@ -2306,6 +2310,7 @@ class SettingsPage(Page):
         self.show_sidebar.setChecked(bool(data.get("sidebar_visible", True)))
         self.minimize_to_tray.setChecked(bool(data.get("minimize_to_tray", True)))
         self.close_to_tray.setChecked(bool(data.get("close_to_tray", True)))
+        self.check_for_updates.setChecked(bool(data.get("check_for_updates", True)))
         self._loading_settings = False
 
     def collect(self) -> dict:
@@ -2350,6 +2355,7 @@ class SettingsPage(Page):
             "sidebar_visible": self.show_sidebar.isChecked(),
             "minimize_to_tray": self.minimize_to_tray.isChecked(),
             "close_to_tray": self.close_to_tray.isChecked(),
+            "check_for_updates": self.check_for_updates.isChecked(),
         }
         for key, cb in self.deck_checks.items():
             data[key] = cb.isChecked()
