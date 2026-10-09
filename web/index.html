@@ -40,21 +40,10 @@ body{
   display:flex;flex-direction:column;      /* deck heights share what is left */
   -webkit-font-smoothing:antialiased;
 }
-/* faint grain over the whole panel */
-body::after{
-  content:'';position:fixed;inset:0;pointer-events:none;z-index:99;opacity:.035;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-body::before{
-  content:'';position:fixed;inset:0;pointer-events:none;z-index:98;
-  background:radial-gradient(ellipse 120% 80% at 50% 0%,transparent 40%,rgba(0,0,0,.55) 100%);
-}
-
-/* ------------------------------------------------------------------- header */
 header{
   display:flex;align-items:center;gap:18px;flex:none;flex-wrap:nowrap;overflow:hidden;
   padding:10px 20px;border-bottom:1px solid var(--line);
-  background:linear-gradient(180deg,var(--panel-high),var(--panel));
+  background:var(--panel);
   position:relative;z-index:2;
 }
 .brand{font-family:var(--mono);font-weight:700;font-size:15px;letter-spacing:.16em;
