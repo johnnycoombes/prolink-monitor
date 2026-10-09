@@ -18,6 +18,7 @@ from prolink.wnp import (
     audience_token,
     build_payload,
     normalize_target,
+    post_metadata,
     settings_from,
     test_connection,
 )
@@ -348,6 +349,20 @@ class TransportMessageTests(unittest.TestCase):
         text = _explain_transport(TimeoutError("timed out"), self._cfg())
         self.assertIn("did not answer", text)
         self.assertNotIn("not running", text)
+
+    def test_connect_timeout_is_not_running(self):
+        calls = {"n": 0}
+
+        def boom(*args, **kwargs):
+            calls["n"] += 1
+            raise TimeoutError("timed out")
+
+        with patch("socket.create_connection", boom):
+            result = post_metadata(self._cfg(), {"title": "Midnight", "artist": "North Sea"})
+        self.assertEqual(calls["n"], 1)
+        self.assertFalse(result.ok)
+        self.assertIn("not running", result.detail)
+        self.assertNotIn("did not answer", result.detail)
 
 
 class DownServerTests(unittest.TestCase):
