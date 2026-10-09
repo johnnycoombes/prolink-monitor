@@ -40,21 +40,10 @@ body{
   display:flex;flex-direction:column;      /* deck heights share what is left */
   -webkit-font-smoothing:antialiased;
 }
-/* faint grain over the whole panel */
-body::after{
-  content:'';position:fixed;inset:0;pointer-events:none;z-index:99;opacity:.035;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-body::before{
-  content:'';position:fixed;inset:0;pointer-events:none;z-index:98;
-  background:radial-gradient(ellipse 120% 80% at 50% 0%,transparent 40%,rgba(0,0,0,.55) 100%);
-}
-
-/* ------------------------------------------------------------------- header */
 header{
   display:flex;align-items:center;gap:18px;flex:none;flex-wrap:nowrap;overflow:hidden;
   padding:10px 20px;border-bottom:1px solid var(--line);
-  background:linear-gradient(180deg,var(--panel-high),var(--panel));
+  background:var(--panel);
   position:relative;z-index:2;
 }
 .brand{font-family:var(--mono);font-weight:700;font-size:15px;letter-spacing:.16em;
@@ -66,7 +55,6 @@ header{
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;
 }
 .pill b{color:var(--text);font-weight:600}
-#p-lib{flex:0 1 auto}
 .right{margin-left:auto;display:flex;gap:9px;align-items:center}
 .switch{display:flex;border:1px solid var(--line);border-radius:2px;overflow:hidden}
 .switch button{
@@ -90,90 +78,105 @@ body.hide-el-title .title{display:none !important}
 body.hide-el-artist .artist{display:none !important}
 body.hide-el-meta .meta{display:none !important}
 body.hide-el-tags .tags{display:none !important}
-body.hide-el-waveform .canvases{display:none !important}
+body.hide-el-waveform .wave-col{display:none !important}
 body.hide-el-bpm .bpm{display:none !important}
 body.hide-el-tempo .pitch{display:none !important}
 body.hide-el-time .times{display:none !important}
 body.hide-el-key .key{display:none !important}
 body.hide-el-state .state{display:none !important}
+body.hide-el-state.hide-el-bpm .bar-dots{display:none !important}
+body.hide-el-key.hide-el-state .state-row{display:none !important}
+body.hide-el-artwork.hide-el-title.hide-el-artist.hide-el-meta.hide-el-tags .identity{
+  width:var(--ident-collapsed);flex-basis:var(--ident-collapsed);
+}
+body.hide-el-bpm.hide-el-tempo.hide-el-time.hide-el-key.hide-el-state .readouts{
+  display:none !important;
+}
 .led{width:6px;height:6px;border-radius:50%;background:var(--dimmest);transition:.3s}
 .led.up{background:var(--d4);box-shadow:0 0 8px var(--d4)}
 .led.down{background:var(--red);box-shadow:0 0 8px var(--red)}
 
 /* -------------------------------------------------------------------- decks */
-#decks{flex:1;min-height:0;display:flex;flex-direction:column;position:relative;z-index:1}
+/* Card chrome follows gui/deck_layout.py (applied as CSS variables). */
+#decks{
+  flex:1;min-height:0;display:flex;flex-direction:column;position:relative;z-index:1;
+  gap:var(--card-gap);padding:var(--page-pad);
+}
 .deck{
-  flex:1;min-height:0;display:grid;
-  grid-template-columns:238px minmax(0,1fr) 214px;
-  border-bottom:1px solid var(--line);
-  background:var(--panel);
-  position:relative;overflow:hidden;
-  transition:background .25s;
+  flex:1 1 0;min-height:0;display:flex;background:var(--panel);
+  border:1px solid var(--line);border-radius:var(--card-radius);
+  overflow:hidden;position:relative;
 }
-.deck:last-child{border-bottom:none}
-.deck::before{                       /* deck colour bar */
-  content:'';position:absolute;left:0;top:0;bottom:0;width:3px;
-  background:var(--c);opacity:.28;transition:opacity .1s,box-shadow .1s;
+.accent{width:var(--accent);flex:none;background:var(--c)}
+.deck-body{
+  flex:1;min-width:0;display:flex;gap:var(--body-gap);padding:var(--body-pad);
 }
-.deck.beat::before{opacity:1;box-shadow:0 0 16px 1px var(--c)}
-.deck.empty{flex:0 0 46px;background:#0a0c0f}
-.deck.empty .identity,.deck.empty .canvases,.deck.empty .readouts{opacity:.3}
-.deck.onair{background:linear-gradient(90deg,rgba(255,59,48,.05),transparent 30%)}
-/* a deck with a track but a closed mixer channel goes dark, so you can tell at
-   a glance which channels are open. The label saying why stays readable. */
+.deck.offair{background:#0a0c0f}
 .deck.offair .canvases{opacity:.34;filter:saturate(.3)}
-.deck.offair .art,.deck.offair .title,.deck.offair .artist,
-.deck.offair .meta,.deck.offair .num{opacity:.45}
-.deck.offair .readouts{opacity:.5}
 
-/* --- left column: identity --- */
-.identity{padding:11px 14px 11px 17px;display:flex;gap:11px;min-width:0;align-items:flex-start}
+/* --- left column: identity (art + title, tags on their own row) --- */
+.identity{
+  width:var(--ident);flex:0 0 var(--ident);min-width:0;
+  display:flex;flex-direction:column;gap:6px;
+}
+.ident-top{display:flex;gap:6px;min-width:0;align-items:flex-start}
 .art{
-  width:62px;height:62px;flex:none;border-radius:3px;background:var(--panel-high);
-  border:1px solid var(--line);object-fit:cover;
+  width:var(--art);height:var(--art);flex:none;border-radius:var(--art-radius);
+  background:var(--panel-high);border:1px solid var(--line);object-fit:cover;
 }
 .art.blank{display:flex;align-items:center;justify-content:center;
   font-family:var(--mono);font-size:22px;color:var(--dimmest)}
 .who{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px}
-.num-row{display:flex;align-items:baseline;gap:7px}
-.num{font-family:var(--mono);font-size:19px;font-weight:700;color:var(--c);line-height:1}
-.tags{display:flex;gap:4px;flex-wrap:wrap}
+.num{font-family:var(--mono);font-size:18px;font-weight:700;color:var(--c);line-height:1}
+.tags{display:flex;flex-wrap:wrap;align-items:center}
 .tag{
-  font-family:var(--mono);font-size:8.5px;font-weight:600;letter-spacing:.1em;
-  text-transform:uppercase;padding:1.5px 4.5px;border-radius:2px;line-height:1.3;
+  font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:1px;
+  text-transform:uppercase;padding:1px 5px;margin-right:4px;line-height:1.4;
   border:1px solid currentColor;
 }
 .tag.master{color:#ffd45e}
 .tag.sync{color:var(--dim)}
-.tag.onair{color:var(--red);background:rgba(255,59,48,.12)}
-.tag.closed{color:var(--dim);background:rgba(255,255,255,.05)}
+.tag.onair{color:var(--red)}
+.tag.closed{color:var(--dim)}
 .title{
-  font-size:14.5px;font-weight:600;line-height:1.22;
+  font-size:14px;font-weight:600;line-height:1.25;
   overflow:hidden;text-overflow:ellipsis;display:-webkit-box;
   -webkit-line-clamp:2;-webkit-box-orient:vertical;
 }
 .artist{font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .meta{
-  font-family:var(--mono);font-size:9.5px;letter-spacing:.07em;color:var(--dimmest);
-  text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-family:var(--mono);font-size:10px;color:var(--dimmest);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
-.art,.title,.artist,.meta,.num,.readouts{transition:opacity .25s}
 
-/* --- middle: waveforms --- */
-.canvases{position:relative;display:flex;flex-direction:column;
-  border-left:1px solid var(--line);border-right:1px solid var(--line);
-  transition:opacity .25s,filter .25s}
-.overview{height:26%;min-height:26px;position:relative;border-bottom:1px solid var(--line);background:#0b0d10}
-.phrases{height:16px;min-height:16px;position:relative;border-bottom:1px solid var(--line);background:#0a0c0f;display:none}
-.phrases.on{display:block}
-.detail{flex:1;position:relative;background:#080a0c}
-.scrub{
-  position:absolute;left:8px;bottom:6px;z-index:2;pointer-events:none;
-  font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.04em;
-  color:var(--text);background:rgba(8,10,12,.85);padding:2px 7px;border-radius:4px;
-  opacity:0;transition:opacity .12s;
+/* --- middle: cue/zoom row, then overview + phrase strip + detail --- */
+.wave-col{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;gap:2px}
+.wave-tools{display:flex;align-items:center;gap:4px;min-height:22px;flex:none}
+.cue{
+  flex:1;min-width:0;font-family:var(--mono);font-size:11px;color:var(--dim);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
-.scrub.on{opacity:1}
+.zoom-chip{
+  flex:none;font-family:var(--mono);font-size:11px;font-weight:600;
+  background:var(--panel-high);border:1px solid var(--line);border-radius:3px;
+  padding:5px 10px;color:var(--text);line-height:1.2;
+}
+.zoom-chip.on{background:var(--text);color:var(--black);border-color:transparent}
+.canvases{
+  position:relative;flex:1;min-height:0;display:flex;flex-direction:column;
+  overflow:hidden;transition:opacity .25s,filter .25s;
+}
+.overview{
+  flex:0 0 var(--overview-min);height:var(--overview-min);min-height:var(--overview-min);
+  max-height:var(--overview-max);position:relative;
+  border-bottom:1px solid var(--line);background:#0b0d10;
+}
+.phrases{
+  flex:0 0 var(--phrase-h);height:var(--phrase-h);min-height:var(--phrase-h);
+  position:relative;border-bottom:1px solid var(--line);background:#0a0c0f;display:none;
+}
+.phrases.on{display:block}
+.detail{flex:1;min-height:0;position:relative;background:#080a0c}
 canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .no-wave{
   position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
@@ -181,27 +184,36 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   color:var(--dimmest);
 }
 
-/* --- right: readouts --- */
-.readouts{padding:9px 14px 9px 13px;display:flex;flex-direction:column;
-  justify-content:center;gap:2px;min-width:0;overflow:hidden}
-.bpm{font-family:var(--mono);font-size:33px;font-weight:700;line-height:.98;
-  letter-spacing:-.01em;font-variant-numeric:tabular-nums}
-.bpm small{font-size:12px;font-weight:500;color:var(--dimmest);letter-spacing:.1em;margin-left:4px}
-.pitch{font-family:var(--mono);font-size:12px;font-weight:500;color:var(--dim);
-  font-variant-numeric:tabular-nums}
+/* --- right: BPM / pitch / time / phase / state, same sizes as DeckCard --- */
+.readouts{
+  flex:0 1 var(--readout-max);width:var(--readout-max);
+  min-width:var(--readout-min);max-width:var(--readout-max);
+  display:flex;flex-direction:column;gap:2px;min-height:0;overflow:hidden;
+}
+.bpm{
+  font-family:var(--mono);font-size:var(--bpm-size);font-weight:700;line-height:1;
+  text-align:right;font-variant-numeric:tabular-nums;
+}
+.pitch{
+  font-family:var(--mono);font-size:var(--pitch-size);font-weight:500;color:var(--dim);
+  text-align:right;font-variant-numeric:tabular-nums;
+}
 .pitch.up{color:#ff9f45}.pitch.down{color:#5eb0ff}
-.times{display:flex;gap:11px;margin-top:5px;font-family:var(--mono);font-variant-numeric:tabular-nums}
-.time .v{font-size:16px;font-weight:600;line-height:1.1}
-.time .k{font-size:8.5px;letter-spacing:.13em;color:var(--dimmest);text-transform:uppercase}
-.time.left .v{color:var(--dim)}
-.time.left.low .v{color:var(--red)}
-.state-row{display:flex;align-items:center;gap:8px;margin-top:7px;min-width:0}
-.state{font-family:var(--mono);font-size:9.5px;letter-spacing:.09em;
-  text-transform:uppercase;color:var(--dim);
+.times{
+  display:flex;gap:12px;margin-top:4px;
+  font-family:var(--mono);font-variant-numeric:tabular-nums;
+}
+.elapsed,.remaining{font-size:var(--time-size);font-weight:700;line-height:1.1}
+.remaining{color:var(--dim)}
+.remaining.low{color:var(--red)}
+.bar-dots{display:flex;gap:3px;align-items:center;height:10px;margin-top:2px}
+.bar-dots i{
+  width:var(--phase-w);height:var(--phase-h);background:var(--line);border-radius:1px;
+}
+.bar-dots i.on{background:var(--c)}
+.state-row{display:flex;align-items:center;gap:6px;min-width:0;margin-top:2px}
+.state{font-family:var(--mono);font-size:10px;color:var(--dim);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
-.bar-dots{display:flex;gap:3px;flex:none}
-.bar-dots i{width:10px;height:3px;background:var(--line-bright);border-radius:1px;transition:.08s}
-.bar-dots i.on{background:var(--c);box-shadow:0 0 7px var(--c)}
 .key{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--c);
   flex:none;letter-spacing:.03em}
 .loop-badge{
@@ -259,15 +271,14 @@ body.readonly #session .head::after{content:' · read-only'; color:var(--dimmest
   header .right{flex-wrap:wrap;gap:6px;width:100%;justify-content:flex-start}
   header .switch-label{display:none}
   #decks{padding:8px;gap:8px}
-  .deck{
-    grid-template-columns:1fr !important;
-    grid-template-rows:auto auto auto;
-    min-height:0;
+  .deck{min-height:280px}
+  .deck-body{flex-direction:column}
+  .identity,.readouts{
+    width:auto;flex:none;max-width:none;min-width:0;
   }
-  .identity{padding:10px}
   .canvases{min-height:140px}
-  .readouts{padding:10px 12px;flex-direction:row;flex-wrap:wrap;align-items:center;gap:10px}
-  .bpm{font-size:24px}
+  .bpm{text-align:left;font-size:24px}
+  .pitch{text-align:left}
   .times{margin-top:0}
   #session{margin:0 8px 12px;font-size:11px}
   #session .row{grid-template-columns:56px 28px 1fr;gap:6px}
@@ -275,17 +286,46 @@ body.readonly #session .head::after{content:' · read-only'; color:var(--dimmest
   #session .row span:nth-child(5){display:none}
 }
 @media (max-width:520px){
-  .art{width:56px;height:56px}
-  header .pill#p-lib,header .pill#p-dev{display:none}
+  header .pill#p-dev{display:none}
 }
 </style>
+<script id="monitor-layout" type="application/json">{"identWidth":300,"identCollapsed":44,"readoutMin":188,"readoutMax":220,"art":72,"artRadius":4,"accent":4,"cardRadius":6,"cardGap":8,"pageMargins":[20,14,20,12],"bodyMargins":[12,10,12,10],"bodyGap":12,"phraseH":16,"overviewFrac":0.14,"overviewMin":28,"overviewMax":48,"bpm":28,"pitch":12,"time":15,"phaseW":12,"phaseH":4,"order2":[1,2],"order4":[3,1,2,4]}</script>
+<script>
+const MONITOR_LAYOUT = JSON.parse(document.getElementById('monitor-layout').textContent);
+function applyMonitorLayout() {
+  const L = MONITOR_LAYOUT;
+  const s = document.documentElement.style;
+  const page = L.pageMargins; // left, top, right, bottom
+  const body = L.bodyMargins;
+  s.setProperty('--ident', L.identWidth + 'px');
+  s.setProperty('--ident-collapsed', L.identCollapsed + 'px');
+  s.setProperty('--readout-min', L.readoutMin + 'px');
+  s.setProperty('--readout-max', L.readoutMax + 'px');
+  s.setProperty('--art', L.art + 'px');
+  s.setProperty('--art-radius', L.artRadius + 'px');
+  s.setProperty('--accent', L.accent + 'px');
+  s.setProperty('--card-radius', L.cardRadius + 'px');
+  s.setProperty('--card-gap', L.cardGap + 'px');
+  s.setProperty('--page-pad', page[1] + 'px ' + page[2] + 'px ' + page[3] + 'px ' + page[0] + 'px');
+  s.setProperty('--body-pad', body[1] + 'px ' + body[2] + 'px ' + body[3] + 'px ' + body[0] + 'px');
+  s.setProperty('--body-gap', L.bodyGap + 'px');
+  s.setProperty('--phrase-h', L.phraseH + 'px');
+  s.setProperty('--overview-min', L.overviewMin + 'px');
+  s.setProperty('--overview-max', L.overviewMax + 'px');
+  s.setProperty('--bpm-size', L.bpm + 'px');
+  s.setProperty('--pitch-size', L.pitch + 'px');
+  s.setProperty('--time-size', L.time + 'px');
+  s.setProperty('--phase-w', L.phaseW + 'px');
+  s.setProperty('--phase-h', L.phaseH + 'px');
+}
+applyMonitorLayout();
+</script>
 </head>
 <body>
 
 <header>
   <div class="brand" data-i18n="brand">Prolink Listener <span>// pro dj link</span></div>
   <div class="pill" id="p-mode" data-i18n="starting">starting…</div>
-  <div class="pill" id="p-lib"></div>
   <div class="right">
     <button id="fs-btn" type="button" title="Fullscreen">Full screen</button>
     <button id="rec-btn" type="button" title="Record session playlist">Record</button>
@@ -312,7 +352,7 @@ const STRINGS = {
   brand: 'Prolink Listener <span>// pro dj link</span>',
   starting: 'starting…',
   decks: 'decks', zoom: 'bars', wave: 'wave', needle: 'needle',
-  mode: 'mode', library: 'library', devices: 'devices', tracks: 'tracks',
+  mode: 'mode', devices: 'devices',
   noDevices: 'no devices',
   elapsed: 'elapsed', remaining: 'remaining',
   noTrack: 'no track', noTrackLoaded: 'no track loaded', loading: 'loading…',
@@ -340,8 +380,6 @@ function applyStrings() {
     if (v !== undefined) el.innerHTML = v;
   });
   for (const d of decks.values()) {
-    d.elapsedLabel.textContent = T('elapsed');
-    d.remainingLabel.textContent = T('remaining');
     d.trackId = -1;                       // force the info block to repaint
   }
   if (last) applyState(last);
@@ -397,8 +435,8 @@ function trackPack(deck) {
 let last = null, receivedAt = 0;
 let maxDecks = 4;
 
-/* Display order: 2-deck = 1-2, 4-deck = 3-1-2-4 (Pioneer-style layout). */
-const DECK_LAYOUT = {2: [1, 2], 4: [3, 1, 2, 4]};
+/* Display order matches gui.deck_layout.DECK_ORDER. */
+const DECK_LAYOUT = {2: MONITOR_LAYOUT.order2, 4: MONITOR_LAYOUT.order4};
 
 function visible(list) {
   const byNum = new Map(list.map(d => [d.number, d]));
@@ -465,6 +503,31 @@ function setWaveStyle(style) {
   }
 }
 
+function paintZoomChip(d) {
+  if (!d || !d.zoom) return;
+  const override = zoomByDeck.has(d.n);
+  d.zoom.textContent = `${deckZoom(d.n)}b${override ? '*' : ''}`;
+  d.zoom.classList.toggle('on', override);
+}
+
+function paintZoomChips() {
+  for (const d of decks.values()) paintZoomChip(d);
+}
+
+function layoutWave(d) {
+  const box = d.canvases;
+  if (!box) return;
+  const h = box.clientHeight;
+  if (!h) return;
+  const L = MONITOR_LAYOUT;
+  const oh = Math.max(L.overviewMin, Math.min(L.overviewMax, Math.floor(h * L.overviewFrac)));
+  const next = oh + 'px';
+  if (d.overviewEl.style.flexBasis !== next) {
+    d.overviewEl.style.flexBasis = next;
+    d.overviewEl.style.height = next;
+  }
+}
+
 function setZoom(bars) {
   if (!ZOOM_BARS.includes(bars)) bars = 4;
   if (bars === zoomBars) return;
@@ -475,6 +538,7 @@ function setZoom(bars) {
     d.detailKey = null;
     d.detailOff = null;
   }
+  paintZoomChips();
 }
 
 function applyDeckZooms(map) {
@@ -496,6 +560,7 @@ function applyDeckZooms(map) {
     d.detailKey = null;
     d.detailOff = null;
   }
+  paintZoomChips();
 }
 
 function setDeckCount(n) {
@@ -692,30 +757,40 @@ function createDeck(n) {
   el.className = 'deck';
   el.style.setProperty('--c', `var(${DECK_COLORS[n] || '--d1'})`);
   el.innerHTML = `
+    <div class="accent"></div>
+    <div class="deck-body">
     <div class="identity">
-      <div class="art blank" data-art>&#9834;</div>
-      <div class="who">
-        <div class="num-row"><span class="num">${n}</span><div class="tags" data-tags></div></div>
-        <div class="title" data-title>—</div>
-        <div class="artist" data-artist></div>
-        <div class="meta" data-meta></div>
+      <div class="ident-top">
+        <div class="art blank" data-art>&#9834;</div>
+        <div class="who">
+          <div class="num">${n}</div>
+          <div class="title" data-title>—</div>
+          <div class="artist" data-artist></div>
+          <div class="meta" data-meta></div>
+        </div>
       </div>
+      <div class="tags" data-tags></div>
     </div>
-    <div class="canvases">
-      <div class="overview"><canvas data-cv-overview></canvas></div>
-      <div class="phrases" data-phrases><canvas data-cv-phrases></canvas></div>
-      <div class="detail"><canvas data-cv-detail></canvas><div class="no-wave" data-nowave></div></div>
-      <div class="scrub" data-scrub></div>
+    <div class="wave-col">
+      <div class="wave-tools">
+        <div class="cue" data-scrub></div>
+        <div class="zoom-chip" data-zoom>4b</div>
+      </div>
+      <div class="canvases">
+        <div class="overview"><canvas data-cv-overview></canvas></div>
+        <div class="phrases" data-phrases><canvas data-cv-phrases></canvas></div>
+        <div class="detail"><canvas data-cv-detail></canvas><div class="no-wave" data-nowave></div></div>
+      </div>
     </div>
     <div class="readouts">
-      <div class="bpm" data-bpm>—<small>BPM</small></div>
+      <div class="bpm" data-bpm>— BPM</div>
       <div class="pitch" data-pitch></div>
       <div class="times">
-        <div class="time"><div class="v" data-elapsed>00:00</div><div class="k" data-elapsed-label></div></div>
-        <div class="time left"><div class="v" data-remaining>00:00</div><div class="k" data-remaining-label></div></div>
+        <span class="elapsed" data-elapsed>00:00</span>
+        <span class="remaining" data-remaining>-00:00</span>
       </div>
+      <div class="bar-dots" data-bar><i></i><i></i><i></i><i></i></div>
       <div class="state-row">
-        <div class="bar-dots" data-bar><i></i><i></i><i></i><i></i></div>
         <div class="loop-badge" data-loop title="Loop">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M17 1l4 4-4 4"/>
@@ -728,6 +803,7 @@ function createDeck(n) {
         <div class="state" data-state></div>
         <div class="key" data-key></div>
       </div>
+    </div>
     </div>`;
   const q = s => el.querySelector(s);
   const d = {
@@ -736,8 +812,8 @@ function createDeck(n) {
     artist: q('[data-artist]'), meta: q('[data-meta]'), noWave: q('[data-nowave]'),
     bpm: q('[data-bpm]'), pitch: q('[data-pitch]'), elapsed: q('[data-elapsed]'),
     remaining: q('[data-remaining]'), state: q('[data-state]'), key: q('[data-key]'),
-    elapsedLabel: q('[data-elapsed-label]'), remainingLabel: q('[data-remaining-label]'),
     loopBadge: q('[data-loop]'), loopLen: q('[data-loop-len]'),
+    zoom: q('[data-zoom]'), overviewEl: q('.overview'), canvases: q('.canvases'),
     barDots: [...q('[data-bar]').children],
     cvOverview: q('[data-cv-overview]'), cvDetail: q('[data-cv-detail]'),
     phrasesWrap: q('[data-phrases]'), cvPhrases: q('[data-cv-phrases]'),
@@ -749,9 +825,9 @@ function createDeck(n) {
   d.scrub = q('[data-scrub]');
   d.cueMs = null;
   d.posMs = 0;
-  d.elapsedLabel.textContent = T('elapsed');
-  d.remainingLabel.textContent = T('remaining');
+  d.anchor = 0.5;
   d.noWave.textContent = T('noTrack');
+  paintZoomChip(d);
 
   function msAt(cv, ev, kind) {
     const rect = cv.getBoundingClientRect();
@@ -765,21 +841,17 @@ function createDeck(n) {
     const bars = deckZoom(d.n);
     const bpm = d.lastBpm || 120;
     const visible = barsToSeconds(bars, bpm) * 1000;
-    let ms = d.posMs + ((x - rect.width / 2) / Math.max(1, rect.width)) * visible;
+    const needle = (d.anchor === PLAYHEAD_LEFT_FRACTION) ? PLAYHEAD_LEFT_FRACTION : 0.5;
+    let ms = d.posMs + ((x - rect.width * needle) / Math.max(1, rect.width)) * visible;
     if (dur) ms = Math.max(0, Math.min(dur, ms));
     return Math.max(0, ms);
   }
   function showScrub(ms) {
     if (ms == null) {
-      d.scrub.classList.remove('on');
-      if (d.cueMs != null) {
-        d.scrub.textContent = 'cue ' + mmss(d.cueMs);
-        d.scrub.classList.add('on');
-      }
+      d.scrub.textContent = d.cueMs != null ? ('cue ' + mmss(d.cueMs)) : '';
       return;
     }
     d.scrub.textContent = mmss(ms);
-    d.scrub.classList.add('on');
   }
   for (const [cv, kind] of [[d.cvOverview, 'overview'], [d.cvDetail, 'detail']]) {
     cv.addEventListener('mousemove', ev => showScrub(msAt(cv, ev, kind)));
@@ -789,7 +861,6 @@ function createDeck(n) {
       if (ms == null) return;
       d.cueMs = ms;
       d.scrub.textContent = 'cue ' + mmss(ms);
-      d.scrub.classList.add('on');
     });
   }
 
@@ -841,13 +912,13 @@ function drawInfo(d, s) {
   }
   d.noWave.textContent = T('noTrack');
   d.noWave.style.display = s.track_id ? 'none' : 'flex';
-  if (s.track_id && m && keyOk && m.has_artwork) {
+  if (s.track_id && m && keyOk && (m.has_artwork || m.mock_art)) {
     const artToken = `${s.track_id}:${s.track_key || m.track_key || ''}`;
     if (d.artKey !== artToken) {
       d.artKey = artToken;
       const img = new Image();
       img.onload = () => { d.art.replaceWith(img); img.className = 'art'; d.art = img; };
-      img.src = `/api/artwork/${s.track_id}${trackApiQuery(s)}`;
+      img.src = m.mock_art || `/api/artwork/${s.track_id}${trackApiQuery(s)}`;
     }
   } else if (s.track_id && trackChanged && d.art.tagName === 'IMG') {
     const blank = document.createElement('div');
@@ -863,7 +934,7 @@ function drawInfo(d, s) {
   const html = tags.join('');
   if (d.tags.innerHTML !== html) d.tags.innerHTML = html;
 
-  d.bpm.innerHTML = s.bpm ? `${s.bpm.toFixed(2)}<small>BPM</small>` : `—<small>BPM</small>`;
+  d.bpm.textContent = s.bpm ? `${s.bpm.toFixed(2)} BPM` : '— BPM';
   const p = s.pitch;
   d.pitch.textContent = s.track_id ? `${p >= 0 ? '+' : ''}${p.toFixed(2)} %` : '';
   d.pitch.className = 'pitch ' + (p > 0.01 ? 'up' : p < -0.01 ? 'down' : '');
@@ -1186,13 +1257,14 @@ function render() {
     if (dur) pos = Math.min(pos, dur);
 
     drawInfo(d, s);
+    layoutWave(d);
 
     d.elapsed.textContent = mmss(pos);
     d.posMs = pos;
+    d.anchor = playheadAnchor(s);
     const remaining = dur ? Math.max(0, dur - pos) : 0;
     d.remaining.textContent = dur ? ('-' + mmss(remaining)) : '—';
-    d.remaining.parentElement.classList.toggle('low',
-      dur > 0 && remaining < 30000);
+    d.remaining.classList.toggle('low', dur > 0 && remaining < 30000);
 
     const loop = track ? activeLoop(track.meta, pos, looping, s) : null;
     const beats = loopBeats(loop, s.track_bpm || s.bpm);
@@ -1246,12 +1318,6 @@ function applyState(e) {
                  : e.mode_kind === 'sniffer' ? T('modeSniffer') : (e.mode || '—');
   document.getElementById('p-mode').innerHTML =
     `${T('mode')} <b>${modeName}</b>${e.mode_detail ? ' · ' + e.mode_detail : ''}`;
-
-  const lib = document.getElementById('p-lib');
-  lib.innerHTML = e.library
-    ? `${T('library')} <b>${e.library.tracks} ${T('tracks')}</b>`
-    : `${T('library')} <b>${e.library_error ? '—' : T('connecting')}</b>`;
-  lib.title = e.library_error || '';
 
   const devices = e.devices || [];
   document.getElementById('p-dev').innerHTML = devices.length
@@ -1366,21 +1432,33 @@ function seedPanelWave(n) {
 
 function enablePanelMock() {
   const titles = [
-    ['Night Drive', 'Demo Artist', '8A', 1, true],
-    ['Glasshouse', 'North Line', '4A', 2, false],
-    ['Second Sun', 'Kite Club', '11B', 3, false],
-    ['Harbour', 'Demo Artist', '8A', 4, false],
+    ['Night Drive', 'Demo Artist', '8A', 1, true, '#ffb020'],
+    ['Glasshouse', 'North Line', '4A', 2, false, '#22d3ee'],
+    ['Second Sun', 'Kite Club', '11B', 3, false, '#f472b6'],
+    ['Harbour', 'Demo Artist', '8A', 4, false, '#4ade80'],
   ];
+  const pitches = [1.25, -0.80, 0, 0.40];
+  const beats = [];
+  for (let i = 0; i < 480; i++) beats.push([i * 500, (i % 4) + 1]);
   const decks = [];
   titles.forEach((row, i) => {
     const id = i + 1;
     const wave = seedPanelWave(1800);
+    const art = document.createElement('canvas');
+    art.width = 72; art.height = 72;
+    const actx = art.getContext('2d');
+    actx.fillStyle = '#14171d';
+    actx.fillRect(0, 0, 72, 72);
+    actx.fillStyle = row[5];
+    actx.fillRect(10, 10, 52, 52);
     tracks.set('id:' + id, {
       meta: {
-        id, title: row[0], artist: row[1], key: row[2], album: 'Monitor',
-        duration_ms: 240000, has_artwork: false, cues: [],
-        phrases: [{beat: 1, text: 'Intro'}, {beat: 33, text: 'Drop'}],
-        beats: [[0, 1], [500, 2], [1000, 3], [1500, 4]],
+        id, title: row[0], artist: row[1], key: row[2],
+        album: 'Monitor', genre: 'House',
+        duration_ms: 240000, has_artwork: true, mock_art: art.toDataURL('image/png'),
+        cues: [{t: 30000, type: 'cue', hot: 1, color: [255, 212, 94]}],
+        phrases: [{beat: 1, text: 'Intro'}, {beat: 33, text: 'Drop'}, {beat: 129, text: 'Outro'}],
+        beats,
       },
       detail: wave,
       overview: wave,
@@ -1388,21 +1466,21 @@ function enablePanelMock() {
     });
     decks.push({
       number: row[3], track_id: id, playing: row[4], on_air: row[4],
-      bpm: 126 + i, track_bpm: 126, pitch: 0, speed: row[4] ? 1 : 0,
+      bpm: 126 + i, track_bpm: 126, pitch: pitches[i], speed: row[4] ? 1 : 0,
       position_ms: 48000 + i * 8000, duration_ms: 240000,
-      state: row[4] ? 'playing' : 'cued', master: row[4], name: 'XDJ-AZ',
-      beat: 1, bar: 1,
+      state: row[4] ? 'playing' : 'cued', master: row[4], sync: i === 1,
+      name: 'XDJ-AZ', beat: 1, bar: 1, waveform_position: 'left',
     });
   });
+  const deckCount = params.get('decks') === '2' ? 2 : 4;
   applyState({
     decks,
     devices: [{number: 1, name: 'XDJ-AZ'}],
     mode_kind: 'vcdj',
     mode: 'virtual device',
-    library: {tracks: 1280},
     display: {
       show_phrases: true, zoom_bars: 4, playhead_position: 'left',
-      max_decks: 4, waveform_style: 'rgb', show_empty_decks: true,
+      max_decks: deckCount, waveform_style: 'rgb', show_empty_decks: true,
       elements: {},
     },
     session: {recording: false, tracks: []},
