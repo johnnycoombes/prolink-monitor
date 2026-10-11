@@ -241,6 +241,15 @@ Private keys are never committed. GitHub Actions reads them from secrets.
 
 4. Tag a release **after** `root.json` is on `main` and both secrets exist. The build has to contain that `root.json`, or the app has nothing to trust.
 
+### Publish metadata for a zip that is already released
+
+Use this when the versioned zip is already on GitHub and only the signed update files are missing. Do not regenerate the keys, and do not push the tag again.
+
+1. On GitHub, open **Actions → Windows release → Run workflow**.
+2. Branch: `main`.
+3. Tag: the existing release, for example `v1.0.0`.
+4. Run it. The job downloads `ProlinkListener-<version>-win64.zip` from that release and uploads the signed files to the `updates` release. It does not rebuild the app.
+
 There are four keys, one for each TUF role: `root`, `targets`, `snapshot`, and `timestamp`. They are encrypted with the password. The workflow decrypts them from `TUFUP_KEY_PASSWORD` and does not prompt (a prompt would hang the job). Metadata is signed again on each tagged release. The signature stays valid for 90 days, so a quiet couple of months does not stop the next update. Root lasts a year.
 
 If `TUFUP_KEYS_B64` or `packaging/tuf/root.json` is missing, the release workflow still uploads the zip and skips the signed metadata. It does not fail the release for that.
