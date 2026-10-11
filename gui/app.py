@@ -12,7 +12,16 @@ def main() -> int:
     if root not in sys.path:
         sys.path.insert(0, root)
 
-    from PySide6.QtCore import Qt
+    from prolink.single_instance import claim_or_handoff, launch_command
+
+    # A second launch hands off before Qt starts, including when the first
+    # window is hidden in the tray.
+    command = launch_command(sys.argv)
+    hub = claim_or_handoff(command)
+    if hub is None:
+        return 0
+
+    from PySide6.QtCore import Qt, QTimer
     from PySide6.QtGui import QFont
     from PySide6.QtWidgets import QApplication
 
@@ -35,6 +44,17 @@ def main() -> int:
 
     window = MainWindow()
     window.show()
+
+    def _drain_instance() -> None:
+        for cmd in hub.poll():
+            window.handle_instance_command(cmd)
+
+    timer = QTimer(window)
+    timer.timeout.connect(_drain_instance)
+    timer.start(200)
+    app.aboutToQuit.connect(hub.close)
+    _drain_instance()
+
     try:
         from updater.startup import schedule_update_check
 

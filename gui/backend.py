@@ -18,6 +18,7 @@ if ROOT not in sys.path:
 from app import Handler, Monitor, QuietServer, build_source, open_http_server  # noqa: E402
 from gui.settings import as_namespace, sessions_dir  # noqa: E402
 from prolink import link  # noqa: E402
+from prolink.web_server import close_http_server, start_http_thread  # noqa: E402
 
 
 class Backend(QObject):
@@ -29,6 +30,8 @@ class Backend(QObject):
     track_ready = Signal(int)           # track id whose meta/waveform is ready
     port_changed = Signal(int)          # actual bound HTTP port (may differ from settings)
     wnp_test_finished = Signal(bool, str)
+    web_restarted = Signal()            # HTTP is accepting again; reload embedded pages
+    web_changed = Signal()              # Health should re-read web_status()
 
     # Full Monitor.state() + Devices/Library refresh; paint runs separately.
     STATE_HZ = 20
@@ -41,6 +44,10 @@ class Backend(QObject):
         self._settings: dict[str, Any] = {}
         self._bound_port: int | None = None
         self._lock = threading.RLock()
+        self._http_lock = threading.Lock()
+        self._boot_gen = 0
+        self._web_error = ""
+        self._web_restarting = False
         self._status = "idle"
         self._detail = ""
         self._meta_cache: dict[str, dict] = {}
@@ -72,8 +79,11 @@ class Backend(QObject):
     def start(self, settings: dict[str, Any]) -> None:
         self.stop()
         self._settings = dict(settings)
+        gen = self._boot_gen
         self._set_status("connecting", "starting…")
-        threading.Thread(target=self._boot, args=(dict(settings),), daemon=True).start()
+        threading.Thread(
+            target=self._boot, args=(dict(settings), gen), daemon=True, name="prolink-boot",
+        ).start()
 
         # State/metadata at a fixed modest rate; playhead paint up to 60 Hz.
         self._state_timer.start(int(1000 / self.STATE_HZ))
@@ -81,30 +91,121 @@ class Backend(QObject):
         self._paint_timer.start(max(1, int(1000 / paint_hz)))
 
     def stop(self) -> None:
+        self._boot_gen += 1
         self._state_timer.stop()
         self._paint_timer.stop()
         with self._lock:
             monitor = self._monitor
-            server = self._server
             self._monitor = None
-            self._server = None
             self._bound_port = None
             self._meta_cache.clear()
             self._wave_cache.clear()
             self._art_cache.clear()
             self._fetching.clear()
             self._meta_miss.clear()
-        if server is not None:
-            try:
-                server.shutdown()
-            except Exception:
-                pass
+        self._stop_http()
         if monitor is not None:
             try:
                 monitor.stop()
             except Exception:
                 pass
         self._set_status("idle", "")
+
+    def web_status(self) -> dict:
+        """Listening, client count, and the last web-server error for Health."""
+        with self._http_lock:
+            server = self._server
+            restarting = self._web_restarting
+        err = self._web_error
+        if server is None:
+            snap = {
+                "listening": False,
+                "host": "",
+                "port": int(self._bound_port or 0),
+                "clients": 0,
+                "threads": 0,
+                "last_error": err,
+            }
+        else:
+            snap = server.snapshot()
+            if err and not snap.get("last_error"):
+                snap["last_error"] = err
+        snap["restarting"] = restarting
+        return snap
+
+    def restart_web_server(self) -> None:
+        """Stop and bind the panel server again, without tearing down Pro DJ Link."""
+        with self._http_lock:
+            if self._web_restarting:
+                return
+            self._web_restarting = True
+        threading.Thread(
+            target=self._restart_web_thread, name="prolink-http-restart", daemon=True,
+        ).start()
+
+    def _take_server(self):
+        with self._http_lock:
+            server, thread = self._server, self._server_thread
+            self._server = None
+            self._server_thread = None
+            return server, thread
+
+    def _stop_http(self) -> None:
+        server, thread = self._take_server()
+        close_http_server(server, thread)
+
+    def _open_http(self, monitor, port: int, host: str):
+        Handler.monitor = monitor
+        server, bound = open_http_server(int(port), Handler, host=host or "0.0.0.0")
+        thread = start_http_thread(server)
+        return server, thread, int(bound)
+
+    def _restart_web_thread(self) -> None:
+        try:
+            with self._lock:
+                monitor = self._monitor
+                settings = dict(self._settings)
+            if monitor is None:
+                self._web_error = "Connect first"
+                return
+            if not settings.get("start_web_server", True):
+                self._web_error = "Web server is turned off in Settings"
+                return
+            self._stop_http()
+            host = settings.get("http_bind") or "0.0.0.0"
+            port = int(settings.get("port") or 8777)
+            try:
+                server, thread, bound = self._open_http(monitor, port, host)
+            except Exception as exc:
+                self._web_error = str(exc)
+                return
+            with self._lock:
+                current = self._monitor
+            if current is not monitor:
+                close_http_server(server, thread)
+                return
+            with self._http_lock:
+                with self._lock:
+                    if self._monitor is not monitor:
+                        orphan = (server, thread)
+                    else:
+                        self._server = server
+                        self._server_thread = thread
+                        self._bound_port = bound
+                        self._web_error = ""
+                        orphan = None
+            if orphan is not None:
+                close_http_server(orphan[0], orphan[1])
+                return
+            if bound != port:
+                self._settings["port"] = bound
+                self.port_changed.emit(bound)
+            self.web_restarted.emit()
+        except Exception as exc:
+            self._web_error = str(exc)
+        finally:
+            self._web_restarting = False
+            self.web_changed.emit()
 
     def open_web_panel(self) -> None:
         """Open the monitor page in a normal browser tab. Never fullscreen."""
@@ -274,9 +375,14 @@ class Backend(QObject):
             return []
 
     # -- boot / poll --------------------------------------------------------
-    def _boot(self, settings: dict[str, Any]) -> None:
+    def _boot(self, settings: dict[str, Any], gen: int) -> None:
         args = as_namespace(settings)
+        server = None
+        thread = None
+        monitor = None
         try:
+            if gen != self._boot_gen:
+                return
             host = args.host
             iface = args.iface
             if not host:
@@ -289,6 +395,8 @@ class Backend(QObject):
                     if found_iface and not iface:
                         iface = found_iface
                 args.iface = iface
+            if gen != self._boot_gen:
+                return
 
             net = link.local_net(host or "255.255.255.255")
             source = build_source(args, net)
@@ -299,27 +407,51 @@ class Backend(QObject):
             monitor.start()
 
             server = None
+            thread = None
             bound_port = int(args.port)
             if settings.get("start_web_server", True):
-                Handler.monitor = monitor
-                server, bound_port = open_http_server(
-                    args.port, Handler, host=getattr(args, "http_host", "0.0.0.0") or "0.0.0.0",
+                if gen != self._boot_gen:
+                    monitor.stop()
+                    return
+                server, thread, bound_port = self._open_http(
+                    monitor, args.port, getattr(args, "http_host", "0.0.0.0") or "0.0.0.0",
                 )
-                thread = threading.Thread(target=server.serve_forever, daemon=True)
-                thread.start()
-                self._server_thread = thread
 
             with self._lock:
-                self._monitor = monitor
-                self._server = server
-                self._settings = settings
-                self._bound_port = bound_port if server is not None else None
+                if gen != self._boot_gen:
+                    orphan = True
+                else:
+                    self._monitor = monitor
+                    self._settings = settings
+                    self._bound_port = bound_port if server is not None else None
+                    orphan = False
+            if server is not None:
+                with self._http_lock:
+                    if orphan or gen != self._boot_gen or self._monitor is not monitor:
+                        orphan = True
+                    else:
+                        self._server = server
+                        self._server_thread = thread
+                        self._web_error = ""
+            if orphan:
+                close_http_server(server, thread)
+                with self._lock:
+                    if self._monitor is monitor:
+                        self._monitor = None
+                        self._bound_port = None
+                try:
+                    monitor.stop()
+                except Exception:
+                    pass
+                return
 
             if server is not None and bound_port != int(args.port):
                 # Keep overlay URL / Open web panel in sync with the real port.
                 self._settings["port"] = bound_port
                 self.port_changed.emit(bound_port)
 
+            if gen != self._boot_gen:
+                return
             detail = getattr(source, "description", "") or ""
             if host:
                 detail = f"{detail} · {host}" if detail else str(host)
@@ -328,13 +460,21 @@ class Backend(QObject):
                           else f"http :{bound_port}")
             self._set_status("connected", detail)
         except Exception as exc:
-            self._set_status("error", str(exc))
+            close_http_server(server, thread)
+            if monitor is not None and self._monitor is not monitor:
+                try:
+                    monitor.stop()
+                except Exception:
+                    pass
+            if gen == self._boot_gen:
+                self._web_error = str(exc)
+                self._set_status("error", str(exc))
 
     def _tick(self) -> None:
         monitor = self._monitor
         if monitor is None:
             if self._status == "connecting":
-                self.state_changed.emit({
+                self.state_changed.emit(self._with_web({
                     "t": time.time(),
                     "decks": [],
                     "devices": [],
@@ -347,7 +487,7 @@ class Backend(QObject):
                     "library_error": None,
                     "backend_status": self._status,
                     "backend_detail": self._detail,
-                })
+                }))
             return
         try:
             state = monitor.state()
@@ -356,7 +496,7 @@ class Backend(QObject):
             return
         state["backend_status"] = self._status
         state["backend_detail"] = self._detail
-        self.state_changed.emit(state)
+        self.state_changed.emit(self._with_web(state))
 
         # warm metadata for loaded tracks without blocking the UI thread hard.
         # Cap to one in-flight fetch per track_id; remember misses briefly so
@@ -438,6 +578,17 @@ class Backend(QObject):
         except Exception:
             meta = None
         return deck, meta
+
+    def _with_web(self, state: dict) -> dict:
+        try:
+            state["web"] = self.web_status()
+        except Exception:
+            state["web"] = {
+                "listening": False, "host": "", "port": 0,
+                "clients": 0, "threads": 0, "last_error": self._web_error,
+                "restarting": False,
+            }
+        return state
 
     def _set_status(self, status: str, detail: str) -> None:
         self._status = status

@@ -203,7 +203,7 @@ def build_payload(deck: dict[str, Any] | None, meta: dict[str, Any] | None = Non
     try:
         from prolink import __version__ as version
     except Exception:
-        version = "1.0.0"
+        version = "1.0.1"
     body["source_agent_version"] = str(version)
 
     album = _text((info or {}).get("album"))

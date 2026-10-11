@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 import webbrowser
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -39,6 +39,7 @@ from prolink.track_key import keys_match, track_cache_key, track_key_token  # no
 from prolink.wnp import WnpPublisher  # noqa: E402
 from prolink.loopback_audio import LoopbackCapturer  # noqa: E402
 from prolink.db_recovery import STATS as _DB_STATS  # noqa: E402
+from prolink.web_server import PanelServer, serve_sse  # noqa: E402
 
 
 def _dbserver_health() -> dict:
@@ -1910,42 +1911,19 @@ class Handler(BaseHTTPRequestHandler):
 
         Matches the desktop split (20 Hz metadata / 60 Hz paint). Clients that
         only need smooth playheads merge ``paint: true`` frames into the last
-        full state.
+        full state. A closed browser, a full send buffer, or a reconnect
+        ends the stream instead of leaving the thread parked on the socket.
         """
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.end_headers()
-        paint_hz = 60.0
-        full_hz = 15.0
-        full_every = max(1, int(round(paint_hz / full_hz)))
-        tick = 0
-        try:
-            while True:
-                if tick % full_every == 0:
-                    payload = json.dumps(self.monitor.state(), ensure_ascii=False)
-                else:
-                    payload = json.dumps(self.monitor.paint_state(),
-                                        ensure_ascii=False)
-                self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
-                self.wfile.flush()
-                tick += 1
-                time.sleep(1.0 / paint_hz)
-        except (BrokenPipeError, ConnectionResetError, OSError):
-            return
+        serve_sse(self)
 
 
-class QuietServer(ThreadingHTTPServer):
+class QuietServer(PanelServer):
     """A browser closing an SSE stream is normal, not something to dump a stack for."""
-
-    daemon_threads = True
-    allow_reuse_address = True
 
     def handle_error(self, request, client_address):
         exc = sys.exc_info()[1]
         if isinstance(exc, (ConnectionResetError, ConnectionAbortedError,
-                            BrokenPipeError)):
+                            BrokenPipeError, TimeoutError)):
             return
         super().handle_error(request, client_address)
 
