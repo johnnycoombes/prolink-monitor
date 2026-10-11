@@ -769,6 +769,32 @@ class HealthPage(Page):
         wnp_l.addWidget(self._wnp_val)
         self.layout_root.addWidget(wnp_frame)
 
+        web_frame = QFrame()
+        web_frame.setObjectName("Card")
+        web_l = QVBoxLayout(web_frame)
+        web_l.setContentsMargins(18, 14, 18, 14)
+        self._web_title = QLabel(i18n.t("health_web"))
+        self._web_title.setObjectName("SectionTitle")
+        web_l.addWidget(self._web_title)
+        self._web_listen = QLabel(i18n.t("health_web_down"))
+        self._web_listen.setWordWrap(True)
+        self._web_listen.setStyleSheet("font-family:monospace; font-size:13px;")
+        self._web_clients = QLabel(i18n.t("health_web_clients").format(clients=0, threads=0))
+        self._web_clients.setStyleSheet("font-family:monospace; font-size:13px;")
+        self._web_error = QLabel("—")
+        self._web_error.setWordWrap(True)
+        self._web_error.setStyleSheet("font-family:monospace; font-size:12px;")
+        self._web_restart = QPushButton(i18n.t("health_web_restart"))
+        self._web_restart.setCursor(Qt.PointingHandCursor)
+        self._web_restart.clicked.connect(self._restart_web)
+        if backend is not None and hasattr(getattr(backend, "web_changed", None), "connect"):
+            backend.web_changed.connect(self._refresh_web_line)
+        web_l.addWidget(self._web_listen)
+        web_l.addWidget(self._web_clients)
+        web_l.addWidget(self._web_error)
+        web_l.addWidget(self._web_restart)
+        self.layout_root.addWidget(web_frame)
+
         ol_frame = QFrame()
         ol_frame.setObjectName("Card")
         ol_l = QVBoxLayout(ol_frame)
@@ -894,6 +920,23 @@ class HealthPage(Page):
         if err:
             self.link_panel.note(self._i18n.t(err))
 
+    def _restart_web(self) -> None:
+        backend = getattr(self, "_backend", None)
+        if backend is None or not hasattr(backend, "restart_web_server"):
+            return
+        self._web_listen.setText(self._i18n.t("health_web_restarting"))
+        backend.restart_web_server()
+
+    def _refresh_web_line(self) -> None:
+        backend = getattr(self, "_backend", None)
+        status = getattr(backend, "web_status", None)
+        if not callable(status):
+            return
+        try:
+            self._apply_web(status())
+        except Exception:
+            pass
+
     def retranslate(self) -> None:
         super().retranslate()
         titles = (
@@ -908,6 +951,8 @@ class HealthPage(Page):
         self._az_val.setToolTip(self._i18n.t("health_az_hint"))
         self._hint.setText(self._i18n.t("health_hint"))
         self._wnp_title.setText(self._i18n.t("health_wnp"))
+        self._web_title.setText(self._i18n.t("health_web"))
+        self._web_restart.setText(self._i18n.t("health_web_restart"))
         self._ol_title.setText(self._i18n.t("health_onelibrary"))
         self._ol_hint.setText(self._i18n.t("health_onelibrary_hint"))
         self._anlz_title.setText(self._i18n.t("health_anlz"))
@@ -941,6 +986,48 @@ class HealthPage(Page):
             self._i18n.t("health_col_nfs_calls"),
             self._i18n.t("health_col_nfs_timeouts"),
         ])
+
+    def _apply_web(self, web: dict) -> None:
+        listening = bool(web.get("listening"))
+        restarting = bool(web.get("restarting"))
+        try:
+            port = int(web.get("port") or 0)
+        except (TypeError, ValueError):
+            port = 0
+        host = str(web.get("host") or "")
+        try:
+            clients = int(web.get("clients") or 0)
+        except (TypeError, ValueError):
+            clients = 0
+        try:
+            threads = int(web.get("threads") or 0)
+        except (TypeError, ValueError):
+            threads = 0
+        err = str(web.get("last_error") or "").strip()
+        if restarting:
+            text = self._i18n.t("health_web_restarting")
+            color = COLORS["warn"]
+        elif listening:
+            where = f"{host}:{port}" if host else (f":{port}" if port else "")
+            text = self._i18n.t("health_web_up") + (f"  {where}" if where else "")
+            color = COLORS["ok"]
+        else:
+            text = self._i18n.t("health_web_down")
+            color = COLORS["dim"]
+        self._web_listen.setText(text)
+        self._web_listen.setStyleSheet(
+            f"font-family:monospace; font-size:13px; color:{color};"
+        )
+        self._web_clients.setText(
+            self._i18n.t("health_web_clients").format(clients=clients, threads=threads)
+        )
+        self._web_error.setText(err or "—")
+        if err:
+            self._web_error.setStyleSheet(
+                f"font-family:monospace; font-size:12px; color:{COLORS['danger']};"
+            )
+        else:
+            self._web_error.setStyleSheet("font-family:monospace; font-size:12px;")
 
     def _apply_wnp(self, wnp: dict) -> None:
         status = str(wnp.get("status") or "disabled")
@@ -1029,6 +1116,7 @@ class HealthPage(Page):
         self._prev_packets = packets
         self._prev_t = now
         self._apply_wnp(state.get("wnp") or {})
+        self._apply_web(state.get("web") or {})
 
         ol = state.get("onelibrary") or {}
         lib_err = state.get("library_error")

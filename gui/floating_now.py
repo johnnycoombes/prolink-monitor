@@ -308,6 +308,15 @@ class FloatingNowPlayingWindow(QWidget):
         self._loaded_url = url
         self._web.load(QUrl(url))
 
+    def reload_live(self) -> None:
+        """Load the overlay again even when the URL has not changed.
+
+        A reconnect keeps the same port, so the cached URL would otherwise
+        leave this window on a dead event stream.
+        """
+        self._loaded_url = ""
+        self._reload_overlay()
+
     def apply_settings(self) -> None:
         self._apply_window_flags()
         self._apply_transparency()

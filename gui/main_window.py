@@ -185,6 +185,7 @@ class MainWindow(QMainWindow):
         self.backend.status_changed.connect(self._on_status)
         self.backend.track_ready.connect(self._on_track_ready)
         self.backend.port_changed.connect(self._on_port_changed)
+        self.backend.web_restarted.connect(self._reload_floating)
 
         self._devices_sig: tuple | None = None
         self._library_sig: tuple | None = None
@@ -317,6 +318,31 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
+    def handle_instance_command(self, command: str) -> None:
+        """A second launch asked this process to come forward."""
+        from prolink.single_instance import apply_instance_command
+
+        apply_instance_command(
+            command,
+            show=self.restore_from_tray,
+            open_panel=self.backend.open_web_panel,
+            open_overlay=self._open_overlay_from_instance,
+        )
+
+    def _open_overlay_from_instance(self) -> None:
+        self._navigate("overlay")
+        self.page_overlay._open_overlay()
+
+    def _reload_floating(self) -> None:
+        win = self._floating_now
+        if win is None:
+            return
+        try:
+            if win.isVisible():
+                win.reload_live()
+        except RuntimeError:
+            self._floating_now = None
+
     def quit_app(self) -> None:
         if self._floating_now is not None:
             self._floating_now.close()
@@ -433,6 +459,8 @@ class MainWindow(QMainWindow):
         self.btn_web.setEnabled(web_ready)
         self.page_overlay.set_port(self.backend.port)
         self.page_overlay.set_web_ready(web_ready)
+        if status == "connected":
+            self._reload_floating()
         if self._tray is not None:
             tip = self.i18n.t("tray_tooltip")
             if status == "connected":
@@ -580,6 +608,7 @@ class MainWindow(QMainWindow):
         self.page_settings.load_settings(self.settings)
         self.page_overlay.set_port(int(port))
         self.page_overlay.set_web_ready(True)
+        self._reload_floating()
 
     def _nudge_zoom(self, direction: int) -> None:
         levels = list(ZOOM_BARS)
