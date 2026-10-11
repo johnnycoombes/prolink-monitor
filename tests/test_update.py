@@ -8,12 +8,16 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
 import zipfile
+from unittest import mock
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -25,7 +29,7 @@ from updater.apply import (
 )
 from updater.check import perform_check, query_repository
 from updater.config import APP_NAME, config_dir, library_cache_dir
-from updater.signing import extract_keys_zip, sign_repository
+from updater.signing import extract_keys_zip, resolve_keystore, sign_repository
 from updater.versioning import is_newer, select_release
 
 
@@ -143,7 +147,10 @@ class SettingsEntryTests(unittest.TestCase):
                     os.environ["PROLINK_CONFIG_DIR"] = previous
 
     def test_source_check_without_root_does_not_raise(self):
-        result = perform_check("1.0.0")
+        # packaging/tuf/root.json is committed now. Hide it so this still
+        # covers a checkout that has not been given a trust anchor.
+        with mock.patch("updater.check.trusted_root_path", return_value=None):
+            result = perform_check("1.0.0")
         self.assertEqual(result.status, "not_configured")
         self.assertEqual(result.current, "1.0.0")
         self.assertIsNone(result.available)
@@ -200,6 +207,26 @@ class KeyZipTests(unittest.TestCase):
             self.assertEqual((dest / "root.pub").read_bytes(), b"public-root")
             self.assertFalse((dest / "notes.txt").exists())
             self.assertFalse((dest.parent / "outside.txt").exists())
+
+    def test_windows_zip_paths_and_config_do_not_choose_the_keystore(self):
+        blob = io.BytesIO()
+        config = {
+            "keys_dir": r"C:\Users\User\Documents\prolink-monitor-main\packaging\tuf\keystore",
+            "repo_dir": r"initial-repo",
+        }
+        with zipfile.ZipFile(blob, "w") as archive:
+            archive.writestr("keystore\\root", b"private-root")
+            archive.writestr("keystore\\root.pub", b"public-root")
+            archive.writestr(".tufup-repo-config", json.dumps(config))
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "keys"
+            config_keys_dir = extract_keys_zip(blob.getvalue(), dest)
+            self.assertEqual((dest / "root").read_bytes(), b"private-root")
+            self.assertFalse((dest / ".tufup-repo-config").exists())
+            self.assertIn("C:", config_keys_dir or "")
+            self.assertEqual(resolve_keystore(dest, config_keys_dir), dest.resolve())
+            self.assertEqual(resolve_keystore(dest, "keystore"), dest.resolve())
+            self.assertEqual(resolve_keystore(dest, "../tuf-out-work/keystore"), dest.resolve())
 
 
 class SkipMetadataTests(unittest.TestCase):
@@ -364,6 +391,123 @@ class SignedUpdateFlowTests(unittest.TestCase):
 
             decode_keys_b64(encoded, Path(tmp))
             self.assertEqual((Path(tmp) / "root").read_bytes(), b"x")
+
+
+class ClosedStdinPublishTests(unittest.TestCase):
+    def test_publish_with_script_zip_does_not_prompt(self):
+        """Same zip layout as tuf_init_keys.py, no TTY, stdin closed.
+
+        The working directory is not the repo, and ``--out`` is the relative
+        path the workflow uses (``tuf-out``). That used to make tufup ask to
+        create ``tuf-out-work/tuf-out-work/keystore``.
+        """
+        from scripts.tuf_init_keys import _write_keys, _zip_keys
+
+        password = "test-password"
+        repo = Path(__file__).resolve().parents[1]
+        script = repo / "scripts" / "publish_tuf_release.py"
+        previous_pw = os.environ.get("TUFUP_KEY_PASSWORD")
+        os.environ["TUFUP_KEY_PASSWORD"] = password
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                keys = root / "keystore"
+                _write_keys(keys, password)
+                initial = root / "initial-repo"
+                sign_repository(keys_dir=keys, repo_dir=initial)
+                public_root = root / "root.json"
+                public_root.write_bytes((initial / "metadata" / "root.json").read_bytes())
+                zip_path = root / "tuf-keys.zip"
+                _zip_keys(keys, zip_path)
+                windows_config = json.dumps(
+                    {
+                        "app_name": "prolink-listener",
+                        "keys_dir": r"C:\Users\User\Documents\prolink-monitor-main\packaging\tuf\keystore",
+                        "repo_dir": "initial-repo",
+                    }
+                )
+                with zipfile.ZipFile(zip_path, "a") as archive:
+                    archive.writestr(".tufup-repo-config", windows_config)
+                    for path in keys.iterdir():
+                        if path.is_file():
+                            archive.writestr("keystore\\" + path.name, path.read_bytes())
+
+                bundle = root / "ProlinkListener"
+                bundle.mkdir()
+                (bundle / "ProlinkListener.exe").write_text("exe", encoding="utf-8")
+                work = root / "ci"
+                work.mkdir()
+                env = os.environ.copy()
+                env["TUFUP_KEY_PASSWORD"] = password
+                env["TUFUP_KEYS_B64"] = base64.b64encode(zip_path.read_bytes()).decode("ascii")
+                env.pop("PYTHONINSPECT", None)
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        str(script),
+                        "--bundle",
+                        str(bundle),
+                        "--version",
+                        "1.0.0",
+                        "--out",
+                        "tuf-out",
+                        "--metadata-dir",
+                        str(root / "previous-metadata"),
+                        "--trusted-root",
+                        str(public_root),
+                    ],
+                    cwd=work,
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=False,
+                )
+                combined = completed.stdout + completed.stderr
+                self.assertEqual(completed.returncode, 0, combined)
+                self.assertNotIn("Create directory", combined)
+                self.assertNotIn("[y]/n", combined)
+                self.assertNotIn("EOF when reading a line", combined)
+                self.assertIn("Ignoring keys_dir", combined)
+                out = work / "tuf-out"
+                for name in ("root.json", "targets.json", "snapshot.json", "timestamp.json"):
+                    self.assertTrue((out / name).is_file(), name)
+                self.assertTrue((out / "prolink-listener-1.0.0.tar.gz").is_file())
+
+                env["TUFUP_KEY_PASSWORD"] = "wrong-password"
+                # A second out dir, still relative, still no TTY.
+                refused = subprocess.run(
+                    [
+                        sys.executable,
+                        str(script),
+                        "--bundle",
+                        str(bundle),
+                        "--version",
+                        "1.0.1",
+                        "--out",
+                        "tuf-out-bad",
+                        "--trusted-root",
+                        str(public_root),
+                    ],
+                    cwd=work,
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=False,
+                )
+                refused_text = refused.stdout + refused.stderr
+                self.assertNotEqual(refused.returncode, 0, refused_text)
+                self.assertIn("does not match", refused_text)
+                self.assertNotIn("Create directory", refused_text)
+                self.assertNotIn("[y]/n", refused_text)
+        finally:
+            if previous_pw is None:
+                os.environ.pop("TUFUP_KEY_PASSWORD", None)
+            else:
+                os.environ["TUFUP_KEY_PASSWORD"] = previous_pw
 
 
 def _quiet_handler(directory: Path):

@@ -5,12 +5,19 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to sign, for example v1.0.0"
+        required: true
+        type: string
 
 # A pull request uploads the zip as an Actions artifact so the build can be
 # checked before a tag exists. Pushing a tag vX.Y.Z also creates a GitHub
 # Release. Signed update metadata is published only when the secrets exist.
+# workflow_dispatch does not rebuild: it downloads the zip already attached
+# to the tag and publishes metadata to the "updates" release.
 concurrency:
-  group: windows-release-${{ github.ref }}
+  group: windows-release-${{ github.ref }}-${{ github.event_name }}-${{ inputs.tag }}
   cancel-in-progress: true
 
 permissions:
@@ -19,6 +26,7 @@ permissions:
 jobs:
   build-windows:
     name: Build Windows app
+    if: github.event_name != 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -114,33 +122,42 @@ jobs:
         run: |
           set -euo pipefail
           ver="$(python -c 'from prolink import __version__; print(__version__)')"
-          python -m pip install --upgrade pip "tufup>=0.10,<0.11" packaging
           rm -rf release-app
           python -c "import shutil, sys; shutil.unpack_archive(sys.argv[1], 'release-app')" release-zip/ProlinkListener-*-win64.zip
-          mkdir -p previous-metadata tuf-out
-          require_flag=()
-          if gh release view updates >/dev/null 2>&1; then
-            echo "Downloading previous update metadata"
-            gh release download updates --dir previous-metadata --pattern "*.json" --clobber
-            require_flag=(--require-existing)
-          else
-            echo "No updates release yet. The committed root.json will anchor the first metadata."
+          bash scripts/ci_publish_metadata.sh "$ver" release-app/ProlinkListener
+
+  publish-existing:
+    name: Sign existing release
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download the release zip and publish metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TUFUP_KEYS_B64: ${{ secrets.TUFUP_KEYS_B64 }}
+          TUFUP_KEY_PASSWORD: ${{ secrets.TUFUP_KEY_PASSWORD }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="$RELEASE_TAG"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag must look like v1.0.0. Got: $tag" >&2
+            exit 1
           fi
-          # Missing secrets: the script prints a reason and exits 0.
-          python scripts/publish_tuf_release.py \
-            --bundle release-app/ProlinkListener \
-            --version "$ver" \
-            --metadata-dir previous-metadata \
-            --out tuf-out \
-            "${require_flag[@]}"
-          if ! compgen -G "tuf-out/*" >/dev/null; then
-            echo "No signed metadata was produced. The versioned zip is already on the release."
-            exit 0
-          fi
-          if ! gh release view updates >/dev/null 2>&1; then
-            gh release create updates \
-              --latest=false \
-              --title "Update metadata (do not install this)" \
-              --notes "Signed TUF metadata for the in-app updater. Install Prolink Listener from a versioned release instead (the ProlinkListener-*-win64.zip asset)."
-          fi
-          gh release upload updates tuf-out/* --clobber
+          ver="${tag#v}"
+          mkdir -p release-zip
+          gh release download "$tag" --dir release-zip --pattern "ProlinkListener-*-win64.zip" --clobber
+          zip="$(echo release-zip/ProlinkListener-*-win64.zip)"
+          test -f "$zip"
+          rm -rf release-app
+          python -c "import shutil, sys; shutil.unpack_archive(sys.argv[1], 'release-app')" "$zip"
+          test -d release-app/ProlinkListener
+          bash scripts/ci_publish_metadata.sh "$ver" release-app/ProlinkListener
