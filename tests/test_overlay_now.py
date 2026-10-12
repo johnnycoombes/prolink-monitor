@@ -18,6 +18,8 @@ class OverlayNowHelperTests(unittest.TestCase):
         self.assertEqual(normalize_now_style("panel"), "panel")
         self.assertEqual(normalize_now_style("PANEL"), "panel")
         self.assertEqual(normalize_now_style("card"), "card")
+        self.assertEqual(normalize_now_style("bar"), "panel")
+        self.assertEqual(normalize_now_style("BAR"), "panel")
         self.assertEqual(normalize_now_style(None), "card")
 
     def test_normalize_pos_card_corners(self):
@@ -50,6 +52,8 @@ class OverlayNowSettingsTests(unittest.TestCase):
         self.assertEqual(clean["overlay_now_pos"], "bl")
         clean = _sanitize({**base, "overlay_now_style": "card", "overlay_now_pos": "RIGHT"})
         self.assertEqual(clean["overlay_now_pos"], "br")
+        clean = _sanitize({**base, "overlay_now_style": "bar"})
+        self.assertEqual(clean["overlay_now_style"], "panel")
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib
 import re
+import sys
 import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -167,9 +168,11 @@ def _safe_process_result_value(_self: Any, value: Any, _dialect: Any) -> datetim
 _safe_process_result_value._prolink_safe = True  # type: ignore[attr-defined]
 
 
-# masterdb replaced db6. Import db6 only when masterdb is not installed,
-# and never let its DeprecationWarning become a library failure.
-_PREFERRED_DATETIME_MODULES = (
+# OneLibrary (current master), the older Device Library Plus name, and
+# masterdb each have their own DateTime. Patching only masterdb leaves
+# get_content() on exportLibrary.db raising on the first bad date.
+_DATETIME_MODULES = (
+    "pyrekordbox.onelibrary.models",
     "pyrekordbox.devicelib_plus.models",
     "pyrekordbox.masterdb.models",
 )
@@ -263,30 +266,37 @@ def install_tolerant_datetimes(modules: tuple[str, ...] | None = None) -> None:
     """Patch every pyrekordbox DateTime column so one bad cell cannot fail a query.
 
     Content, cues, history, playlists, and artwork rows share this type.
-    Patching the class covers the ANLZ-path lookup as well as the library list.
+    ``process_result_value`` looks up ``string_to_datetime`` in that module
+    when the row is read, including a processor SQLAlchemy already cached.
+    Replacing both the function and the method covers that.
 
-    ``pyrekordbox.masterdb`` is the supported package. ``db6`` is imported only
-    when masterdb is missing, and its deprecation warning is ignored.
+    ``db6`` is patched only when something has already imported it. Importing
+    it on purpose prints a deprecation warning that is not a library error.
     """
     if modules is not None:
-        for name in modules:
-            try:
-                module = _import_datetime_module(name)
-            except Exception:
+        names = list(modules)
+    else:
+        names = list(_DATETIME_MODULES)
+        for loaded in list(sys.modules):
+            if not loaded.startswith("pyrekordbox."):
                 continue
-            install_tolerant_datetimes_on(module)
-        return
-
-    masterdb_patched = False
-    for name in _PREFERRED_DATETIME_MODULES:
+            if loaded.endswith(".models") or loaded.endswith(".tables"):
+                if loaded not in names:
+                    names.append(loaded)
+        if (
+            _LEGACY_DATETIME_MODULE in sys.modules
+            and _LEGACY_DATETIME_MODULE not in names
+        ):
+            names.append(_LEGACY_DATETIME_MODULE)
+    patched = False
+    for name in names:
         try:
             module = _import_datetime_module(name)
         except Exception:
             continue
         install_tolerant_datetimes_on(module)
-        if "masterdb" in name:
-            masterdb_patched = True
-    if masterdb_patched:
+        patched = True
+    if modules is not None or patched:
         return
     try:
         module = _import_datetime_module(_LEGACY_DATETIME_MODULE)

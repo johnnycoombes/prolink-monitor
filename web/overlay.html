@@ -478,7 +478,11 @@ const layout = ['nowplaying','dual','minimal','setlist'].includes(params.get('la
   ? params.get('layout') : 'nowplaying';
 const corner = ['bl','br','tl','tr','center'].includes(params.get('corner'))
   ? params.get('corner') : 'bl';
-const nowStyle = params.get('style') === 'panel' ? 'panel' : 'card';
+const styleParam = (params.get('style') || 'card').toLowerCase();
+// ``bar`` is the full-width panel. Treating it as a card hid the spectrum.
+const nowStyle = (styleParam === 'panel' || styleParam === 'bar') ? 'panel' : 'card';
+const spectrumParam = (params.get('spectrum') || '').toLowerCase();
+const spectrumLocked = spectrumParam === '1' || spectrumParam === '0';
 const floatWindow = params.get('float') === '1';
 function normalizeCardPos(raw) {
   const r = String(raw || 'bl').toLowerCase();
@@ -496,7 +500,7 @@ const ZOOM_BARS_OPTS = [1, 2, 4, 8, 16];
 let showPhrasesDisplay = true;
 let showVocalsDisplay = true;
 let showNextCueDisplay = true;
-let showSpectrum = true;
+let showSpectrum = spectrumParam === '0' ? false : true;
 let zoomBarsDisplay = 4;
 let playheadModeDisplay = 'auto';
 const onlyPlaying = params.get('playing') !== '0';
@@ -1621,7 +1625,7 @@ function applyState(state){
       if (typeof state.display.show_next_cue === 'boolean') {
         showNextCueDisplay = state.display.show_next_cue;
       }
-      if (typeof state.display.show_spectrum === 'boolean') {
+      if (!spectrumLocked && typeof state.display.show_spectrum === 'boolean') {
         showSpectrum = state.display.show_spectrum;
       }
     }
@@ -1645,7 +1649,7 @@ function applyState(state){
     if (typeof state.display.show_next_cue === 'boolean') {
       showNextCueDisplay = state.display.show_next_cue;
     }
-    if (typeof state.display.show_spectrum === 'boolean') {
+    if (!spectrumLocked && typeof state.display.show_spectrum === 'boolean') {
       showSpectrum = state.display.show_spectrum;
     }
     const zb = +state.display.zoom_bars;

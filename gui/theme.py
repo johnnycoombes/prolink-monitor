@@ -284,10 +284,29 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
 
 QTableWidget {{
     background-color: {COLORS["panel"]};
+    alternate-background-color: #161a22;
     border: 1px solid {COLORS["line"]};
     border-radius: 6px;
     gridline-color: {COLORS["line"]};
     selection-background-color: {COLORS["panel_hover"]};
+    selection-color: {COLORS["text"]};
+}}
+
+QTableWidget::item {{
+    background-color: {COLORS["panel"]};
+    color: {COLORS["text"]};
+    padding: 6px 8px;
+    border: none;
+}}
+
+QTableWidget::item:alternate {{
+    background-color: #161a22;
+    color: {COLORS["text"]};
+}}
+
+QTableWidget::item:selected {{
+    background-color: {COLORS["panel_hover"]};
+    color: {COLORS["text"]};
 }}
 
 QHeaderView::section {{

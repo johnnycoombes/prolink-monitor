@@ -271,10 +271,11 @@ class Monitor:
         try:
             with browser:
                 port = int(getattr(getattr(browser, "last_status", None), "port", 0) or 0)
-                detail = (
-                    f"TCP dbserver · port discovery {remotedb_wire.REMOTE_DB_DISCOVERY_PORT}"
-                    f" → {port} · player {browser.target_player}"
-                    f" as client #{browser.requesting_player} slot {browser.slot}"
+                detail = "TCP dbserver · " + remotedb_wire.session_detail(
+                    port=port,
+                    target=browser.target_player,
+                    client=browser.requesting_player,
+                    slot=browser.slot,
                 )
                 self._remotedb_fail.pop(host, None)
                 _DB_STATS.clear_error()
@@ -409,6 +410,13 @@ class Monitor:
             if self._stop.is_set():
                 return
             self._probe_live_library(host)
+            # A live session is enough. export.pdb can still be parsing, and
+            # opening TCP again every second makes the player drop the next
+            # handshake. Those drops were counted as reconnects.
+            pending = getattr(self, "_live_detail", None) or {}
+            live = pending.get(host)
+            if live and live[0] == "remotedb":
+                return
             with self.library.lock:
                 media = self.library.media.get(host)
             if media is not None and getattr(media, "library_source", "") == "remotedb":
@@ -437,7 +445,36 @@ class Monitor:
         if pending is None:
             pending = {}
             self._live_detail = pending
+        saved = pending.get(host)
+        # A later browse failure must not erase a session Health already shows as live.
+        if saved and saved[0] == "remotedb" and source != "remotedb":
+            return
         pending[host] = (source, detail)
+
+    def _browse_live_reason(self, host: str) -> str:
+        recorded = getattr(self, "_remotedb_fail", None) or {}
+        text = ""
+        if isinstance(recorded, dict):
+            text = str(recorded.get(host) or "").strip()
+        return text or "live dbserver was not connected"
+
+    def _pdb_track(self, media, track_id: int):
+        """A real export.pdb row, or None. Mocks must not look like a track."""
+        db = getattr(media, "db", None)
+        getter = getattr(db, "get", None)
+        if not callable(getter):
+            return None
+        try:
+            track = getter(int(track_id))
+        except Exception:
+            return None
+        if track is None:
+            return None
+        title = getattr(track, "title", None)
+        artist = getattr(track, "artist", None)
+        if isinstance(title, str) or isinstance(artist, str):
+            return track
+        return None
 
     def _apply_live_source(self) -> None:
         """Write a dbserver result onto a medium that appeared after the attempt."""
@@ -1138,6 +1175,7 @@ class Monitor:
         all_rows: list[dict] = []
         hosts: list[str] = []
         source = "none"
+        live_errors: list[str] = []
         for host, media in media_list:
             hosts.append(host)
             try:
@@ -1177,10 +1215,18 @@ class Monitor:
                             tid = int(row.get("id") or 0)
                             if not tid:
                                 continue
+                            fields = remotedb_wire.columns_for_menu_track(
+                                str(row.get("name") or ""),
+                                str(row.get("subtitle") or ""),
+                                self._pdb_track(media, tid),
+                            )
                             live_rows.append({
                                 "id": tid,
-                                "title": str(row.get("name") or ""),
-                                "artist": str(row.get("subtitle") or ""),
+                                "title": str(fields.get("title") or ""),
+                                "artist": str(fields.get("artist") or ""),
+                                "album": str(fields.get("album") or ""),
+                                "bpm": fields.get("bpm") or 0,
+                                "key": str(fields.get("key") or ""),
                                 "host": host,
                                 "slot": int(browser.slot),
                                 "source": "remotedb",
@@ -1199,8 +1245,17 @@ class Monitor:
                         r for r in live_rows
                         if q in (r.get("title") or "").lower()
                         or q in (r.get("artist") or "").lower()
+                        or q in (r.get("album") or "").lower()
+                        or q in (r.get("key") or "").lower()
+                        or q in str(r.get("bpm") or "")
                     ]
                 all_rows.extend(live_rows)
+                continue
+            reason = self._browse_live_reason(host)
+            # Health stays on Live. Do not paint NFS rows under that label.
+            if str(getattr(media, "library_source", "") or "") == "remotedb":
+                source = "remotedb"
+                live_errors.append(reason)
                 continue
             pdb_rows: list[dict] = []
             if getattr(media, "db", None) is None:
@@ -1221,7 +1276,8 @@ class Monitor:
             if pdb_rows:
                 media.set_library_source(
                     "nfs-cache",
-                    f"NFS export.pdb cache ({media.cache_dir})",
+                    f"NFS export.pdb cache ({getattr(media, 'cache_dir', '') or ''}); "
+                    f"live dbserver failed: {reason}",
                 )
                 source = "nfs-cache"
                 all_rows.extend(pdb_rows)
@@ -1237,7 +1293,8 @@ class Monitor:
                 continue
             media.set_library_source(
                 "onelibrary",
-                f"Fallback: read-only OneLibrary copy ({media.cache_dir})",
+                f"Fallback: read-only OneLibrary copy ({media.cache_dir}); "
+                f"live dbserver failed: {reason}",
             )
             source = "onelibrary"
             for r in ol_rows:
@@ -1256,6 +1313,7 @@ class Monitor:
             "hosts": hosts,
             "multi_player": len(hosts) > 1,
             "library_source": source,
+            "error": "; ".join(live_errors),
         }
 
     def browse_playlists(self) -> dict:
@@ -1280,9 +1338,11 @@ class Monitor:
                     continue
                 try:
                     with browser:
-                        detail = (
-                            f"TCP dbserver · player {browser.target_player} "
-                            f"as client #{browser.requesting_player} slot {browser.slot}"
+                        detail = "TCP dbserver · " + remotedb_wire.session_detail(
+                            port=int(getattr(browser.last_status, "port", 0) or 0),
+                            target=browser.target_player,
+                            client=browser.requesting_player,
+                            slot=browser.slot,
                         )
                         media.set_library_source("remotedb", detail)
                         library_source = "remotedb"
@@ -1318,6 +1378,9 @@ class Monitor:
                     errors.append({"host": host, "error": f"remotedb slot {slot}: {exc}"})
             if live_ok:
                 continue
+            if str(getattr(media, "library_source", "") or "") == "remotedb":
+                library_source = "remotedb"
+                continue
             summary = getattr(media, "onelibrary", None)
             if summary is not None and summary.present:
                 any_present = True
@@ -1336,9 +1399,11 @@ class Monitor:
                     ol = None
             if ol is None:
                 continue
+            reason = self._browse_live_reason(host)
             media.set_library_source(
                 "nfs-cache",
-                f"NFS exportLibrary.db cache ({media.cache_dir})",
+                f"NFS exportLibrary.db cache ({media.cache_dir}); "
+                f"live dbserver failed: {reason}",
             )
             library_source = "nfs-cache"
             for p in onelibrary.list_playlists(ol):
@@ -1373,9 +1438,11 @@ class Monitor:
                 media.refresh_if_stale()
             except Exception:
                 pass
+            saw_failure = False
             for slot in self._library_db_slots():
                 browser = self._open_remotedb(h, slot=slot)
                 if browser is None:
+                    saw_failure = True
                     self._remember_db_failure(
                         h, media, self._db_unavailable_reason(h))
                     continue
@@ -1389,10 +1456,18 @@ class Monitor:
                             tid = int(row.get("id") or 0)
                             if not tid:
                                 continue
+                            fields = remotedb_wire.columns_for_menu_track(
+                                str(row.get("name") or ""),
+                                str(row.get("subtitle") or ""),
+                                self._pdb_track(media, tid),
+                            )
                             tracks.append({
                                 "id": tid,
-                                "title": row.get("name") or "",
-                                "artist": row.get("subtitle") or "",
+                                "title": str(fields.get("title") or ""),
+                                "artist": str(fields.get("artist") or ""),
+                                "album": str(fields.get("album") or ""),
+                                "bpm": fields.get("bpm") or 0,
+                                "key": str(fields.get("key") or ""),
                                 "host": h,
                                 "slot": int(browser.slot),
                                 "source": "remotedb",
@@ -1406,8 +1481,19 @@ class Monitor:
                             "tracks": tracks,
                             "library_source": "remotedb",
                         }
-                except Exception:
-                    pass
+                except Exception as exc:
+                    saw_failure = True
+                    self._remotedb_fail[h] = str(exc)
+            if str(getattr(media, "library_source", "") or "") == "remotedb":
+                payload = {
+                    "id": playlist_id,
+                    "host": h,
+                    "tracks": [],
+                    "library_source": "remotedb",
+                }
+                if saw_failure:
+                    payload["error"] = self._browse_live_reason(h)
+                return payload
             ol = getattr(media, "onelibrary_db", None)
             if ol is None:
                 continue
@@ -2115,7 +2201,8 @@ class QuietServer(PanelServer):
 # or another service has reserved the default range — WinError 10013).
 _HTTP_PORT_FALLBACKS = (8787, 8877, 9777, 18777, 0)
 # A reconnect can still see the old socket for a moment. Retry that before giving up.
-_HTTP_BIND_RETRIES = 5
+# Give a reconnect a moment to release the requested port before 8787.
+_HTTP_BIND_RETRIES = 12
 _HTTP_BIND_RETRY_S = 0.1
 
 

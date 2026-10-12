@@ -46,6 +46,66 @@ class ParseLibraryDatetimeTests(unittest.TestCase):
         onelibrary.install_tolerant_datetimes_on(module)
         self.assertTrue(module.DateTime.process_result_value._prolink_safe)
 
+    def test_fixture_row_survives_when_onelibrary_and_masterdb_are_both_present(self):
+        import sqlite3
+        import sys
+        import types
+
+        saved = {
+            name: sys.modules.get(name)
+            for name in (
+                "pyrekordbox.onelibrary.models",
+                "pyrekordbox.masterdb.models",
+            )
+        }
+        onelibrary_models = types.ModuleType("pyrekordbox.onelibrary.models")
+        masterdb_models = types.ModuleType("pyrekordbox.masterdb.models")
+        for module in (onelibrary_models, masterdb_models):
+            exec(
+                "def string_to_datetime(value):\n"
+                "    from datetime import datetime\n"
+                "    return datetime.fromisoformat(value)\n"
+                "class DateTime:\n"
+                "    def process_result_value(self, value, dialect):\n"
+                "        if value:\n"
+                "            return string_to_datetime(value)\n"
+                "        return None\n",
+                module.__dict__,
+            )
+        sys.modules["pyrekordbox.onelibrary.models"] = onelibrary_models
+        sys.modules["pyrekordbox.masterdb.models"] = masterdb_models
+        try:
+            column = onelibrary_models.DateTime()
+            with self.assertRaises(ValueError):
+                column.process_result_value("2019t00-00-00z", None)
+            onelibrary.install_tolerant_datetimes()
+            conn = sqlite3.connect(":memory:")
+            conn.execute(
+                "CREATE TABLE content (ID INTEGER, Title TEXT, releaseDate TEXT)")
+            conn.execute(
+                "INSERT INTO content VALUES (1, 'Old', '2019t00-00-00z')")
+            conn.execute(
+                "INSERT INTO content VALUES (2, 'New', '2019-06-01T12:00:00')")
+            column = onelibrary_models.DateTime()
+            parsed = []
+            for row in conn.execute(
+                "SELECT ID, Title, releaseDate FROM content ORDER BY ID"
+            ):
+                parsed.append((row[1], column.process_result_value(row[2], None)))
+            conn.close()
+        finally:
+            for name, module in saved.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
+        self.assertEqual(parsed[0], ("Old", None))
+        self.assertEqual(parsed[1][0], "New")
+        self.assertEqual(parsed[1][1].year, 2019)
+        self.assertTrue(
+            onelibrary_models.string_to_datetime._prolink_safe)
+        self.assertTrue(masterdb_models.DateTime.process_result_value._prolink_safe)
+
 
 class ListTracksTests(unittest.TestCase):
     def test_orm_skips_one_bad_row_and_returns_the_rest(self):

@@ -38,6 +38,7 @@ class MasterDbImportTests(unittest.TestCase):
 
         with patch("prolink.onelibrary.importlib.import_module", fake_import):
             onelibrary.install_tolerant_datetimes()
+        self.assertIn("pyrekordbox.onelibrary.models", imported)
         self.assertIn("pyrekordbox.masterdb.models", imported)
         self.assertNotIn("pyrekordbox.db6.tables", imported)
 
@@ -46,7 +47,7 @@ class MasterDbImportTests(unittest.TestCase):
 
         def fake_import(name):
             imported.append(name)
-            if "masterdb" in name or "devicelib" in name:
+            if "masterdb" in name or "devicelib" in name or "onelibrary" in name:
                 raise ImportError(name)
             warnings.warn(
                 "'pyrekordbox.db6' is deprecated and will be removed in version "

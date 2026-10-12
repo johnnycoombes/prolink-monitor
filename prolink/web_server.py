@@ -91,6 +91,43 @@ class PanelServer(ThreadingHTTPServer):
         self.sse_sndbuf = 0
         super().__init__(server_address, RequestHandlerClass)
 
+    def server_bind(self) -> None:
+        """Bind the listen socket.
+
+        On Windows ``SO_REUSEADDR`` means another socket may share the port.
+        Setting it before the first bind makes a free 8777 come back as
+        WinError 10013, so the process falls through to 8787 and 8777 stays
+        unbound. Bind plainly first. Use the share flag only when the port
+        is still in TIME_WAIT from the previous process.
+        """
+        if not hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            super().server_bind()
+            return
+        try:
+            self.socket.close()
+        except OSError:
+            pass
+        last: OSError | None = None
+        for reuse in (False, True):
+            sock = socket.socket(self.address_family, self.socket_type)
+            try:
+                if reuse:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind(self.server_address)
+            except OSError as exc:
+                last = exc
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+                continue
+            self.socket = sock
+            self.server_address = sock.getsockname()
+            return
+        if last is not None:
+            raise last
+        raise OSError("bind failed")
+
     def serve_forever(self, poll_interval=0.2):
         self._serving.set()
         try:

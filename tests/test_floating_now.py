@@ -54,6 +54,7 @@ class FloatingOverlayUrlTests(unittest.TestCase):
         self.assertIn("next=0", url)
         self.assertIn("style=card", url)
         self.assertIn("pos=bl", url)
+        self.assertIn("spectrum=1", url)
         self.assertIn(":9876/overlay", url)
 
     def test_parity_screenshot_url_preview_mock_embed(self):
