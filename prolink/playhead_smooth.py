@@ -53,3 +53,32 @@ def freeze_instant(now: float, last_packet: float, freeze_after: float = FREEZE_
     if now - last_packet > freeze_after:
         return last_packet + freeze_after
     return now
+
+
+def sync_detail_origin(cache_start: float, true_start: float, px_per_col: float,
+                       width: float, dpr: float = 1.0) -> tuple[float, int, bool]:
+    """Move a scrolling waveform cache onto the playhead window.
+
+    ``cache_start`` and ``true_start`` are the first visible waveform column.
+    The bitmap is shifted by whole device pixels, and the stored origin moves
+    by those same pixels. Truncating CSS pixels and then rounding the device
+    shift walks the wave away from the loop highlight when the display scale
+    is not an integer (125% and 150% on Windows).
+
+    Returns ``(new_cache_start, shift_device_px, full_rebuild)``. A full
+    rebuild means the jump is at least one view wide (a seek, or a loop wrap
+    that is wider than the window). ``shift_device_px`` is positive when the
+    cache is ahead of the playhead and the bitmap must move right.
+    """
+    if px_per_col <= 0 or width <= 0:
+        return float(true_start), 0, True
+    scale = float(dpr) if dpr and dpr > 0 else 1.0
+    ahead_css = (float(cache_start) - float(true_start)) * float(px_per_col)
+    shift_device = int(ahead_css * scale)  # toward zero
+    view_device = int(round(float(width) * scale))
+    if shift_device == 0:
+        return float(cache_start), 0, False
+    if abs(shift_device) >= max(1, view_device):
+        return float(true_start), 0, True
+    moved_css = shift_device / scale
+    return float(cache_start) - moved_css / float(px_per_col), shift_device, False

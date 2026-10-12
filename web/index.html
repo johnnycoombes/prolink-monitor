@@ -11,6 +11,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Archivo:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="wavepack.js"></script>
+<script src="playhead.js"></script>
 <style>
 :root{
   --black:#07080a;
@@ -352,6 +353,9 @@ applyMonitorLayout();
 </div>
 
 <script>
+const wrapLoopPosition = ProlinkPlayhead.wrapLoopPosition;
+const extrapolatePlayhead = ProlinkPlayhead.extrapolatePlayhead;
+const syncDetailCache = ProlinkPlayhead.syncDetailCache;
 /* ------------------------------------------------------------------- strings */
 const params = new URLSearchParams(location.search);
 const READONLY = params.get('readonly') === '1' || params.get('ro') === '1';
@@ -992,16 +996,6 @@ function fitCanvas(cv) {
   return false;
 }
 
-function wrapLoopPosition(pos, looping, start, end) {
-  // Same rule as prolink.link.wrap_loop_position: extrapolation must not
-  // walk the highlight out of the loop between polls.
-  if (!looping || start == null || end == null || !(+end > +start)) return pos;
-  const a = +start, b = +end, len = b - a;
-  if (pos >= b) return a + (((pos - a) % len) + len) % len;
-  if (pos < a && a - pos < len) return a;
-  return pos;
-}
-
 function activeLoop(meta, pos, looping, deck) {
   /** Loop the player is in, else the cue containing the playhead. */
   if (looping && deck && +deck.loop_end_ms > +deck.loop_start_ms) {
@@ -1300,15 +1294,13 @@ function drawDetail(d, track, pos, playing, looping, anchor, deck) {
     d.detailStart = start;
     d.detailKey = key;
   } else {
-    const shiftF = (d.detailStart - start) * pxPerCol;
-    const shift = shiftF | 0; // toward zero
-    if (Math.abs(shift) >= cssW) {
+    const synced = syncDetailCache(d.detailStart, start, pxPerCol, cssW, r);
+    if (synced.full) {
       const o = d.detailOff.getContext('2d');
       o.clearRect(0, 0, W, H);
       paintRange(o, start, 0, cssW);
       d.detailStart = start;
-    } else if (shift !== 0) {
-      // Reuse a scratch canvas instead of allocating every scrolled pixel.
+    } else if (synced.shiftDevice !== 0) {
       let scratch = d.detailScratch;
       if (!scratch) scratch = d.detailScratch = document.createElement('canvas');
       if (scratch.width !== W || scratch.height !== H) {
@@ -1317,22 +1309,19 @@ function drawDetail(d, track, pos, playing, looping, anchor, deck) {
       const o = scratch.getContext('2d');
       o.imageSmoothingEnabled = false;
       o.clearRect(0, 0, W, H);
-      if (shift > 0) {
-        o.drawImage(d.detailOff, Math.round(shift * r), 0);
-        paintRange(o, start, 0, shift);
-      } else {
-        const sh = -shift;
-        o.drawImage(d.detailOff, Math.round(-sh * r), 0);
-        paintRange(o, start, cssW - sh, cssW);
-      }
+      const cssShift = Math.ceil(Math.abs(synced.shiftDevice) / r);
+      o.drawImage(d.detailOff, synced.shiftDevice, 0);
+      if (synced.shiftDevice > 0) paintRange(o, synced.cacheStart, 0, cssShift);
+      else paintRange(o, synced.cacheStart, cssW - cssShift, cssW);
       d.detailScratch = d.detailOff;
       d.detailOff = scratch;
-      d.detailStart -= shift / pxPerCol;
+      d.detailStart = synced.cacheStart;
     }
   }
 
   ctx.clearRect(0, 0, W, H);
-  ctx.drawImage(d.detailOff, 0, 0);
+  const align = Math.round((d.detailStart - start) * pxPerCol * r);
+  ctx.drawImage(d.detailOff, align, 0);
 
   const loop = activeLoop(track.meta, pos, looping, deck);
   if (loop) {
@@ -1369,12 +1358,17 @@ function render() {
     if (s.track_id && !track) loadTrack(s);
     const dur = durationMs(s, track);
     const looping = s.state === 'looping';
-    const age = +(s.playhead_age_s || 0);
-    const room = Math.max(0, 1 - Math.max(0, age));
-    const step = s.playing ? Math.min(Math.max(0, dt), room) : 0;
-    let pos = +(s.position_ms || 0) + step * 1000 * (+s.speed || 0);
-    pos = wrapLoopPosition(pos, looping, s.loop_start_ms, s.loop_end_ms);
-    if (dur) pos = Math.min(pos, dur);
+    const pos = extrapolatePlayhead({
+      posMs: +(s.position_ms || 0),
+      playing: !!s.playing,
+      speed: +s.speed || 0,
+      dt: dt,
+      durationMs: dur,
+      looping: looping,
+      loopStartMs: s.loop_start_ms,
+      loopEndMs: s.loop_end_ms,
+      packetAgeS: +(s.playhead_age_s || 0),
+    });
 
     drawInfo(d, s);
     layoutWave(d);
