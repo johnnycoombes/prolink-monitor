@@ -58,7 +58,11 @@ def main() -> int:
     timer = QTimer(window)
     timer.timeout.connect(_drain_instance)
     timer.start(200)
+    from prolink.shutdown import arm_process_exit, request_process_exit
+
+    arm_process_exit()
     app.aboutToQuit.connect(hub.close)
+    app.aboutToQuit.connect(request_process_exit)
     _drain_instance()
 
     try:

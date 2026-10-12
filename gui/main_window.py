@@ -105,6 +105,19 @@ class MainWindow(QMainWindow):
             self._nav_actions[key] = act
         top_l.addWidget(self.nav_button)
 
+        self.file_button = QToolButton()
+        self.file_button.setObjectName("Chip")
+        self.file_button.setText(self.i18n.t("menu_file"))
+        self.file_button.setCursor(Qt.PointingHandCursor)
+        self.file_button.setPopupMode(QToolButton.InstantPopup)
+        self._file_menu = QMenu(self.file_button)
+        self._act_exit = QAction(self.i18n.t("menu_exit"), self)
+        self._act_exit.setShortcut(QKeySequence.Quit)
+        self._act_exit.triggered.connect(self.quit_app)
+        self._file_menu.addAction(self._act_exit)
+        self.file_button.setMenu(self._file_menu)
+        top_l.addWidget(self.file_button)
+
         self.status_led = QLabel("●")
         self.status_led.setStyleSheet(f"color:{COLORS['dimmest']}; font-size:12px;")
         self.status_text = QLabel(self.i18n.t("idle"))
@@ -344,11 +357,26 @@ class MainWindow(QMainWindow):
             self._floating_now = None
 
     def quit_app(self) -> None:
-        if self._floating_now is not None:
-            self._floating_now.close()
-            self._floating_now = None
+        """File > Exit and the tray Quit. Always leave, including close-to-tray."""
         self._force_quit = True
+        self._release_floating()
         self.close()
+
+    def _release_floating(self) -> None:
+        win = self._floating_now
+        self._floating_now = None
+        if win is None:
+            return
+        release = getattr(win, "release_engine", None)
+        if callable(release):
+            try:
+                release()
+            except Exception:
+                pass
+        try:
+            win.close()
+        except RuntimeError:
+            pass
 
     def _tray_enabled(self) -> bool:
         return self._tray is not None and self._tray.isVisible()
@@ -626,10 +654,17 @@ class MainWindow(QMainWindow):
             save_settings(self.settings)
         except OSError:
             pass
+        self._release_floating()
+        from gui.floating_now import release_webengine_views
+
+        release_webengine_views()
         self.backend.stop()
         if self._tray is not None:
             self._tray.hide()
         super().closeEvent(event)
         app = QApplication.instance()
-        if app is not None and self._force_quit:
+        if app is not None:
             app.quit()
+        from prolink.shutdown import request_process_exit
+
+        request_process_exit()

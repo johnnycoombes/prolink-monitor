@@ -205,7 +205,7 @@ class WebPanelSourceTests(unittest.TestCase):
             CARD_GAP, CARD_RADIUS, DECK_ORDER, IDENT_COLLAPSED, IDENT_WIDTH,
             OVERVIEW_FRAC, OVERVIEW_MAX, OVERVIEW_MIN, PAGE_MARGINS, PHASE_H,
             PHASE_W, PHRASE_H, PITCH_PX, READOUT_PANEL_MAX, READOUT_PANEL_MIN,
-            TIME_PX,
+            TIME_PX, TITLE_PX, ARTIST_PX, DETAIL_PX,
         )
 
         path = os.path.join(ROOT, "web", "index.html")
@@ -238,6 +238,21 @@ class WebPanelSourceTests(unittest.TestCase):
         self.assertEqual(data["phaseH"], PHASE_H)
         self.assertEqual(data["order2"], list(DECK_ORDER[2]))
         self.assertEqual(data["order4"], list(DECK_ORDER[4]))
+        self.assertEqual(data["titlePx"], TITLE_PX)
+        self.assertEqual(data["artistPx"], ARTIST_PX)
+        self.assertEqual(data["detailPx"], DETAIL_PX)
+        self.assertIn("data-genre", html)
+        self.assertIn("data-comment", html)
+        self.assertIn("data-played", html)
+        self.assertIn("data-phrase", html)
+        self.assertIn("function displayText", html)
+        self.assertIn("(blank)", html)
+        deck_fn = html[html.find("function createDeck"):html.find("function sortDecks")]
+        self.assertLess(deck_fn.find('class="readouts"'), deck_fn.find("data-next"))
+        wave_tools = deck_fn[deck_fn.find("wave-tools"):deck_fn.find("canvases")]
+        self.assertNotIn("data-next", wave_tools)
+        self.assertIn("data-album", deck_fn)
+        self.assertIn("data-genre", deck_fn)
         self.assertIn('class="accent"', html)
         self.assertIn('class="tags" data-tags', html)
         self.assertNotIn("num-row", html)

@@ -82,11 +82,12 @@ body.hide-el-tags .tags{display:none !important}
 body.hide-el-waveform .wave-col{display:none !important}
 body.hide-el-bpm .bpm{display:none !important}
 body.hide-el-tempo .pitch{display:none !important}
-body.hide-el-time .times{display:none !important}
+body.hide-el-time .times, body.hide-el-time .played{display:none !important}
 body.hide-el-key .key{display:none !important}
-body.hide-el-state .state{display:none !important}
+body.hide-el-state .state, body.hide-el-state .phrase{display:none !important}
 body.hide-el-state.hide-el-bpm .bar-dots{display:none !important}
-body.hide-el-key.hide-el-state .state-row{display:none !important}
+body.hide-el-state .state-row{display:none !important}
+[hidden]{display:none !important}
 body.hide-el-artwork.hide-el-title.hide-el-artist.hide-el-meta.hide-el-tags .identity{
   width:var(--ident-collapsed);flex-basis:var(--ident-collapsed);
 }
@@ -127,8 +128,9 @@ body.hide-el-bpm.hide-el-tempo.hide-el-time.hide-el-key.hide-el-state .readouts{
 }
 .art.blank{display:flex;align-items:center;justify-content:center;
   font-family:var(--mono);font-size:22px;color:var(--dimmest)}
-.who{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px}
-.num{font-family:var(--mono);font-size:18px;font-weight:700;color:var(--c);line-height:1}
+.who{min-width:0;flex:1;display:flex;flex-direction:column;gap:1px}
+.num{font-family:var(--mono);font-weight:700;color:var(--c);line-height:1;
+  font-size:calc(20px * var(--row-scale, 1))}
 .tags{display:flex;flex-wrap:wrap;align-items:center}
 .tag{
   font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:1px;
@@ -140,15 +142,30 @@ body.hide-el-bpm.hide-el-tempo.hide-el-time.hide-el-key.hide-el-state .readouts{
 .tag.onair{color:var(--red)}
 .tag.closed{color:var(--dim)}
 .title{
-  font-size:14px;font-weight:600;line-height:1.25;
+  font-size:calc(var(--title-size) * var(--row-scale, 1));font-weight:700;line-height:1.15;
   overflow:hidden;text-overflow:ellipsis;display:-webkit-box;
   -webkit-line-clamp:2;-webkit-box-orient:vertical;
 }
-.artist{font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.meta{
-  font-family:var(--mono);font-size:10px;color:var(--dimmest);
+.deck.compact .title{-webkit-line-clamp:1}
+.artist{
+  font-size:calc(var(--artist-size) * var(--row-scale, 1));color:var(--dim);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
+.field{
+  font-family:var(--mono);color:var(--dim);
+  font-size:calc(var(--detail-size) * var(--row-scale, 1));
+  line-height:1.3;
+}
+.genre{white-space:normal;overflow:hidden}
+.deck.compact .genre{white-space:nowrap;text-overflow:ellipsis}
+.deck.compact .extra{display:none !important}
+.facts{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline;min-width:0}
+.key{font-family:var(--mono);font-weight:700;color:var(--c);
+  font-size:calc(18px * var(--row-scale, 1));letter-spacing:.03em}
+.rating{letter-spacing:1px;color:#ffd45e}
+.swatch{display:inline-block;width:.7em;height:.7em;border-radius:2px;margin-right:4px}
+.played{height:6px;border-radius:3px;background:var(--line);overflow:hidden;flex:none}
+.played i{display:block;height:100%;width:0;background:var(--c)}
 
 /* --- middle: cue/zoom row, then overview + phrase strip + detail --- */
 .wave-col{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;gap:2px}
@@ -183,8 +200,9 @@ body.hide-el-bpm.hide-el-tempo.hide-el-time.hide-el-key.hide-el-state .readouts{
 }
 .vocals.on{display:block}
 .next-cue{
-  font-family:var(--mono);font-size:11px;font-weight:700;color:#e8eaf0;
-  white-space:nowrap;font-variant-numeric:tabular-nums;
+  font-family:var(--mono);font-weight:700;color:#e8eaf0;
+  font-size:calc(13px * var(--row-scale, 1));
+  font-variant-numeric:tabular-nums;line-height:1.25;
 }
 .detail{flex:1;min-height:0;position:relative;background:#080a0c}
 canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
@@ -201,31 +219,36 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   display:flex;flex-direction:column;gap:2px;min-height:0;overflow:hidden;
 }
 .bpm{
-  font-family:var(--mono);font-size:var(--bpm-size);font-weight:700;line-height:1;
-  text-align:right;font-variant-numeric:tabular-nums;
+  font-family:var(--mono);font-weight:700;line-height:1;text-align:right;
+  font-size:calc(var(--bpm-size) * var(--row-scale, 1));
+  font-variant-numeric:tabular-nums;
 }
 .pitch{
-  font-family:var(--mono);font-size:var(--pitch-size);font-weight:500;color:var(--dim);
-  text-align:right;font-variant-numeric:tabular-nums;
+  font-family:var(--mono);font-weight:500;color:var(--dim);text-align:right;
+  font-size:calc(var(--pitch-size) * var(--row-scale, 1));
+  font-variant-numeric:tabular-nums;
 }
 .pitch.up{color:#ff9f45}.pitch.down{color:#5eb0ff}
 .times{
   display:flex;gap:12px;margin-top:4px;
   font-family:var(--mono);font-variant-numeric:tabular-nums;
 }
-.elapsed,.remaining{font-size:var(--time-size);font-weight:700;line-height:1.1}
+.elapsed,.remaining{font-weight:700;line-height:1.1;
+  font-size:calc(var(--time-size) * var(--row-scale, 1))}
 .remaining{color:var(--dim)}
 .remaining.low{color:var(--red)}
-.bar-dots{display:flex;gap:3px;align-items:center;height:10px;margin-top:2px}
+.bar-dots{display:flex;gap:3px;align-items:center;height:10px;margin-top:2px;flex:none}
 .bar-dots i{
   width:var(--phase-w);height:var(--phase-h);background:var(--line);border-radius:1px;
 }
 .bar-dots i.on{background:var(--c)}
 .state-row{display:flex;align-items:center;gap:6px;min-width:0;margin-top:2px}
-.state{font-family:var(--mono);font-size:10px;color:var(--dim);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
-.key{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--c);
-  flex:none;letter-spacing:.03em}
+.state{font-family:var(--mono);color:var(--dim);flex:1;min-width:0;
+  font-size:calc(var(--detail-size) * var(--row-scale, 1));
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.phrase{font-family:var(--mono);color:var(--dim);flex:1;min-width:0;
+  font-size:calc(var(--detail-size) * var(--row-scale, 1));
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .loop-badge{
   display:none;align-items:center;gap:5px;flex:none;
   font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.08em;
@@ -299,7 +322,7 @@ body.readonly #session .head::after{content:' · read-only'; color:var(--dimmest
   header .pill#p-dev{display:none}
 }
 </style>
-<script id="monitor-layout" type="application/json">{"identWidth":300,"identCollapsed":44,"readoutMin":188,"readoutMax":220,"art":72,"artRadius":4,"accent":4,"cardRadius":6,"cardGap":8,"pageMargins":[20,14,20,12],"bodyMargins":[12,10,12,10],"bodyGap":12,"phraseH":16,"overviewFrac":0.14,"overviewMin":28,"overviewMax":48,"bpm":28,"pitch":12,"time":15,"phaseW":12,"phaseH":4,"order2":[1,2],"order4":[3,1,2,4]}</script>
+<script id="monitor-layout" type="application/json">{"identWidth":360,"identCollapsed":44,"readoutMin":208,"readoutMax":248,"art":72,"artRadius":4,"accent":4,"cardRadius":6,"cardGap":8,"pageMargins":[20,14,20,12],"bodyMargins":[12,10,12,10],"bodyGap":12,"phraseH":16,"overviewFrac":0.14,"overviewMin":28,"overviewMax":48,"bpm":28,"pitch":12,"time":15,"phaseW":12,"phaseH":4,"titlePx":22,"artistPx":16,"detailPx":13,"order2":[1,2],"order4":[3,1,2,4]}</script>
 <script>
 const MONITOR_LAYOUT = JSON.parse(document.getElementById('monitor-layout').textContent);
 function applyMonitorLayout() {
@@ -327,6 +350,9 @@ function applyMonitorLayout() {
   s.setProperty('--time-size', L.time + 'px');
   s.setProperty('--phase-w', L.phaseW + 'px');
   s.setProperty('--phase-h', L.phaseH + 'px');
+  s.setProperty('--title-size', (L.titlePx || 22) + 'px');
+  s.setProperty('--artist-size', (L.artistPx || 16) + 'px');
+  s.setProperty('--detail-size', (L.detailPx || 13) + 'px');
 }
 applyMonitorLayout();
 </script>
@@ -385,6 +411,34 @@ const STRINGS = {
 
 const T = k => STRINGS[k];
 const stateText = k => STRINGS.state[k] || k;
+const PLACEHOLDERS = new Set(['(blank)', 'blank', 'none', 'n/a', 'na', '-', '—', '–', 'null']);
+function displayText(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text || PLACEHOLDERS.has(text.toLowerCase())) return '';
+  return text;
+}
+function displayYear(value) {
+  const year = parseInt(value, 10);
+  return year > 0 ? String(year) : '';
+}
+function ratingStars(value) {
+  let n = parseInt(value, 10);
+  if (!n || n < 0) return '';
+  if (n > 5) n = Math.max(0, Math.min(5, Math.round(n / 51)));
+  if (!n) return '';
+  return '★'.repeat(n) + '☆'.repeat(5 - n);
+}
+const COLOR_SWATCH = {
+  pink: '#ff4fa3', red: '#ff3b30', orange: '#ff9f45', yellow: '#ffd45e',
+  green: '#3ddc84', aqua: '#2ee0d0', blue: '#5eb0ff', purple: '#c084fc',
+};
+function showField(el, text, html) {
+  if (!el) return;
+  const value = text || '';
+  if (html) el.innerHTML = value;
+  else el.textContent = value;
+  el.hidden = !value;
+}
 
 function applyStrings() {
   document.documentElement.lang = 'en';
@@ -542,6 +596,15 @@ function paintZoomChips() {
 
 function layoutWave(d) {
   const box = d.canvases;
+  const rowH = d.el.clientHeight || 0;
+  if (rowH) {
+    const scale = Math.max(0.9, Math.min(1.5, rowH / 240));
+    if (!d.rowScale || Math.abs(d.rowScale - scale) >= 0.02) {
+      d.rowScale = scale;
+      d.el.style.setProperty('--row-scale', scale.toFixed(3));
+    }
+    d.el.classList.toggle('compact', rowH < 200);
+  }
   if (!box) return;
   const h = box.clientHeight;
   if (!h) return;
@@ -794,15 +857,23 @@ function createDeck(n) {
           <div class="num">${n}</div>
           <div class="title" data-title>—</div>
           <div class="artist" data-artist></div>
-          <div class="meta" data-meta></div>
+          <div class="field meta extra" data-album hidden></div>
+          <div class="field meta extra" data-label hidden></div>
+          <div class="field meta genre" data-genre hidden></div>
+          <div class="facts">
+            <span class="field meta" data-year hidden></span>
+            <span class="key" data-key hidden></span>
+            <span class="field meta rating" data-rating hidden></span>
+            <span class="field meta extra" data-color hidden></span>
+          </div>
+          <div class="field meta extra" data-comment hidden></div>
         </div>
       </div>
-      <div class="tags" data-tags></div>
+      <div class="played" data-played hidden><i data-played-fill></i></div>
     </div>
     <div class="wave-col">
       <div class="wave-tools">
         <div class="cue" data-scrub></div>
-        <div class="next-cue" data-next></div>
         <div class="zoom-chip" data-zoom>4b</div>
       </div>
       <div class="canvases">
@@ -819,7 +890,7 @@ function createDeck(n) {
         <span class="elapsed" data-elapsed>00:00</span>
         <span class="remaining" data-remaining>-00:00</span>
       </div>
-      <div class="bar-dots" data-bar><i></i><i></i><i></i><i></i></div>
+      <div class="tags" data-tags></div>
       <div class="state-row">
         <div class="loop-badge" data-loop title="Loop">
           <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -831,15 +902,21 @@ function createDeck(n) {
           <span data-loop-len></span>
         </div>
         <div class="state" data-state></div>
-        <div class="key" data-key></div>
       </div>
+      <div class="bar-dots" data-bar><i></i><i></i><i></i><i></i></div>
+      <div class="phrase" data-phrase hidden></div>
+      <div class="next-cue" data-next hidden></div>
     </div>
     </div>`;
   const q = s => el.querySelector(s);
   const d = {
     n, el,
     art: q('[data-art]'), tags: q('[data-tags]'), title: q('[data-title]'),
-    artist: q('[data-artist]'), meta: q('[data-meta]'), noWave: q('[data-nowave]'),
+    artist: q('[data-artist]'), album: q('[data-album]'), label: q('[data-label]'),
+    genre: q('[data-genre]'), year: q('[data-year]'), rating: q('[data-rating]'),
+    color: q('[data-color]'), comment: q('[data-comment]'),
+    played: q('[data-played]'), playedFill: q('[data-played-fill]'),
+    phrase: q('[data-phrase]'), noWave: q('[data-nowave]'),
     bpm: q('[data-bpm]'), pitch: q('[data-pitch]'), elapsed: q('[data-elapsed]'),
     remaining: q('[data-remaining]'), state: q('[data-state]'), key: q('[data-key]'),
     loopBadge: q('[data-loop]'), loopLen: q('[data-loop-len]'),
@@ -927,9 +1004,15 @@ function drawInfo(d, s) {
     d.metaKey = '';
     d.artKey = '';
     d.title.textContent = s.track_id ? T('loading') : '—';
-    d.artist.textContent = '';
-    d.meta.textContent = s.track_id ? '' : T('noTrackLoaded');
-    d.key.textContent = '';
+    showField(d.artist, s.track_id ? '' : T('noTrackLoaded'));
+    showField(d.album, '');
+    showField(d.label, '');
+    showField(d.genre, '');
+    showField(d.year, '');
+    showField(d.key, '');
+    showField(d.rating, '');
+    showField(d.color, '', true);
+    showField(d.comment, '');
     if (d.art.tagName === 'IMG') {
       const blank = document.createElement('div');
       blank.className = 'art blank'; blank.innerHTML = '&#9834;';
@@ -938,10 +1021,22 @@ function drawInfo(d, s) {
   }
   if (m && keyOk && d.metaKey !== cacheId) {
     d.metaKey = cacheId;
-    d.title.textContent = m.title || '—';
-    d.artist.textContent = m.artist || '';
-    d.meta.textContent = [m.album, m.genre, m.label, m.year || ''].filter(Boolean).join(' · ');
-    d.key.textContent = m.key || '';
+    d.title.textContent = displayText(m.title) || '—';
+    showField(d.artist, displayText(m.artist));
+    showField(d.album, displayText(m.album));
+    showField(d.label, displayText(m.label));
+    showField(d.genre, displayText(m.genre));
+    showField(d.year, displayYear(m.year));
+    showField(d.key, displayText(m.key));
+    showField(d.rating, ratingStars(m.rating));
+    const colorName = displayText(m.color);
+    const swatch = colorName ? (COLOR_SWATCH[colorName.toLowerCase()] || '') : '';
+    showField(
+      d.color,
+      colorName ? (swatch ? `<i class="swatch" style="background:${swatch}"></i>${escapeHtml(colorName)}` : escapeHtml(colorName)) : '',
+      true,
+    );
+    showField(d.comment, displayText(m.comment));
   }
   d.noWave.textContent = T('noTrack');
   d.noWave.style.display = s.track_id ? 'none' : 'flex';
@@ -985,7 +1080,8 @@ function drawInfo(d, s) {
   const p = s.pitch;
   d.pitch.textContent = s.track_id ? `${p >= 0 ? '+' : ''}${p.toFixed(2)} %` : '';
   d.pitch.className = 'pitch ' + (p > 0.01 ? 'up' : p < -0.01 ? 'down' : '');
-  d.state.textContent = stateText(s.state);
+  const stateName = displayText(stateText(s.state));
+  showField(d.state, stateName && stateName.toLowerCase() !== 'unknown' ? stateName : '');
 }
 
 /* ---------------------------------------------------------------- waveforms */
@@ -1066,11 +1162,32 @@ function nextColor(remain) {
   return '#e8eaf0';
 }
 
+function currentPhrase(pos, meta) {
+  if (!meta) return '';
+  const beats = meta.beats || [];
+  let bestT = null;
+  let best = '';
+  for (const ph of (meta.phrases || [])) {
+    let t = ph.t != null ? +ph.t : NaN;
+    if (!isFinite(t)) {
+      const beat = (ph.beat | 0) - 1;
+      if (beat >= 0 && beat < beats.length) t = +beats[beat][0];
+    }
+    if (!isFinite(t) || t > pos + 1) continue;
+    if (bestT == null || t >= bestT) {
+      bestT = t;
+      best = String(ph.text || ph.label || '').trim();
+    }
+  }
+  return displayText(best);
+}
+
 function paintNext(el, pos, meta) {
   if (!el) return;
-  if (!showNextCue || !meta) { el.textContent = ''; return; }
+  if (!showNextCue || !meta) { el.textContent = ''; el.hidden = true; return; }
   const mark = nextMark(pos, meta);
   el.textContent = formatNext(mark);
+  el.hidden = !el.textContent;
   el.style.color = mark ? nextColor(mark.remain) : '';
 }
 
@@ -1379,6 +1496,14 @@ function render() {
     const remaining = dur ? Math.max(0, dur - pos) : 0;
     d.remaining.textContent = dur ? ('-' + mmss(remaining)) : '—';
     d.remaining.classList.toggle('low', dur > 0 && remaining < 30000);
+    if (d.played) {
+      d.played.hidden = !(dur > 0);
+      if (d.playedFill) d.playedFill.style.width = (dur ? Math.max(0, Math.min(1, pos / dur)) * 100 : 0) + '%';
+    }
+    const phraseName = currentPhrase(pos, track && track.meta);
+    const beatNo = (s.bar >= 1 && s.bar <= 4) ? s.bar : 0;
+    const phraseText = [beatNo ? ('Beat ' + beatNo + '/4') : '', phraseName].filter(Boolean).join(' · ');
+    showField(d.phrase, phraseText);
 
     const loop = track ? activeLoop(track.meta, pos, looping, s) : null;
     const beats = loopBeats(loop, s.track_bpm || s.bpm);
@@ -1554,7 +1679,7 @@ function seedPanelWave(n) {
 
 function enablePanelMock() {
   const titles = [
-    ['Night Drive', 'Demo Artist', '8A', 1, true, '#ffb020'],
+    ['Cola (Club Mix)', 'CamelPhat, Elderbrook', '3A', 1, true, '#ffb020'],
     ['Glasshouse', 'North Line', '4A', 2, false, '#22d3ee'],
     ['Second Sun', 'Kite Club', '11B', 3, false, '#f472b6'],
     ['Harbour', 'Demo Artist', '8A', 4, false, '#4ade80'],
@@ -1576,10 +1701,16 @@ function enablePanelMock() {
     tracks.set('id:' + id, {
       meta: {
         id, title: row[0], artist: row[1], key: row[2],
-        album: 'Monitor', genre: 'House',
+        album: i === 0 ? 'Cola' : 'Monitor',
+        label: i === 0 ? '(blank)' : 'North',
+        genre: i === 0 ? 'House, Deep House, Nu Disco' : 'House',
+        year: i === 0 ? 2017 : 0,
+        rating: i === 0 ? 4 : 0,
+        color: '(blank)',
+        comment: i === 0 ? 'Festival edit' : '',
         duration_ms: 240000, has_artwork: true, mock_art: art.toDataURL('image/png'),
-        cues: [{t: 30000, type: 'cue', hot: 1, color: [255, 212, 94]}],
-        phrases: [{beat: 1, text: 'Intro'}, {beat: 33, text: 'Drop'}, {beat: 129, text: 'Outro'}],
+        cues: [{t: 90000, type: 'cue', hot: 1, text: 'Break', color: [255, 212, 94]}],
+        phrases: [{beat: 1, text: 'Intro'}, {beat: 65, text: 'Chorus'}, {beat: 129, text: 'Outro'}],
         vocals: [{t: 16000, end: 64000}, {t: 96000, end: 140000}],
         beats,
       },
@@ -1591,8 +1722,11 @@ function enablePanelMock() {
       number: row[3], track_id: id, playing: row[4], on_air: row[4],
       bpm: 126 + i, track_bpm: 126, pitch: pitches[i], speed: row[4] ? 1 : 0,
       position_ms: 48000 + i * 8000, duration_ms: 240000,
-      state: row[4] ? 'playing' : 'cued', master: row[4], sync: i === 1,
-      name: 'XDJ-AZ', beat: 1, bar: 1, waveform_position: 'left',
+      state: i === 0 ? 'looping' : (row[4] ? 'playing' : 'cued'),
+      master: row[4], sync: i === 1,
+      loop_start_ms: i === 0 ? 40000 : null,
+      loop_end_ms: i === 0 ? 47620 : null,
+      name: 'XDJ-AZ', beat: 1, bar: i === 0 ? 3 : 1, waveform_position: 'left',
     });
   });
   const deckCount = params.get('decks') === '2' ? 2 : 4;

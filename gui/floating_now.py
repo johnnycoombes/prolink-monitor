@@ -498,10 +498,75 @@ class FloatingNowPlayingWindow(QWidget):
         super().moveEvent(event)
         self._save_timer.start()
 
+    def release_engine(self) -> None:
+        """Drop the web page so QtWebEngine does not keep the process alive."""
+        web = getattr(self, "_web", None)
+        if web is None:
+            return
+        self._web = None
+        try:
+            web.stop()
+        except Exception:
+            pass
+        try:
+            page = web.page()
+        except Exception:
+            page = None
+        try:
+            web.setUrl(QUrl("about:blank"))
+        except Exception:
+            pass
+        if page is not None:
+            try:
+                page.deleteLater()
+            except Exception:
+                pass
+        try:
+            web.deleteLater()
+        except Exception:
+            pass
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
+
     def closeEvent(self, event):  # noqa: N802
         self._end_drag()
         self._persist_geometry()
         super().closeEvent(event)
+
+
+def release_webengine_views() -> None:
+    """Stop every embedded page before the process exits."""
+    if not _HAS_WEBENGINE or QWebEngineView is None:
+        return
+    app = QApplication.instance()
+    if app is None:
+        return
+    for widget in list(app.allWidgets()):
+        if not isinstance(widget, QWebEngineView):
+            continue
+        try:
+            widget.stop()
+        except Exception:
+            pass
+        try:
+            page = widget.page()
+        except Exception:
+            page = None
+        try:
+            widget.setUrl(QUrl("about:blank"))
+        except Exception:
+            pass
+        if page is not None:
+            try:
+                page.deleteLater()
+            except Exception:
+                pass
+        try:
+            widget.deleteLater()
+        except Exception:
+            pass
+    app.processEvents()
 
     def apply_state(self, state: dict | None) -> None:
         """No-op: overlay page consumes SSE directly from the embedded HTTP server."""

@@ -190,6 +190,7 @@ class SocketSource:
         self._socks: list[socket.socket] = []
         self._threads: list[threading.Thread] = []
         self._running = False
+        self._stop = threading.Event()
         self.kind = "vcdj"
         self.detail = f"#{device_number} \"{device_name}\""
         self.description = f"virtual device {self.detail}"
@@ -215,11 +216,14 @@ class SocketSource:
                 ) from e
             s.settimeout(0.5)
             self._socks.append(s)
-            t = threading.Thread(target=self._recv_loop, args=(s, on_packet), daemon=True)
+            t = threading.Thread(
+                target=self._recv_loop, args=(s, on_packet),
+                daemon=True, name="prolink-link",
+            )
             t.start()
             self._threads.append(t)
 
-        t = threading.Thread(target=self._announce_loop, daemon=True)
+        t = threading.Thread(target=self._announce_loop, daemon=True, name="prolink-announce")
         t.start()
         self._threads.append(t)
 
@@ -245,14 +249,23 @@ class SocketSource:
                     out.sendto(pkt, (dst, proto.PORT_ANNOUNCE))
                 except OSError:
                     pass
-            time.sleep(self.announce_interval)
+            if self._stop.wait(self.announce_interval):
+                break
         out.close()
 
     def stop(self) -> None:
         self._running = False
+        self._stop.set()
         for s in self._socks:
-            s.close()
+            try:
+                s.close()
+            except OSError:
+                pass
         self._socks.clear()
+        for thread in list(self._threads):
+            if thread.is_alive() and thread is not threading.current_thread():
+                thread.join(0.8)
+        self._threads.clear()
 
 
 class SnifferSource:
@@ -325,7 +338,9 @@ class SnifferSource:
         self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                       text=True, bufsize=1)
         self._running = True
-        self._thread = threading.Thread(target=self._read_loop, args=(on_packet,), daemon=True)
+        self._thread = threading.Thread(
+            target=self._read_loop, args=(on_packet,), daemon=True, name="prolink-sniffer",
+        )
         self._thread.start()
 
     def _read_loop(self, on_packet: Handler) -> None:
@@ -348,9 +363,24 @@ class SnifferSource:
 
     def stop(self) -> None:
         self._running = False
-        if self._proc:
-            self._proc.terminate()
-            self._proc = None
+        proc = self._proc
+        self._proc = None
+        if proc is not None:
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout=0.8)
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+        thread = self._thread
+        self._thread = None
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(0.8)
 
 
 # ----------------------------------------------------------------------- state
@@ -784,8 +814,12 @@ class ProLink:
                 if before != pkt.track_id:
                     self._last_track[pkt.device_number] = pkt.track_id
                     if self.on_track_change:
-                        threading.Thread(target=self.on_track_change,
-                                         args=(deck, pkt.track_id), daemon=True).start()
+                        threading.Thread(
+                            target=self.on_track_change,
+                            args=(deck, pkt.track_id),
+                            daemon=True,
+                            name="prolink-track",
+                        ).start()
 
     def _note_player_name(self, name: str) -> None:
         if proto.is_xdj_az(name):
