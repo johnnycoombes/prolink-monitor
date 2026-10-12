@@ -1590,7 +1590,8 @@ function paint(){
         el.innerHTML = `${d.bpm ? d.bpm.toFixed(2) : '—'}<small>BPM</small>`;
     });
   }
-  if (layout === 'nowplaying' && nowStyle === 'panel') {
+  // Bar is the same strip as Panel (renderNowPanel). Paint its detail wave too.
+  if (layout === 'nowplaying' && stripNow) {
     paintPanelWaves(decks[0], positions[0], decks[0].playing);
   } else if (layout === 'setlist') paintWaves([decks[0]], [positions[0]]);
   else paintWaves(decks, positions);

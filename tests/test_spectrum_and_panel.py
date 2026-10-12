@@ -268,6 +268,24 @@ class WebPanelSourceTests(unittest.TestCase):
         self.assertIn("max-width:100%", html)
         self.assertIn("#root.embed-mode.now-card-mode", html)
 
+    def test_bar_style_paints_the_detail_wave(self):
+        path = os.path.join(ROOT, "web", "overlay.html")
+        with open(path, encoding="utf-8") as f:
+            html = f.read()
+        self.assertIn("const stripNow = nowStyle === 'panel' || nowStyle === 'bar'", html)
+        self.assertIn("else if (stripNow) html = renderNowPanel", html)
+        self.assertIn("if (layout === 'nowplaying' && stripNow)", html)
+        self.assertIn("paintPanelWaves(decks[0], positions[0], decks[0].playing)", html)
+        self.assertIn('<canvas class="panel-detail"></canvas>', html)
+        # Panel keeps the visualiser unless spectrum=0. Bar follows showSpectrum.
+        self.assertIn(
+            "nowStyle === 'panel' ? spectrumParam !== '0' : showSpectrum", html)
+        # Spread stays panel-only. The paint gate is the strip (panel and bar).
+        self.assertIn(
+            "card.classList.toggle('spread', spread || (layout === 'nowplaying' && nowStyle === 'panel'))",
+            html,
+        )
+
     def test_no_settings_endpoint(self):
         path = os.path.join(ROOT, "app.py")
         with open(path, encoding="utf-8") as f:

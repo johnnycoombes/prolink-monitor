@@ -2,10 +2,11 @@
 
 A live Pro DJ Link monitor. It joins the booth network as a virtual player, reads the library and analysis from the player while the set is running, and draws decks, waveforms, and artwork on this computer. It is read-only toward the player and the USB stick: it never writes a Rekordbox database, never sends library edits, and a packet capture only records what already arrived.
 
-This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.2**.
+This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.4**. This tree is **1.0.5**.
 
 ## Contents
 
+- [What's new](#whats-new)
 - [Screenshots](#screenshots)
 - [Supported hardware](#supported-hardware)
 - [Install](#install)
@@ -15,33 +16,33 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 - [Release process](#release-process)
 - [Credits](#credits)
 
-## Screenshots
+## What's new
 
-These pictures are already in the repo.
+**1.0.5.** Bar (`style=bar`) draws the scrolling detail wave. Panel and Bar are both that full-width strip. The spectrum on Bar still follows the spectrum switch (`spectrum=0` hides it). Panel keeps the visualiser unless `spectrum=0`.
+
+**1.0.4.** Artwork is requested as soon as a track id is known, and a successful dbserver or NFS lookup sets `has_artwork` before the waveform arrives. If the saved web port is inside a Windows excluded range, the log and Health name that range and the server uses the next fallback. Panel is the strip with the larger cover and the visualiser. Bar is the strip with the small cover.
+
+**1.0.3.** One bad OneLibrary date no longer blanks the library. The Library page shows the same live dbserver source as Health. Track columns keep title, artist, album, key, and BPM, and the rows are zebra-striped. `style=bar` is its own layout. Overlay URLs can lock the spectrum with `spectrum=1`. A dbserver session that never connects is not counted as a reconnect.
+
+**1.0.2.** The Windows zip includes pyrekordbox. The Library reads the player’s dbserver first. The log rotates. The floating window has a visible drag strip.
+
+**1.0.1.** The web server stays up across a reconnect. A second launch brings the first window forward instead of starting another process.
+
+## Screenshots
 
 ![Monitor](doc/monitor.png)
 
-![2 decks, RGB](doc/desktop-2deck-rgb.png)
-
-![4 decks, 3-band](doc/desktop-4deck-3band.png)
-
-![4 decks, blue](doc/desktop-4deck-blue.png)
-
-![Sidebar](doc/desktop-sidebar.png)
-
-![Settings](doc/desktop-settings.png)
-
 ![Library](doc/library.png)
 
-![Devices](doc/desktop-devices.png)
-
-Now Playing **card**, **bar** with the spectrum, and **bar** without it. Panel is the same full-width strip as the bar, with a larger cover and the visualiser on unless `spectrum=0`.
+![Web panel](doc/web-panel.png)
 
 ![Overlay card](doc/overlay-card.png)
 
-![Overlay bar with spectrum](doc/overlay-bar.png)
+![Overlay panel](doc/overlay-panel.png)
 
-![Overlay bar without spectrum](doc/overlay-bar-plain.png)
+![Overlay bar](doc/overlay-bar.png)
+
+![Overlay settings](doc/overlay-settings.png)
 
 ## Supported hardware
 
@@ -72,7 +73,7 @@ The computer and the player need to be on the same network. The monitor core (`a
 
 You do not need Python for this path.
 
-1. Open the [Releases](https://github.com/johnnycoombes/prolink-monitor/releases) page and download `ProlinkListener-<version>-win64.zip` from a versioned release (the current one is `v1.0.1`). Leave the release named `updates` alone. That one is signed metadata for the updater, not an installer.
+1. Open the [Releases](https://github.com/johnnycoombes/prolink-monitor/releases) page and download `ProlinkListener-<version>-win64.zip` from a versioned release (the current one is `v1.0.4`). Leave the release named `updates` alone. That one is signed metadata for the updater, not an installer.
 2. Extract the zip to a folder you will keep, for example `C:\Users\User\Prolink Listener`. Do not run the program from inside the zip.
 3. Double-click `ProlinkListener.exe`.
 4. If Windows asks whether the app may use private networks, allow it. A phone on the booth Wi-Fi needs that to open the panel.
@@ -215,41 +216,49 @@ Live menus read the player’s dbserver first. The NFS copy is the fallback. Hea
 
 ### Web panel
 
-**Open web panel** (or `python app.py`) opens `http://127.0.0.1:8777/` in a normal browser tab. It mirrors the Monitor view: decks, waveform, phrases, vocal lane, playhead, zoom, and the countdown. Those controls stay in the desktop app. The page has no library pill and no settings. A fullscreen button on the page works only after you click it.
+![Web panel](doc/web-panel.png)
 
-`?readonly=1` hides Record. The server listens on `0.0.0.0` by default, so a phone on the same Wi-Fi can open `http://<this-PC>:8777/`. Turn that off under **Allow phones on the same Wi-Fi**.
+**Open web panel** (or `python app.py`) opens the panel in a normal browser tab. It mirrors the Monitor view: decks, waveform, phrases, vocal lane, playhead, zoom, and the countdown. Those controls stay in the desktop app. The page has no library pill and no settings. A fullscreen button on the page works only after you click it.
+
+The port saved in Settings defaults to **8777**. The server tries that port first. If it cannot bind it, it listens on **8787**, then 8877, 9777, 18777, then any free port. Health and the log name the port that listened. On a PC where 8777 cannot be bound, open **8787**:
+
+```
+http://127.0.0.1:8787/
+```
+
+`?readonly=1` hides Record. The server listens on `0.0.0.0` by default, so a phone on the same Wi-Fi can open `http://<this-PC>:8787/` when that is the port that listened. Turn LAN access off under **Allow phones on the same Wi-Fi**. The examples below use 8787 for that case. If 8777 did bind, use 8777 instead. Overlay, panel, and floating-window links in the app use the port that actually listened.
 
 ### OBS overlay
 
-With the web server running, add a Browser source:
+With the web server running, add a Browser source. Use the port that listened (8787 when 8777 did not bind):
 
 ```
-http://127.0.0.1:8777/overlay
+http://127.0.0.1:8787/overlay
 ```
 
 The page background is transparent. Now Playing has three styles.
 
 ![Overlay card](doc/overlay-card.png)
 
-![Overlay bar with spectrum](doc/overlay-bar.png)
+![Overlay panel](doc/overlay-panel.png)
 
-![Overlay bar without spectrum](doc/overlay-bar-plain.png)
+![Overlay bar](doc/overlay-bar.png)
 
 - **Card** (`style=card`, the default): tall card, high-res cover, overview wave. Corners are `tl`, `tr`, `bl`, `br`.
-- **Panel** (`style=panel`): full-width strip, larger cover, scrolling wave, and the spectrum visualiser unless `spectrum=0`. `pos=bottom` or `pos=top`.
-- **Bar** (`style=bar`): the same full-width strip with a small cover. The spectrum follows `spectrum=1` or `spectrum=0` (the pictures above). `pos=bottom` or `pos=top`.
+- **Panel** (`style=panel`): full-width strip, larger cover, scrolling detail wave, and the spectrum visualiser unless `spectrum=0`. `pos=bottom` or `pos=top`.
+- **Bar** (`style=bar`): the same full-width strip with a small cover and the same scrolling detail wave. The spectrum follows the spectrum switch: on unless the URL says `spectrum=0`. `pos=bottom` or `pos=top`.
 
-**Spectrum visualiser.** On by default (`overlay_show_spectrum`). Panel keeps it unless the URL says `spectrum=0`. Bar shows it only when that switch is on: `doc/overlay-bar.png` is the bar with the spectrum, `doc/overlay-bar-plain.png` is the bar without it. Pro DJ Link has no audio, so the bars follow the analysed low / mid / high wave at the playhead and decay while paused. **Bar visualiser: use system audio** (`overlay_spectrum_audio`) is off until you turn it on, and then needs the optional `soundcard` package (WASAPI loopback). That checkbox picks the input. It is not the on/off switch.
+**Spectrum visualiser.** On by default (`overlay_show_spectrum`). Panel keeps it unless the URL says `spectrum=0`. Bar uses that same switch (`showSpectrum` in the page): `spectrum=0` hides it, and anything else shows it. Pro DJ Link has no audio, so the bars follow the analysed low / mid / high wave at the playhead and decay while paused. **Bar visualiser: use system audio** (`overlay_spectrum_audio`) is off until you turn it on, and then needs the optional `soundcard` package (WASAPI loopback). That checkbox picks the input. It is not the on/off switch.
 
 The **Overlay** page builds the URL. Copy it into OBS and size the source to the canvas (for example 1920×1080).
 
-**Floating window.** The same page also opens in a frameless always-on-top window. Drag the strip along the top. It is a dark bar with a grip, brightens when the pointer is on it, and stays visible when the window is transparent. **Alt+drag** moves the window from anywhere on the page, including the waveform. Card and panel each remember their own position.
+**Floating window.** The same page also opens in a frameless always-on-top window. Drag the strip along the top. It is a dark bar with a grip, brightens when the pointer is on it, and stays visible when the window is transparent. **Alt+drag** moves the window from anywhere on the page, including the waveform. The card remembers its own place. Panel and Bar share the wide window’s saved place.
 
 | Param | Values | Default | Meaning |
 |---|---|---|---|
 | `layout` | `nowplaying`, `dual`, `minimal`, `setlist` | `nowplaying` | `setlist` is now-playing plus a scrolling history |
 | `style` | `card`, `panel`, `bar` | `card` | Now Playing only. Panel is the large-art strip with the visualiser on unless `spectrum=0`. Bar is the small-art strip. |
-| `pos` | card: `tl` `tr` `bl` `br`; panel: `bottom` `top` | `bl` or `bottom` | Where that style sits |
+| `pos` | card: `tl` `tr` `bl` `br`; panel and bar: `bottom` `top` | `bl` or `bottom` | Where that style sits |
 | `corner` | `bl`, `br`, `tl`, `tr`, `center` | `bl` | Other layouts |
 | `decks` | `1`–`4` | `1` (`2` for dual) | How many decks |
 | `wave` | `rgb`, `3band`, `blue` | `rgb` | Overlay wave colour |
@@ -267,16 +276,16 @@ The **Overlay** page builds the URL. Copy it into OBS and size the source to the
 With `mix=1`, now-playing, minimal, and setlist follow the audience track: playing and on air for 128 beats (about two phrases), with short drop-outs ignored. That rule is the SmartTiming port from prolink-connect. Dual layout shows the chosen decks across the window and does not follow that single audience pick. The cue countdown follows the desktop **Next cue countdown** setting, the same as Monitor. `next=0` hides the MixStatus lower third only.
 
 ```
-http://127.0.0.1:8777/overlay?layout=nowplaying&style=panel&pos=bottom
-http://127.0.0.1:8777/overlay?layout=nowplaying&style=bar&pos=bottom&spectrum=1
-http://127.0.0.1:8777/overlay?layout=nowplaying&style=bar&pos=bottom&spectrum=0
-http://127.0.0.1:8777/overlay?layout=dual&corner=tl&decks=4&playing=0
-http://127.0.0.1:8777/overlay?layout=setlist&corner=bl
+http://127.0.0.1:8787/overlay?layout=nowplaying&style=panel&pos=bottom
+http://127.0.0.1:8787/overlay?layout=nowplaying&style=bar&pos=bottom&spectrum=1
+http://127.0.0.1:8787/overlay?layout=nowplaying&style=bar&pos=bottom&spectrum=0
+http://127.0.0.1:8787/overlay?layout=dual&corner=tl&decks=4&playing=0
+http://127.0.0.1:8787/overlay?layout=setlist&corner=bl
 ```
 
 ### Floating window
 
-A topmost window of the same overlay page. Transparent by default. It reloads after the web server comes back, so a reconnect does not leave a blank frame. Position and size are remembered separately for the card and the panel.
+A topmost window of the same overlay page. Transparent by default. It reloads after the web server comes back, so a reconnect does not leave a blank frame. The card remembers its own place. Panel and Bar share the wide window’s saved place.
 
 ### What’s Now Playing
 
@@ -285,6 +294,8 @@ Off until you enable it. Settings → What’s Now Playing sends the audience tr
 In What’s Now Playing: **Core Settings → Source → Remote**, and leave **Output & Display → Web Server** enabled.
 
 ### Settings
+
+![Overlay settings](doc/overlay-settings.png)
 
 Saved at `~/.prolink-monitor/settings.json`. On Windows that is `C:\Users\<you>\.prolink-monitor\settings.json`. `PROLINK_CONFIG_DIR` overrides the folder. The USB cache is `~/.prolink-cache`.
 
@@ -295,7 +306,7 @@ Saved at `~/.prolink-monitor/settings.json`. On Windows that is `C:\Users\<you>\
 | `number` | `5` | Virtual device number |
 | `name` | `monitor` | Name announced on the link |
 | `iface` | empty | Capture interface for sniffer mode |
-| `port` | `8777` | Web server port |
+| `port` | `8777` | Web server port. Tried first. If it cannot bind, the server uses 8787, then 8877, 9777, 18777, then any free port. |
 | `http_bind` | `0.0.0.0` | `127.0.0.1` keeps the panel on this PC |
 | `start_web_server` | on | Start the panel with the app |
 | `auto_connect` | on | Connect when the window opens |
@@ -312,9 +323,9 @@ Saved at `~/.prolink-monitor/settings.json`. On Windows that is `C:\Users\<you>\
 | `deck_show_*` | on | Per-element visibility on the Monitor card |
 | `local_music_root` | empty | Optional mirror used for embedded covers |
 | `overlay_layout` | `nowplaying` | Overlay layout |
-| `overlay_now_style` | `card` | `card` or `panel` |
-| `overlay_now_pos` | `bl` | Card corner, or `bottom` / `top` for the panel |
-| `overlay_show_spectrum` | on | Panel spectrum visualiser |
+| `overlay_now_style` | `card` | `card`, `panel`, or `bar` |
+| `overlay_now_pos` | `bl` | Card corner, or `bottom` / `top` for panel and bar |
+| `overlay_show_spectrum` | on | Spectrum visualiser. Panel keeps it unless `spectrum=0`. Bar follows the same switch. |
 | `overlay_spectrum_audio` | off | Drive that visualiser from system audio |
 | `overlay_playing_only` | on | Overlay `playing` |
 | `overlay_mix` | on | SmartTiming now-playing |
@@ -352,7 +363,7 @@ Library files come over **NFS v2 on UDP**, via the portmapper (UDP 111) and the 
 
 ## HTTP API
 
-Default base is `http://127.0.0.1:8777`. State uses stable keys (`playing`, `cued`, `usb`), not display text.
+Default base is `http://127.0.0.1:8777` when that port bound, and `http://127.0.0.1:8787` when the server had to fall back. State uses stable keys (`playing`, `cued`, `usb`), not display text.
 
 | Route | Returns |
 |---|---|
@@ -376,7 +387,7 @@ Default base is `http://127.0.0.1:8777`. State uses stable keys (`playing`, `cue
 
 ## Troubleshooting
 
-**Firewall.** Allow UDP **50000–50002** on the DJ network (and UDP 50004 if you care about the mixer clock). Allow TCP on the web port, **8777** by default. If 8777 is blocked, the app tries **8787**, then 8877, 9777, 18777, then a free port, skipping any of those that sit in a Windows excluded range. The reason 8777 failed (for example an excluded range, WinError 10013, or the port already in use) is written to `~/.prolink-monitor/prolink-monitor.log` and shown on Health, including the range when `netsh` lists one. Overlay, panel, and floating-window URLs use the port that actually listened. Settings keep the port you chose; the next launch tries it again. NFS is not one port: allow UDP **111** (portmapper) and the mountd / nfs ports the player returns. On Windows, accept private-network access for Prolink Listener when the prompt appears.
+**Firewall.** Allow UDP **50000–50002** on the DJ network (and UDP 50004 if you care about the mixer clock). Allow TCP on the web port. Settings default to **8777**. If that port cannot be bound, the app listens on **8787**, then 8877, 9777, 18777, then a free port, skipping any of those that sit in a Windows excluded range. The reason 8777 failed (for example an excluded range, WinError 10013, or the port already in use) is written to `~/.prolink-monitor/prolink-monitor.log` and shown on Health, including the range when `netsh` lists one. Overlay, panel, and floating-window URLs use the port that actually listened. Settings keep 8777; the next launch tries it again. When 8777 stays unbound, open **8787**. NFS is not one port: allow UDP **111** (portmapper) and the mountd / nfs ports the player returns. On Windows, accept private-network access for Prolink Listener when the prompt appears.
 
 **`PermissionError: [WinError 10013]` on the web port.** Hyper-V, WSL, or another reservation often owns it. Check with `netsh interface ipv4 show excludedportrange protocol=tcp`. If 8777 is between a Start Port and an End Port, that is why it never listens: the port is excluded, not merely busy, and it will not show up in `netstat`. Health and the log name that range. The app then binds the next fallback outside the range. To choose one: `python app.py --port 18777`, or set **Web server port** in Settings.
 
