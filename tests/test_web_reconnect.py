@@ -310,12 +310,21 @@ class HttpBindFallbackTests(unittest.TestCase):
                 server, bound = open_http_server(busy, host="127.0.0.1")
             self.assertNotEqual(bound, busy)
             self.assertIn(str(busy), server.last_error)
-            self.assertIn("port in use", server.last_error)
+            # Linux reports the holder as "port in use". Windows reports an
+            # exclusive holder as WinError 10013, "port blocked or reserved".
+            self.assertTrue(
+                "port in use" in server.last_error
+                or "port blocked or reserved" in server.last_error,
+                server.last_error,
+            )
             self.assertIn(f"listening on {bound}", server.last_error)
             with open(path, encoding="utf-8") as handle:
                 body = handle.read()
             self.assertIn(str(busy), body)
-            self.assertIn("port in use", body)
+            self.assertTrue(
+                "port in use" in body or "port blocked or reserved" in body,
+                body,
+            )
         finally:
             holder.close()
             if server is not None:
