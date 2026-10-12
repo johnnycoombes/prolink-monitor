@@ -20,6 +20,7 @@ from gui.deck_layout import (
 )
 from gui.theme import COLORS, DECK_COLORS
 from gui.settings import deck_elements_from
+from prolink.playhead_smooth import sync_detail_origin
 from prolink.proto import playhead_fraction, resolve_playhead_position
 from prolink.session import ZOOM_BARS, bars_to_seconds
 
@@ -813,12 +814,14 @@ class WaveformView(QWidget):
             self._rebuild_detail(w, h, start, key)
             return
 
-        shift_f = (self._detail_start - start) * px_per_col
-        shift = int(shift_f)  # toward zero — wait for a full pixel
-        if shift == 0:
-            return
-        if abs(shift) >= w:
+        # Same origin rule as the overlay: the bitmap shift and the stored
+        # column stay in one time base, so the loop highlight cannot walk.
+        new_start, shift, full = sync_detail_origin(
+            self._detail_start, start, px_per_col, w, 1.0)
+        if full:
             self._rebuild_detail(w, h, start, key)
+            return
+        if shift == 0:
             return
 
         # Scroll within a recycled scratch pixmap — avoid allocating every frame.
@@ -839,7 +842,7 @@ class WaveformView(QWidget):
         # Swap buffers so the previous front becomes the next scratch.
         self._detail_scratch = self._detail_pm
         self._detail_pm = scratch
-        self._detail_start -= shift / px_per_col
+        self._detail_start = new_start
 
     def _rebuild_detail(self, w, h, start: float, key: tuple) -> None:
         pm = QPixmap(w, h)

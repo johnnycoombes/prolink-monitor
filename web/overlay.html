@@ -9,6 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Archivo:wght@500;600;700&display=swap" rel="stylesheet">
 <script src="wavepack.js"></script>
 <script src="spectrum.js"></script>
+<script src="playhead.js"></script>
 <style>
 :root{
   --text:#f4f6fb;
@@ -477,6 +478,9 @@ body.float-window canvas{-webkit-app-region:no-drag}
 </div>
 
 <script>
+const wrapLoopPosition = ProlinkPlayhead.wrapLoopPosition;
+const extrapolatePlayhead = ProlinkPlayhead.extrapolatePlayhead;
+const syncDetailCache = ProlinkPlayhead.syncDetailCache;
 const DECK_COLORS = {1:'#ffb020',2:'#22d3ee',3:'#f472b6',4:'#4ade80',5:'#ffb020',6:'#22d3ee'};
 const params = new URLSearchParams(location.search);
 const layout = ['nowplaying','dual','minimal','setlist'].includes(params.get('layout'))
@@ -771,15 +775,6 @@ function loopBeats(loop, bpm) {
   if (!loop || !bpm || bpm <= 0) return 0;
   const ms = Math.max(0, (loop.end || 0) - (loop.t || 0));
   return Math.max(0, Math.round(ms / (60000 / bpm)));
-}
-
-function wrapLoopPosition(pos, looping, start, end) {
-  // Same rule as prolink.link.wrap_loop_position.
-  if (!looping || start == null || end == null || !(+end > +start)) return pos;
-  const a = +start, b = +end, len = b - a;
-  if (pos >= b) return a + (((pos - a) % len) + len) % len;
-  if (pos < a && a - pos < len) return a;
-  return pos;
 }
 
 function activeLoop(meta, pos, looping, deck) {
@@ -1134,40 +1129,37 @@ function paintPanelDetail(cv, pack, pos, deck, playing, looping) {
     cache = {key, off, start, scratch: cache.scratch || null};
     cv._panelCache = cache;
   } else {
-    const shiftF = (cache.start - start) * pxPerCol;
-    const shift = shiftF | 0;
-    if (Math.abs(shift) >= cssW) {
+    const synced = syncDetailCache(cache.start, start, pxPerCol, cssW, r);
+    if (synced.full) {
       const o = cache.off.getContext('2d');
       o.clearRect(0, 0, W, H);
       paintRange(o, start, 0, cssW);
       cache.start = start;
-    } else if (shift !== 0) {
+    } else if (synced.shiftDevice !== 0) {
       let scratch = cache.scratch || document.createElement('canvas');
       if (scratch.width !== W || scratch.height !== H) { scratch.width = W; scratch.height = H; }
       const o = scratch.getContext('2d');
       o.imageSmoothingEnabled = false;
       o.clearRect(0, 0, W, H);
-      if (shift > 0) {
-        o.drawImage(cache.off, Math.round(shift * r), 0);
-        paintRange(o, start, 0, shift);
-      } else {
-        const sh = -shift;
-        o.drawImage(cache.off, Math.round(-sh * r), 0);
-        paintRange(o, start, cssW - sh, cssW);
-      }
+      const cssShift = Math.ceil(Math.abs(synced.shiftDevice) / r);
+      o.drawImage(cache.off, synced.shiftDevice, 0);
+      if (synced.shiftDevice > 0) paintRange(o, synced.cacheStart, 0, cssShift);
+      else paintRange(o, synced.cacheStart, cssW - cssShift, cssW);
       cache.scratch = cache.off;
       cache.off = scratch;
-      cache.start -= shift / pxPerCol;
+      cache.start = synced.cacheStart;
     }
     cv._panelCache = cache;
   }
 
   ctx.clearRect(0, 0, W, H);
-  ctx.drawImage(cache.off, 0, 0);
+  // Sub-pixel remainder so the bitmap's left edge is the playhead window.
+  const align = Math.round((cache.start - start) * pxPerCol * r);
+  ctx.drawImage(cache.off, align, 0);
 
   const loop = activeLoop(track.meta, pos, looping, deck);
   if (loop) {
-    // Lock the highlight to the true playhead window, not the scrolled cache.
+    // Same window as the scrolled wave: the playhead's start, not a stale cache.
     const x0 = ((loop.t / 1000) * cps - start) * pxPerCol * r;
     const x1 = ((loop.end / 1000) * cps - start) * pxPerCol * r;
     ctx.fillStyle = 'rgba(46,232,154,.30)';
@@ -1521,13 +1513,17 @@ function paint(){
   const positions = decks.map(d => {
     const pack = trackPack(d);
     const dur = overlayDuration(d, pack);
-    const age = +(d.playhead_age_s || 0);
-    const room = Math.max(0, 1 - Math.max(0, age));
-    const step = d.playing ? Math.min(Math.max(0, dt), room) : 0;
-    let pos = +(d.position_ms||0) + step * 1000 * (d.speed || (d.playing ? 1 : 0));
-    pos = wrapLoopPosition(pos, d.state === 'looping', d.loop_start_ms, d.loop_end_ms);
-    if (dur) pos = Math.min(pos, dur);
-    return pos;
+    return extrapolatePlayhead({
+      posMs: +(d.position_ms || 0),
+      playing: !!d.playing,
+      speed: +(d.speed || 0) || (d.playing ? 1 : 0),
+      dt: dt,
+      durationMs: dur,
+      looping: d.state === 'looping',
+      loopStartMs: d.loop_start_ms,
+      loopEndMs: d.loop_end_ms,
+      packetAgeS: +(d.playhead_age_s || 0),
+    });
   });
   for (const d of decks) if (d.track_id) loadTrack(d);
 
