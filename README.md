@@ -2,7 +2,7 @@
 
 A live Pro DJ Link monitor. It joins the booth network as a virtual player, reads the library and analysis from the player while the set is running, and draws decks, waveforms, and artwork on this computer. It is read-only toward the player and the USB stick: it never writes a Rekordbox database, never sends library edits, and a packet capture only records what already arrived.
 
-This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.4**. This tree is **1.0.5**.
+This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.8**. This tree is **1.0.8**.
 
 ## Contents
 
@@ -17,6 +17,12 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 - [Credits](#credits)
 
 ## What's new
+
+**1.0.8.** Monitor deck rows measure their text before they draw it, so a short row no longer squashes the title over the artist or stacks the readout on itself. The title stays on one line unless the row is tall enough for two. The artist stays. Album, label, genre, and the other detail lines appear only when they fit. Artwork shrinks with the row. BPM, pitch, and the clock stay readable; tags, the beat line, and the next cue drop from the bottom when the height runs out. An empty deck is a deck number and a small “no track”. The web panel already packed its rows and is unchanged.
+
+**1.0.7.** The Monitor and the web panel use the spare height in a deck row. Title and artist scale with the row. When there is room, the left side adds album, label, genre, year, key, rating, colour, comment, and a played bar, and the right side adds master/sync, loop, the beat and phrase, and the next cue. Rekordbox `(blank)` is not drawn. **File > Exit**, tray Quit, and a close that is set to quit stop the link sockets, the web server, the library workers, and the process.
+
+**1.0.6.** The loop highlight on the overlay and the web panel stays on the playhead. While a loop is active the position is folded into the loop, and the wave scrolls by the device pixels it draws, so the green region does not drift at 125% and 150%. The desktop Monitor uses that same scroll. Checked with a 32-beat loop at 123.2 BPM.
 
 **1.0.5.** Bar (`style=bar`) draws the scrolling detail wave. Panel and Bar are both that full-width strip. The spectrum on Bar still follows the spectrum switch (`spectrum=0` hides it). Panel keeps the visualiser unless `spectrum=0`.
 
@@ -73,7 +79,7 @@ The computer and the player need to be on the same network. The monitor core (`a
 
 You do not need Python for this path.
 
-1. Open the [Releases](https://github.com/johnnycoombes/prolink-monitor/releases) page and download `ProlinkListener-<version>-win64.zip` from a versioned release (the current one is `v1.0.4`). Leave the release named `updates` alone. That one is signed metadata for the updater, not an installer.
+1. Open the [Releases](https://github.com/johnnycoombes/prolink-monitor/releases) page and download `ProlinkListener-<version>-win64.zip` from a versioned release (the current one is `v1.0.8`). Leave the release named `updates` alone. That one is signed metadata for the updater, not an installer.
 2. Extract the zip to a folder you will keep, for example `C:\Users\User\Prolink Listener`. Do not run the program from inside the zip.
 3. Double-click `ProlinkListener.exe`.
 4. If Windows asks whether the app may use private networks, allow it. A phone on the booth Wi-Fi needs that to open the panel.
