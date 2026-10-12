@@ -1,197 +1,391 @@
 # prolink-monitor
 
-**Fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor).**
+A live Pro DJ Link monitor. It joins the booth network as a virtual player, reads the library and analysis from the player while the set is running, and draws decks, waveforms, and artwork on this computer. It is read-only toward the player and the USB stick: it never writes a Rekordbox database, never sends library edits, and a packet capture only records what already arrived.
 
-Live monitoring for AlphaTheta / Pioneer DJ players over Pro DJ Link: which track
-sits on each deck, how far into it, at what tempo and key, with a scrolling
-waveform and moving playhead.
+This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.1**.
 
-The monitor core still talks to the gear directly and needs **no external Python
-packages**. This fork adds a PySide6 **Prolink Listener** desktop app, player-style
-waveform colours, configurable deck cards, a hideable sidebar, and a transparent
-**OBS Browser Source** overlay.
+## Contents
 
-![Prolink Listener — 4 decks RGB](doc/desktop-4deck-rgb.png)
-
----
-
-## This fork
-
-Compared with the [original project](https://github.com/fidow/prolink-monitor):
-
-| | Original | This fork |
-|---|---|---|
-| UI | Browser panel (`python app.py`) | Same web panel **plus** a native **Prolink Listener** desktop app (`python desktop.py`) |
-| Navigation | Single live panel | Sidebar: Monitor, Devices, **Health**, Library, **Session**, Overlay, Settings, About — **hideable** (`Ctrl+B`) |
-| Settings | Zoom / decks remembered in the browser | Connection, display, **per-deck element**, overlay, session and **desktop tray** settings under `~/.prolink-monitor/` |
-| Waveforms | Colour detail (RGB) with blue fallback | Switchable **RGB**, **3-Band** and **Blue**; cue / hot-cue / **phrase** markers; hover time + click cue readout; **per-deck zoom** |
-| Library | Counts only | Search USB tracks; OneLibrary **playlists / history** browse; on-deck artwork grid |
-| Zoom | Seconds | **4/4 bars** (1–16), BPM-aware window |
-| Deck cards | Fixed layout | Toggle artwork, BPM, tempo, time, key, tags, waveform and more |
-| Streaming | — | Transparent `/overlay` page for OBS (now playing / dual / minimal / **setlist**); SmartTiming setlist; overlay waveform colour |
-| Session | — | **Record** a chronological playlist with a **set clock** (pauses on dead air); export CSV / JSON / M3U |
-| Language | English / Spanish | English only |
-
-Everything else — Pro DJ Link engine, NFS library, console monitor, protocol probe —
-comes from the original and is still the same idea.
-
----
+- [Screenshots](#screenshots)
+- [Supported hardware](#supported-hardware)
+- [Install](#install)
+- [Features](#features)
+- [HTTP API](#http-api)
+- [Troubleshooting](#troubleshooting)
+- [Release process](#release-process)
+- [Credits](#credits)
 
 ## Screenshots
 
-### Desktop — Monitor
+These pictures are already in the repo. They show the deck layouts, waveform colours, sidebar, library, overlay, and floating window. They were taken before the vocal lane and the NEXT countdown, so those two are not in the shots.
 
-Waveforms fill the available height. Switch **2** or **4** visible decks, zoom in
-**4/4 bars** (1–16) and waveform colour (**RGB** / **3BAND** / **BLUE**) from the
-toolbar. Layout order is **1–2** in two-deck mode and **3–1–2–4** in four-deck mode.
-Hot cues show as lettered markers (A–H) on the overview and detail waveforms.
+![4 decks, RGB waveforms](doc/desktop-4deck-rgb.png)
 
-![4 decks RGB](doc/desktop-4deck-rgb.png)
+![2 decks, RGB](doc/desktop-2deck-rgb.png)
 
-![2 decks RGB](doc/desktop-2deck-rgb.png)
+![4 decks, 3-band](doc/desktop-4deck-3band.png)
 
-![4 decks 3BAND](doc/desktop-4deck-3band.png)
-
-![4 decks BLUE](doc/desktop-4deck-blue.png)
-
-![2 decks BLUE](doc/desktop-2deck-blue.png)
-
-### Desktop — Sidebar
-
-Hide the sidebar with **☰**, **Hide sidebar**, or **Ctrl+B** for a wider Monitor; a
-**Navigate** menu stays in the top bar. Preference is remembered.
+![4 decks, blue](doc/desktop-4deck-blue.png)
 
 ![Sidebar](doc/desktop-sidebar.png)
 
-### Desktop — Settings, Library, Devices
-
-Connection, display, deck elements and behaviour live under **Settings**.
-**Library** browses `export.pdb` tracks (search/filter), OneLibrary playlists and
-history when readable, and an artwork strip for tracks currently on decks.
-**Devices** lists players and mixers on the link. Multi-player (separate CDJs) browse
-aggregates all mounted hosts — still worth validating on a multi-CDJ booth.
-
 ![Settings](doc/desktop-settings.png)
 
-![Library stats](doc/desktop-library.png)
+![Library](doc/desktop-library.png)
 
 ![Devices](doc/desktop-devices.png)
-
-### OBS overlay
-
-Transparent HTML served at `/overlay`, driven by the same SSE API as the web panel.
-Now Playing **Card** uses the high-res cover. **Panel** (bar) uses the small cover
-and a waveform-driven spectrum above the scrolling wave (`?style=panel`). Pro DJ
-Link has no audio, so that spectrum follows the analysed low/mid/high waveform
-at the playhead and decays while paused. System-audio loopback is an opt-in
-desktop setting and needs the optional `soundcard` package.
 
 ![Now playing overlay](doc/overlay-nowplaying.png)
 
 ![All decks overlay](doc/overlay-all-decks.png)
 
-### Web panel
-
-The original browser panel is still available via `python app.py`.
-
 ![Web panel](doc/web-panel.png)
 
----
+Now Playing **card** (tall, high-res cover) and **panel** (full-width bar):
 
-## Tested on
+![Overlay card](docs/screenshots/overlay-now-card.png)
 
-**An AlphaTheta XDJ-AZ (firmware 1.30), on Windows 11, and nothing else** — that is
-what the original author verified field offsets, NFS access and waveform decoding
-against. The desktop shell in this fork has also been exercised on Linux/X11
-without live DJ gear.
+![Overlay panel](docs/screenshots/overlay-now-panel.png)
 
-Two things were written with separate players in mind, both untested:
+![Floating card](docs/screenshots/floating-now-card.png)
 
-- the medium is read from whichever player the track reports it was *loaded from*,
-  rather than from one fixed address;
-- the NFS file-name encoding is detected rather than assumed (the XDJ-AZ uses
-  UTF-16LE).
+![Floating panel](docs/screenshots/floating-now-panel.png)
 
-If you try it, on any player or any operating system, an issue saying what worked
-and what did not is very welcome.
+## Supported hardware
 
----
+Field offsets, NFS, and waveform decoding were checked against an **AlphaTheta XDJ-AZ, firmware 1.30**, on Windows 11. That is the only player the original work was verified on. The desktop shell has also been run on Linux without live gear. Anything else below is what the code expects from public packet layouts, and is marked when this project has not confirmed it on hardware.
 
-## What it shows
+**XDJ-AZ**
 
-Per deck:
+- The AZ uses player numbers 1–4 and 33 (the mixer section). Rekordbox uses 17. This app announces as device **5** by default.
+- **2-deck and 4-deck.** While Utility → PRO DJ LINK is on, the AZ sends a Channels On-Air packet (type `0x03` on UDP 50001). Health calls that **Pro DJ Link**. When that packet goes quiet for more than a second, Health calls it **4-deck**. With no AZ on the network the line stays blank. The Monitor page only has those two layouts: decks **1–2**, or **3–1–2–4**.
+- **Source slots** in the status packet: 0 empty, 1 CD, 2 SD, 3 USB, 4 rekordbox, 6 Streaming Direct Play, 7 USB 2 (AZ 4-deck), 9 Beatport LINK. Bytes 5 and 8 are only documented as a streaming service. They are not labelled Apple Music, TIDAL, or SoundCloud.
+- **OneLibrary.** The status track id is the rekordbox id. `export.pdb` is read first because that row holds the ANLZ path. `exportLibrary.db` is used when it has the same id. A readable OneLibrary file with no content rows must not hide the `export.pdb` row (that used to blank every waveform on the AZ). A title match can choose between the two when they disagree. Live library menus prefer the player's dbserver; the NFS cache is the fallback. Nothing is written back.
+- **Unverified on the AZ:** Absolute Position packets (type `0x0b`). Health shows `absolute_packets` and whether the playhead is using Absolute Position or the beat grid, so a capture answers it. Some AZ builds put track length in milliseconds in that packet; CDJ-3000 uses seconds. Also unverified: the settings block at `0xD0` (waveform colour at `0xDA`, playhead at `0xDD`). Auto playhead still falls back to **Left** for an AZ (and for Opus Quad) when that byte is missing.
 
-- **Track**: title, artist, album, genre, label, year and artwork.
-- **Position**: elapsed and remaining time, absolute beat and position in the bar.
-- **Tempo**: effective BPM (track tempo with the fader applied), pitch percentage,
-  musical key.
-- **State**: playing / cued / paused / end of track, plus the `MASTER`, `SYNC` and
-  `ON AIR` flags.
-- **Waveform**: the detail view scrolling under a fixed playhead, with the bar grid
-  and **cue / hot-cue markers** (A–H badges); above it, an overview of the whole
-  track with the played part lit and the same cue markers.
+**CDJ-3000 family**
 
-The panel pulses on the downbeat of every deck that is playing.
+- Absolute Position is the documented precise playhead: about every 30 ms on UDP 50001, type `0x0b`. This project has not re-checked that on a CDJ-3000 in the booth.
+- The factory playhead default in the code is **Centre**. CDJ-2000NXS2 and XDJ-XZ have no such setting and are always centred.
+- Long status packets (512 bytes) carry the loop that is actually playing. Shorter packets leave the loop fields at zero.
+- The sequence counter at bytes `0xC8`–`0xCB` usually stays zero, so Health’s sequence-hole column stays blank until that counter is seen stepping by one.
 
-The header (web) or Monitor toolbar (desktop) has switches for **waveform zoom in
-4/4 bars** (1 / 2 / 4 / 8 / 16, also `+` and `-` on the keyboard), how many **decks**
-to show (**2** or **4**), and the **waveform colour** (RGB / 3BAND / BLUE). Layout
-order is **1–2** in two-deck mode and **3–1–2–4** in four-deck mode. Those choices
-are remembered. A **Record session** button captures a chronological playlist with a
-**set clock** from the first track at `00:00:00` that pauses on dead air (also under
-**Session** in the desktop sidebar, and via `/api/session`).
+Two other choices were written for separate players and are untested on a multi-CDJ booth: the medium is read from the player the track says it was loaded from, and the NFS file-name encoding is detected (the AZ uses UTF-16LE).
 
----
+## Install
 
-## Requirements
+The computer and the player need to be on the same network. The monitor core (`app.py`, `monitor.py`, `probe.py`) needs no extra Python packages. The desktop app, the updater, and a few optional readers do.
 
-- **Python 3.10 or newer**. The monitor core (`app.py`, `monitor.py`, `probe.py`)
-  needs no packages.
-- **Desktop GUI**: install `PySide6` (`pip install -r requirements.txt`).
-- The computer and the player on the **same network**.
-- **Wireshark / Npcap** ([wireshark.org](https://www.wireshark.org)) — only to run
-  this while rekordbox is open.
+### Windows, from the GitHub Release zip
 
-| Your situation | What runs | Npcap |
-|---|---|---|
-| rekordbox closed | virtual device mode, plain UDP sockets | not needed |
-| rekordbox open | passive capture | **required** |
+You do not need Python for this path.
 
----
-
-## Install on Windows
-
-You do not need Python installed for this path. The zip is the app.
-
-1. Open the [Releases](https://github.com/johnnycoombes/prolink-monitor/releases) page and download `ProlinkListener-<version>-win64.zip` from a versioned release (for example `v1.0.0`). Leave the release named `updates` alone. That one is for the updater, not for installing by hand.
+1. Open the [Releases](https://github.com/johnnycoombes/prolink-monitor/releases) page and download `ProlinkListener-<version>-win64.zip` from a versioned release (the current one is `v1.0.1`). Leave the release named `updates` alone. That one is signed metadata for the updater, not an installer.
 2. Extract the zip to a folder you will keep, for example `C:\Users\User\Prolink Listener`. Do not run the program from inside the zip.
-3. Open that folder and double-click `ProlinkListener.exe`.
-4. If Windows asks whether the app may use private networks, allow it. That is the same prompt Python used to get, so a phone on the booth Wi-Fi can open the panel.
-5. Your existing settings are still read from `C:\Users\User\.prolink-monitor` (the file is `settings.json`). The USB library cache is still `C:\Users\User\.prolink-cache`. Nothing is copied or reset on first launch.
+3. Double-click `ProlinkListener.exe`.
+4. If Windows asks whether the app may use private networks, allow it. A phone on the booth Wi-Fi needs that to open the panel.
+5. Settings stay in `C:\Users\<you>\.prolink-monitor\settings.json`. The USB library cache stays in `C:\Users\<you>\.prolink-cache`. The first launch does not copy or reset either folder.
 
-Npcap is still only needed when rekordbox is open. Virtual device mode (rekordbox closed) does not need it. The first time you use passive capture, point the app at your existing tshark install under Settings if it is not on `PATH`.
+Npcap is only needed when rekordbox is open. See [Troubleshooting](#troubleshooting).
 
-Running from a checkout (`python desktop.py`) is unchanged. The zip is an extra way to start the same program.
+### Updates
 
-## Updating
+A couple of seconds after the Windows app opens, it looks for a newer **signed** release. The packaged app then asks:
 
-A couple of seconds after the Windows app opens, it looks for a newer signed release. If it finds one, a dialog shows the version you have and the version that is available. Choose **Yes** and the app downloads that build, replaces its own files, closes, and opens again. Choose **No** and it stays on the version you have.
+> Version X is available. This copy is Y. Install it now? Prolink Listener will close and open again. Your settings stay in the .prolink-monitor folder and the library cache stays in .prolink-cache.
 
-Settings and the library cache are not part of the update. They stay in `.prolink-monitor` and `.prolink-cache`.
+**Yes** downloads that build, replaces the app files, closes, and opens again. **No** stays on the version you have. Settings and the cache are not part of the update.
 
-To turn the check off, open **Settings → Desktop** and clear **Check for updates when the app starts**, then Save.
+To turn the check off: **Settings → Desktop**, clear **Check for updates when the app starts**, then Save.
 
-The check trusts only updates signed with the key pair that matches `root.json` inside the app ([tufup](https://github.com/dennisvang/tufup), which is The Update Framework). A zip somebody else uploaded is ignored.
+The check trusts only updates signed to match `root.json` inside the app ([tufup](https://github.com/dennisvang/tufup)). A zip somebody else uploaded is ignored. If GitHub cannot be reached, the app starts as usual and writes a line to `.prolink-monitor\update.log`.
 
-If you started the app with `python desktop.py`, it can still tell you that a newer Windows build exists. It will not overwrite your checkout. Say yes on that dialog only if you want the Releases page opened in a browser.
+If you started with `python desktop.py`, the same check runs, but it will not overwrite the checkout. **Yes** on that dialog only opens the Releases page.
 
-If GitHub cannot be reached, or signing has not been set up yet, the app starts as usual and writes a line to `.prolink-monitor\update.log`.
+### One copy at a time
 
-## For developers: release process
+A second launch of `ProlinkListener.exe` (and of `python desktop.py`) does not start a second process. It talks to `127.0.0.1:47331` and asks the first copy to come forward, including when that window was hidden by close-to-tray or minimize-to-tray. Extra flags on the second launch:
 
-Tests run on every pull request and every push to `main`, on Ubuntu and Windows, with Python 3.12 and 3.14. Python 3.10 is still enough to run from source. 3.14 is in CI because that is the interpreter used on the booth PC, and current PySide6 wheels allow it (3.10 up to, not including, 3.15). PyInstaller 6.16 or newer is what builds that interpreter.
+| Flag | What the running copy does |
+|---|---|
+| (none) | Show the window |
+| `--open-panel` or `--open-web` | Show the window and open the web panel |
+| `--open-overlay` | Show the window and open the overlay |
 
-The Windows app is a PyInstaller **folder** build (not a single exe, and not `pyside6-deploy`). Qt WebEngine needs `QtWebEngineProcess.exe` and its resource files sitting next to the Qt libraries. PyInstaller's PySide6 hooks collect those. `pyside6-deploy` often misses them unless Visual Studio's `dumpbin` is installed. A one-file exe is a poor fit for the same reason: WebEngine wants a real executable on disk.
+If that port is busy and nobody answers, the app starts anyway.
+
+While connected, closing or minimizing the window hides it to the tray (both are on by default). Quit from the tray menu when you want the process to exit.
+
+### Run from source
+
+Python **3.10 or newer**. Continuous tests use 3.12 and 3.14. The Windows package is built with 3.14. Current PySide6 wheels allow 3.10 up to, but not including, 3.15.
+
+```bash
+pip install -r requirements.txt
+python desktop.py
+```
+
+`requirements.txt` is PySide6, PySide6-Addons, and Pillow. `python -m gui` is the same window.
+
+Optional, only when you need them:
+
+```bash
+pip install "tufup>=0.10,<0.11"          # the update check
+pip install "pyrekordbox @ git+https://github.com/dylanljones/pyrekordbox.git@master"
+                                         # OneLibrary / exportLibrary.db
+pip install soundcard                    # overlay bar visualiser from system audio
+```
+
+Tests also need `pytest` and `packaging`.
+
+Other entry points:
+
+| Command | What it is |
+|---|---|
+| `python app.py` | Web panel and HTTP API, no desktop window |
+| `python monitor.py` | Console monitor |
+| `python probe.py` | Print status bytes that change |
+| `python probe.py --replay file.plc` | Replay a Health capture. Sends nothing |
+
+`app.py` flags: `--host`, `--mode vcdj|sniffer`, `--number` (default 5), `--port` (default 8777), `--http-host` (default `0.0.0.0`), `--iface`, `--no-open`.
+
+## Features
+
+The sidebar is **Monitor**, **Devices**, **Health**, **Library**, **Session**, **Overlay**, **Settings**, and **About**. Hide it with **☰**, **Hide sidebar**, or **Ctrl+B**.
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+R` | Start or stop session recording |
+| `+` / `-` | Zoom the waveform (fewer or more bars) |
+| `Ctrl+B` | Sidebar |
+| `Ctrl+O` | Open the overlay URL |
+
+### Monitor
+
+Each deck card can show artwork, title, artist, album / genre / label, MASTER / SYNC / ON AIR, the waveform, BPM, tempo (±%), elapsed and remaining time, key, and play state. Hidden columns give the wave more room. Empty decks can be hidden. The page only lays out **2** or **4** decks.
+
+**Waveforms.** Three colour styles, the same ones a CDJ draws:
+
+| Style | Analysis tag | How a column is read |
+|---|---|---|
+| RGB | `PWV5` | Height in bits 2–6. Colour in bits 13–15 red, 7–9 green, 10–12 blue. |
+| 3-band | `PWV7` | Three bytes, ordered **mid, high, low**. Drawn as separate bands. |
+| Blue | `PWV3` | Height in bits 0–4. Bits 5–7 pick a shade. |
+
+The overview is the detail wave reduced by peak, not `PWV4`. Zoom is in **4/4 bars** (1, 2, 4, 8, or 16). Each deck can keep its own zoom.
+
+**Phrase strip.** Rekordbox phrase names (intro, verse, chorus, and the rest) sit under the overview when **Phrase strip under waveform** is on.
+
+**Vocal lane.** An optional strip under the phrases. A column counts as vocal when the mid band is above the PWVC threshold and the low and high bands stay under theirs. The preview wave is PWV6, with PWV7 as the fallback. On by default (`show_vocals`).
+
+**Beat grid and cues.** Memory cues and hot cues A–H are drawn on the overview and the detail wave. Hover a wave for a time; click to pin a cue time.
+
+**Playhead.** **Auto** follows the player. **Centre** puts the needle in the middle. **Left** puts it at a quarter of the strip width. Auto uses Centre for a CDJ-3000 and Left for an XDJ-AZ or Opus Quad when the settings byte is missing. CDJ-2000NXS2 and XDJ-XZ stay centred. The overlay overview wave does not use this control.
+
+**Smoothing** (`playhead_smoothing`, default **Normal**):
+
+- **Direct** snaps to each packet.
+- **Normal** moves at most 15% of one packet’s travel when the error is 80 ms or more, and 8% when it is smaller.
+- **Strong** uses 8% and 4%.
+- After a second with no packet the needle holds. A seek, pause, reverse, loop wrap, or track change snaps immediately. A jump past 400 ms is treated as a seek.
+
+The window paints at 60 Hz by default. Metadata refreshes more slowly. See [doc/PERFORMANCE.md](doc/PERFORMANCE.md).
+
+**NEXT countdown.** `NEXT: <name> in m:ss` for the next hot cue, memory cue, or phrase change after the playhead. A hot cue with no name is `CUE A` (and so on). A memory cue with no name is `MEMORY`. Loop cues are skipped. The text is amber at 10 seconds or less (`#ff9f45`) and red at 3 seconds or less (`#ff3b30`). On by default (`show_next_cue`). A seek picks a new target immediately.
+
+**Artwork.** The card uses a large image. The panel bar uses a small one. Large art is tried in this order, and stops at the first image: a cover embedded in a local music mirror, dbserver high-res, the NFS `_m` thumbnail, dbserver standard, the NFS thumbnail, then an embedded cover read from the audio header only (ID3, FLAC, or MP4). The audio file is not downloaded. The player and the USB stay read-only.
+
+**Session.** **Record session** (also the Session page, and `Ctrl+R`) keeps a chronological list of on-air tracks. The set clock starts at `00:00:00` and pauses when nothing is on air. Export CSV, JSON, or M3U. Auto-save writes all three on Stop, under `~/.prolink-monitor/sessions` unless you set another folder.
+
+### Library
+
+Search the USB tracks, browse OneLibrary playlists and history when `pyrekordbox` can open `exportLibrary.db`, and see artwork for tracks that are on decks. Classic `export.pdb` search works without that package. The page says when OneLibrary is present but not readable yet.
+
+Live menus prefer the player’s dbserver. The NFS copy is the fallback. A bad date on one OneLibrary row is left blank; the rest of the table still loads. A `pyrekordbox` deprecation warning (the old `db6` name) is not a library error. `db6` is imported only when `masterdb` is missing.
+
+### Health
+
+- Packet rates, per deck, and whether position is coming from Absolute Position or the beat grid.
+- **XDJ-AZ** mode: Pro DJ Link or 4-deck, as above.
+- **Link timing** over the last 30 seconds. A gap longer than 400 ms counts as late. Sequence holes stay blank on CDJ-3000-class players that leave the counter at zero.
+- **ANLZ path** for the track on each deck, and which library row it came from.
+- **dbserver reconnects** and the last error. A dropped remotedb socket is retried with a short backoff and a fresh handshake. That retry does not restart the web server. Nothing is written to the player.
+- NFS round-trip for mounted media.
+- **What’s Now Playing** status.
+- **Web server:** listening or not, client count, thread count, and the last error. **Restart web server** binds the same port again. Use it if the panel goes quiet after a reconnect. See [Troubleshooting](#troubleshooting).
+- **Capture.** A 5–60 second listen-only recording, saved as a `.plc` file under `~/.prolink-monitor/captures`. It sends nothing. Replay with `python probe.py --replay path.plc`.
+
+### Web panel
+
+**Open web panel** (or `python app.py`) opens `http://127.0.0.1:8777/` in a normal browser tab. It mirrors the Monitor view: decks, waveform, phrases, vocal lane, playhead, zoom, and the countdown. Those controls stay in the desktop app. The page has no library pill and no settings. A fullscreen button on the page works only after you click it.
+
+`?readonly=1` hides Record. The server listens on `0.0.0.0` by default, so a phone on the same Wi-Fi can open `http://<this-PC>:8777/`. Turn that off under **Allow phones on the same Wi-Fi**.
+
+### OBS overlay
+
+With the web server running, add a Browser source:
+
+```
+http://127.0.0.1:8777/overlay
+```
+
+The page background is transparent. Now Playing has two styles. There is no third layout named Bar.
+
+- **Card** (`style=card`, the default): tall card, high-res cover, overview wave. Corners are `tl`, `tr`, `bl`, `br`.
+- **Panel** (`style=panel`): the full-width bar, small cover, scrolling wave. `pos=bottom` or `pos=top`.
+
+**Spectrum visualiser.** On by default for the panel (`overlay_show_spectrum`). Pro DJ Link has no audio, so the bars follow the analysed low / mid / high wave at the playhead and decay while paused. **Bar visualiser: use system audio** (`overlay_spectrum_audio`) is off until you turn it on, and then needs the optional `soundcard` package (WASAPI loopback). That checkbox picks the input. It is not the on/off switch.
+
+The **Overlay** page builds the URL. Copy it into OBS and size the source to the canvas (for example 1920×1080).
+
+| Param | Values | Default | Meaning |
+|---|---|---|---|
+| `layout` | `nowplaying`, `dual`, `minimal`, `setlist` | `nowplaying` | `setlist` is now-playing plus a scrolling history |
+| `style` | `card`, `panel` | `card` | Now Playing only |
+| `pos` | card: `tl` `tr` `bl` `br`; panel: `bottom` `top` | `bl` or `bottom` | Where that style sits |
+| `corner` | `bl`, `br`, `tl`, `tr`, `center` | `bl` | Other layouts |
+| `decks` | `1`–`4` | `1` (`2` for dual) | How many decks |
+| `wave` | `rgb`, `3band`, `blue` | `rgb` | Overlay wave colour |
+| `scale` or `font` | `0.5`–`2.5` | `1` | Size |
+| `accent` | 6-digit hex | — | Accent colour, for example `ff6b61` |
+| `tags` | `1` / `0` | on | MASTER / SYNC / ON AIR |
+| `bpm` | `1` / `0` | on | BPM |
+| `next` | `1` / `0` | on | MixStatus “about to take over” lower third |
+| `playing` | `1` / `0` | on | Only decks that have a track |
+| `mix` | `1` / `0` | on | SmartTiming now-playing on single-deck layouts |
+| `preview` | `1` | off | Dark background for a local look |
+| `float` | `1` | off | Used by the floating window |
+| `embed` | `1` | off | Tighter frame |
+
+With `mix=1`, now-playing, minimal, and setlist follow the audience track: playing and on air for 128 beats (about two phrases), with short drop-outs ignored. That rule is the SmartTiming port from prolink-connect. Dual layout shows the chosen decks across the window and does not follow that single audience pick. The cue countdown follows the desktop **Next cue countdown** setting, the same as Monitor. `next=0` hides the MixStatus lower third only.
+
+```
+http://127.0.0.1:8777/overlay?layout=nowplaying&style=panel&pos=bottom
+http://127.0.0.1:8777/overlay?layout=dual&corner=tl&decks=4&playing=0
+http://127.0.0.1:8777/overlay?layout=setlist&corner=bl
+```
+
+### Floating window
+
+A topmost window of the same overlay page. Transparent by default. It reloads after the web server comes back, so a reconnect does not leave a blank frame. Position and size are remembered separately for the card and the panel.
+
+### What’s Now Playing
+
+Off until you enable it. Settings → What’s Now Playing sends the audience track (the master on-air deck) to [What’s Now Playing](https://github.com/whatsnowplaying/whats-now-playing) once per change. Host `localhost`, port **8899**, optional shared secret. No cover art is sent: that app’s remote input drops image data. If What’s Now Playing is closed, the listener keeps running and Health shows the error. **Test** checks the connection. Nothing is written to the player.
+
+In What’s Now Playing: **Core Settings → Source → Remote**, and leave **Output & Display → Web Server** enabled.
+
+### Settings
+
+Saved at `~/.prolink-monitor/settings.json`. On Windows that is `C:\Users\<you>\.prolink-monitor\settings.json`. `PROLINK_CONFIG_DIR` overrides the folder. The USB cache is `~/.prolink-cache`.
+
+| Key | Default | What it does |
+|---|---|---|
+| `mode` | `auto` | `auto`, `vcdj` (virtual device), or `sniffer` |
+| `host` | empty | Player address. Empty means auto-detect |
+| `number` | `5` | Virtual device number |
+| `name` | `monitor` | Name announced on the link |
+| `iface` | empty | Capture interface for sniffer mode |
+| `port` | `8777` | Web server port |
+| `http_bind` | `0.0.0.0` | `127.0.0.1` keeps the panel on this PC |
+| `start_web_server` | on | Start the panel with the app |
+| `auto_connect` | on | Connect when the window opens |
+| `max_decks` | `4` | 2 or 4 |
+| `waveform_style` | `rgb` | `rgb`, `3band`, or `blue` |
+| `zoom_bars` | `4` | Bars in the detail wave |
+| `show_phrases` | on | Phrase strip |
+| `show_vocals` | on | Vocal lane |
+| `show_next_cue` | on | NEXT countdown |
+| `playhead_position` | `auto` | `auto`, `centre`, or `left` |
+| `playhead_smoothing` | `normal` | `direct`, `normal`, or `strong` |
+| `poll_hz` | `60` | Playhead refresh |
+| `show_empty_decks` | on | Keep unused deck slots |
+| `deck_show_*` | on | Per-element visibility on the Monitor card |
+| `local_music_root` | empty | Optional mirror used for embedded covers |
+| `overlay_layout` | `nowplaying` | Overlay layout |
+| `overlay_now_style` | `card` | `card` or `panel` |
+| `overlay_now_pos` | `bl` | Card corner, or `bottom` / `top` for the panel |
+| `overlay_show_spectrum` | on | Panel spectrum visualiser |
+| `overlay_spectrum_audio` | off | Drive that visualiser from system audio |
+| `overlay_playing_only` | on | Overlay `playing` |
+| `overlay_mix` | on | SmartTiming now-playing |
+| `overlay_show_tags` / `overlay_show_bpm` / `overlay_show_next` | on | Overlay tags, BPM, MixStatus next |
+| `floating_now_topmost` | on | Floating window stays above other windows |
+| `floating_now_transparent` | on | Transparent floating background |
+| `wnp_enabled` | off | What’s Now Playing output |
+| `wnp_host` / `wnp_port` / `wnp_secret` | `localhost` / `8899` / empty | Where to send it |
+| `check_for_updates` | on | Signed-release check on startup |
+| `close_to_tray` / `minimize_to_tray` | on | Hide instead of quitting while connected |
+| `session_autosave` | off | Write CSV, JSON, and M3U when recording stops |
+
+**Connect** and **Save & reconnect** stop the link and start it again, which also closes and reopens the web server on the same port. Changing the network interface does that too. A dbserver retry does not, and a player disappearing does not restart the web server by itself. **Health → Restart web server** rebinds the panel without dropping the link.
+
+### How it joins the link
+
+The player sends detailed status by unicast, and only to devices that announced themselves. Beats and keep-alives are broadcast.
+
+| Mode | When | Npcap |
+|---|---|---|
+| Virtual device (`vcdj`) | rekordbox closed. Announces on UDP 50000 and receives status on 50002. | Not needed |
+| Passive capture (`sniffer`) | rekordbox is open and already linked. Reads packets without binding those ports. | Required, with tshark |
+| `auto` (default) | Virtual device when port 50002 is free, otherwise sniffer. | Only in the sniffer case |
+
+| UDP port | What arrives |
+|---|---|
+| 50000 | Keep-alives (who is on the network) |
+| 50001 | Beats, and Absolute Position (`0x0b`) on CDJ-3000-class players |
+| 50002 | Detailed player status (unicast) |
+| 50004 | Mixer clock (`0x20`) |
+
+The mixer’s **ON AIR** flag is bit `0x08` of the flags at byte `0x89` in each deck’s status. It follows the channel fader. Fader position, volume, and EQ are not on the link: moving the faders on an AZ changed that one bit and nothing else. Field `0x26`–`0x27` is not “activity” on the AZ (the documented idle/playing meaning did not match a stopped deck).
+
+Library files come over **NFS v2 on UDP**, via the portmapper (UDP 111) and the mountd / nfs ports the player returns. There is no single fixed NFS port to open. The paths are `PIONEER/rekordbox/export.pdb`, optional `exportLibrary.db`, `PIONEER/USBANLZ/.../ANLZ0000.DAT` (and `.EXT` / `.2EX`), and `PIONEER/Artwork/...`. The dbserver query port is TCP 12523; the player answers with its own dbserver port (often 1051). That session is read-only.
+
+## HTTP API
+
+Default base is `http://127.0.0.1:8777`. State uses stable keys (`playing`, `cued`, `usb`), not display text.
+
+| Route | Returns |
+|---|---|
+| `/` | Web panel |
+| `/overlay` | Transparent OBS page |
+| `/api/state` | Full JSON, including now-playing, setlist, and session |
+| `/api/setlist` | SmartTiming mix status and setlist |
+| `/api/session` | Session recorder |
+| `/api/session/start`, `/stop`, `/clear` | Start, stop (keep the list), or clear |
+| `/api/session/export?fmt=csv\|json\|m3u` | Download the playlist |
+| `/api/library/tracks?q=&limit=&offset=` | Search tracks |
+| `/api/library/playlists` | OneLibrary playlists and history |
+| `/api/library/playlist/<id>?host=&limit=` | Tracks in one playlist |
+| `/api/library/loaded` | Tracks currently on decks |
+| `/api/events` | Server-sent events: a full snapshot about 15 times a second, and a light playhead frame at 60 Hz |
+| `/api/track/<id>` | Metadata, beat grid, cues, phrases. Optional `deck` and `key` |
+| `/api/waveform/<id>` | Binary waveforms. Optional `deck` and `key` |
+| `/api/artwork/<id>?size=large\|small` | JPEG. Optional `deck` and `key` |
+
+`/api/waveform/<id>` is blocks back to back. Each starts with a 24-byte little-endian header: magic, version, column count, columns per second, duration in ms, flags, then heights and RGB. Magic `PLWF` is the colour wave (detail, then overview). Optional `PLWB` and `PLBC` blocks carry the 3-band and blue lanes.
+
+## Troubleshooting
+
+**Firewall.** Allow UDP **50000–50002** on the DJ network (and UDP 50004 if you care about the mixer clock). Allow TCP on the web port, **8777** by default. If 8777 is blocked, the app tries **8787**, then 8877, 9777, 18777, then a free port. NFS is not one port: allow UDP **111** (portmapper) and the mountd / nfs ports the player returns. On Windows, accept private-network access for Prolink Listener when the prompt appears.
+
+**`PermissionError: [WinError 10013]` on the web port.** Hyper-V, WSL, or another listener has reserved it. The fallbacks above usually pick another port. To choose one: `python app.py --port 18777`, or set **Web server port** in Settings. See reserved ranges with `netsh interface ipv4 show excludedportrange protocol=tcp`.
+
+**Npcap, only when rekordbox is open.** Virtual device mode needs rekordbox closed, because it binds UDP 50000–50002 and Windows will not share them (`WSAEACCES`, “could not open UDP port 50000”). Close rekordbox, or switch to **Passive capture** and install [Npcap](https://www.wireshark.org) (the Wireshark installer). Point Settings at `tshark` if it is not on `PATH`. Passive mode goes quiet when nothing else is linked to the player.
+
+**The web panel does not load after a reconnect.** Fixed in **1.0.1**: the accept loop used to stop while the port still looked open, so the browser hung and a second copy could not bind. Current builds keep the server up across a reconnect and reload the floating overlay. If a page is still stuck, open **Health** and press **Restart web server**, or Connect again. Do not start a second copy to “get the port back”.
+
+**Two copies.** A second double-click should bring the first window forward, including from the tray. If you still see two `ProlinkListener.exe` processes, quit both from the tray (or Task Manager) and start once. The instance port is `127.0.0.1:47331` and is not the web panel.
+
+**No decks.** The player has to be on and on the same subnet. In virtual device mode the device number must be free (default 5). In passive mode, rekordbox (or another linked program) has to be open. Several virtual adapters (VMware, Hyper-V) can make auto-detect pick the wrong address: set the player address, or `--host`. “could not find interface” means pass `--iface` with a number from `tshark -D`.
+
+**Library errors.** A warning about `pyrekordbox.db6` is not a failed library; the supported import is `masterdb`. One bad date does not blank the track list. If the page is empty, check that a USB stick analysed in rekordbox is mounted on the player, and Health’s library line. OneLibrary playlists need the optional `pyrekordbox` install. Waveforms need the ANLZ files on that stick; Health shows the path it resolved for each deck.
+
+**Track title, no waveform.** The stick has to be inserted and carry rekordbox analysis. An empty OneLibrary content table must not be the only row the app trusts; 1.0.x falls back to `export.pdb` for the ANLZ path.
+
+## Release process
+
+Tests run on every pull request and every push to `main`: pytest on Ubuntu and Windows, Python 3.12 and 3.14. The Windows app is a PyInstaller folder build (not one file). Qt WebEngine needs `QtWebEngineProcess.exe` beside the Qt libraries. PyInstaller 6.16 or newer is what builds the 3.14 interpreter used for that package.
 
 ### Cut a release
 
@@ -203,538 +397,81 @@ The Windows app is a PyInstaller **folder** build (not a single exe, and not `py
    git push origin v1.1.0
    ```
 
-3. The **Windows release** workflow builds `ProlinkListener-1.1.0-win64.zip` and attaches it to the GitHub Release for that tag. The tag text after `v` has to match `__version__`, or the build stops.
-4. If the signing secrets below are set, the same workflow also publishes signed update files on a release named `updates`. If they are not set, it prints a note and skips that step. The zip is still published.
+3. The **Windows release** workflow builds `ProlinkListener-<version>-win64.zip` and attaches it to the GitHub Release. The text after `v` has to match `__version__`, or the build stops.
+4. If the signing secrets below are set, the same workflow publishes signed update files on a release named `updates`. If they are not set, it prints a note and still publishes the zip.
 
-Pull requests also run the Windows build and upload the zip as an Actions artifact, so you can see the folder before you tag anything. Install the copy from the GitHub Release, not a pull-request artifact, once signing is turned on.
+Pull requests also run the Windows build and upload the zip as an Actions artifact. Once signing is on, install the copy from the GitHub Release, not a pull-request artifact. The workflow’s tag-only jobs do not run on a pull request. That is expected.
 
-### Signing keys (once)
+### Signing secrets
 
-Private keys are never committed. GitHub Actions reads them from secrets.
+Private keys are never committed.
 
-1. On your PC, from the repository root:
+1. From the repository root:
 
    ```bash
    pip install "tufup>=0.10,<0.11"
    python scripts/tuf_init_keys.py
    ```
 
-2. Type a password when asked, and keep it. The script writes:
-   - `packaging/tuf/keystore/` — the private keys. Git ignores this folder.
-   - `packaging/tuf/tuf-keys.zip` — those same keys, for the secret below. Git ignores this file.
-   - `packaging/tuf/root.json` — the public half. Commit this file and push it to `main`. The Windows build copies it into the app so the app knows which keys to trust.
-3. On GitHub: **Settings → Secrets and variables → Actions → New repository secret**.
-   - Name `TUFUP_KEYS_B64`. Value is the base64 of `packaging/tuf/tuf-keys.zip`.
-   - Name `TUFUP_KEY_PASSWORD`. Value is the password from step 2.
+2. Keep the password. The script writes `packaging/tuf/keystore/` and `packaging/tuf/tuf-keys.zip` (both gitignored) and `packaging/tuf/root.json` (commit this and push it). The Windows build copies `root.json` into the app.
+3. GitHub → **Settings → Secrets and variables → Actions**:
+   - `TUFUP_KEYS_B64`: base64 of `packaging/tuf/tuf-keys.zip`
+   - `TUFUP_KEY_PASSWORD`: the password from step 2
 
-   PowerShell, from the repository root:
+   PowerShell: `[Convert]::ToBase64String([IO.File]::ReadAllBytes("packaging\tuf\tuf-keys.zip")) | Set-Clipboard`
 
-   ```powershell
-   [Convert]::ToBase64String([IO.File]::ReadAllBytes("packaging\tuf\tuf-keys.zip")) | Set-Clipboard
-   ```
+   bash: `base64 -w 0 packaging/tuf/tuf-keys.zip`
 
-   bash:
+4. Tag a release only after `root.json` is on `main` and both secrets exist.
 
-   ```bash
-   base64 -w 0 packaging/tuf/tuf-keys.zip
-   ```
+There are four TUF roles: `root`, `targets`, `snapshot`, and `timestamp`. A signature stays valid for 90 days. Root lasts a year. Do not regenerate the keys after people are running a build that contains the old `root.json`. Those copies ignore updates signed by a different key.
 
-4. Tag a release **after** `root.json` is on `main` and both secrets exist. The build has to contain that `root.json`, or the app has nothing to trust.
+The `updates` release holds `timestamp.json`, `snapshot.json`, `targets.json`, `root.json`, and `prolink-listener-<version>.tar.gz`. Do not install that tar.gz by hand.
 
-### Publish metadata for a zip that is already released
+### Re-publish a zip that is already released
 
-Use this when the versioned zip is already on GitHub and only the signed update files are missing. Do not regenerate the keys, and do not push the tag again.
+Use this when the versioned zip is already on GitHub and only the signed metadata is missing. Do not regenerate the keys, and do not push the tag again.
 
-1. On GitHub, open **Actions → Windows release → Run workflow**.
+1. **Actions → Windows release → Run workflow**.
 2. Branch: `main`.
-3. Tag: the existing release, for example `v1.0.0`.
-4. Run it. The job downloads `ProlinkListener-<version>-win64.zip` from that release and uploads the signed files to the `updates` release. It does not rebuild the app.
+3. Tag: the existing release, for example `v1.0.1`.
+4. Run it. The job is **Sign existing release**. It downloads `ProlinkListener-<version>-win64.zip` from that release and uploads signed files to `updates`. It does not rebuild the app.
 
-There are four keys, one for each TUF role: `root`, `targets`, `snapshot`, and `timestamp`. They are encrypted with the password. The workflow decrypts them from `TUFUP_KEY_PASSWORD` and does not prompt (a prompt would hang the job). Metadata is signed again on each tagged release. The signature stays valid for 90 days, so a quiet couple of months does not stop the next update. Root lasts a year.
+## Credits
 
-If `TUFUP_KEYS_B64` or `packaging/tuf/root.json` is missing, the release workflow still uploads the zip and skips the signed metadata. It does not fail the release for that.
+Fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor) by [@fidow](https://github.com/fidow). The Pro DJ Link engine, NFS library access, web panel, console monitor, and protocol probe started there.
 
-Do not regenerate the keys after people are running a build that contains the old `root.json`. Those copies will ignore updates signed by a different key. If the zip or the password leaks, install the next build by hand and treat the old updater as untrusted until you have shipped a new `root.json` inside a build you installed yourself.
+Ideas and small pieces adapted under their own licences:
 
-The `updates` tag is created by the workflow. It holds `timestamp.json`, `snapshot.json`, `targets.json`, `root.json`, and `prolink-listener-<version>.tar.gz`. Do not install that tar.gz by hand. The zip on the versioned release is the installer.
+- [chrisle/alphatheta-connect](https://github.com/chrisle/alphatheta-connect) (MIT). The dbserver reconnect backoff, the header-only NFS artwork read (`prolink/art_header.py`), and the PWVC vocal test. Our 3-band columns are ordered mid, high, low, which is not that project’s low, mid, high order. The retry loop and the vocal drawing are written here.
+- [evanpurkhiser/prolink-connect](https://github.com/evanpurkhiser/prolink-connect) (MIT). SmartTiming now-playing and setlist rules in `prolink/mixstatus.py`.
+- [dennisvang/tufup](https://github.com/dennisvang/tufup) (MIT) and [The Update Framework](https://theupdateframework.io/). Signed auto-update.
+- [soundcard](https://github.com/bastibe/SoundCard) (MIT), optional, for WASAPI loopback on the overlay visualiser.
+- [pyrekordbox](https://github.com/dylanljones/pyrekordbox) (MIT), optional, for OneLibrary.
 
----
+Reference only. No GPL or EPL source is included in this tree:
 
-## Usage
+- [Deep Symmetry](https://github.com/Deep-Symmetry)’s [DJ Link Ecosystem Analysis](https://djl-analysis.deepsymmetry.org/) (from [dysentery](https://github.com/Deep-Symmetry/dysentery) and [crate-digger](https://github.com/Deep-Symmetry/crate-digger)). That write-up is the field reference for the packets, `export.pdb`, and the analysis files, and it should be credited when the research is reused. The code repositories are Eclipse Public License. None of that source is copied here.
+- [Beat Link](https://github.com/Deep-Symmetry/beat-link) `WaveformDetail` / `WaveformFinder`, used as the reference for RGB, 3-band, and blue column layout. Beat Link is EPL. This project does not include that source.
+- Reverse engineering by [@henrybetts](https://github.com/henrybetts) and [@flesniak](https://github.com/flesniak), which the Deep Symmetry work builds on.
+- Other GPL and EPL Pro DJ Link projects were read the same way: to check a field offset or a behaviour, not to vendor the code.
 
-### Desktop app (PySide6)
-
-```bash
-pip install -r requirements.txt
-python desktop.py
-```
-
-Or `python -m gui`. The window has a sidebar for **Monitor**, **Devices**,
-**Health**, **Library**, **Session**, **Overlay**, **Settings** and **About**. Connection mode,
-player address, device number, zoom (4/4 bars), visible decks, waveform style and
-more live under Settings and are saved to `~/.prolink-monitor/settings.json`.
-
-**Sidebar.** Hide it with the **☰** button, **Hide sidebar** at the bottom of the
-panel, or **Ctrl+B**. While hidden, a **Navigate** menu appears in the top bar.
-Preference is remembered (also under Settings → Behaviour → Show sidebar).
-
-**System tray.** While connected, minimizing (or closing, if enabled) can send the
-app to the system tray so the link stays up without a taskbar window. Tray menu:
-Show, Record session, Open overlay, Connect / Disconnect, Quit. Toggle under
-**Settings → Desktop**.
-
-**Hotkeys** (while the app is focused):
-
-| Shortcut | Action |
-|---|---|
-| `Ctrl+R` | Start / stop session Record |
-| `+` / `=` / `Ctrl+=` | Zoom in (fewer bars) |
-| `-` / `Ctrl+-` | Zoom out (more bars) |
-| `Ctrl+B` | Toggle sidebar |
-| `Ctrl+O` | Open OBS overlay URL |
-
-When minimized to the tray, use the tray menu for Record / Overlay / Quit.
-
-**Connection health.** The **Health** page shows overall status-packet rate, per-deck
-**beat** vs **Absolute Position (AP)** packet rates and which position source each
-deck is using, plus NFS UDP RTT for mounted media (library / waveform reads).
-It also shows the optional What's Now Playing output: off, the last track sent,
-or the error if that app is not running.
-
-**What's Now Playing.** Settings → What's Now Playing can send the audience
-track (the master on-air deck, the same one the overlay shows) to
-[What's Now Playing](https://github.com/whatsnowplaying/whats-now-playing).
-It is off until you enable it. Each track is sent once, when it changes.
-Nothing is written to the player or to `master.db`. If What's Now Playing is
-closed, the listener keeps running and Health shows the error. Cover art is
-not included: that app's remote input drops image data and only downloads a
-cover from a public web address.
-
-In What's Now Playing: open Settings, choose **Core Settings → Source → Remote**,
-then **Output & Display → Web Server** and leave it enabled (port **8899**
-unless you changed it). Set a shared secret on the Remote source only if you
-want one. In prolink-monitor: tick **Send the audience track**, leave host
-as `localhost` when both apps are on this computer, use the same port and
-secret, Save, then **Test**. Play the master on-air deck; that track is what
-gets sent.
-
-**Deck elements.** Under Settings you can turn individual Monitor card pieces on or
-off — artwork, title, artist, album/genre/label, MASTER/SYNC/ON AIR tags, waveform,
-BPM, tempo (±%), elapsed/remaining, key and play state. Hidden columns free space
-for the waveform. The identity column is wide enough for the full `ON AIR` chip.
-
-**Waveforms.** Cards split the Monitor viewport evenly so waves grow with the window
-and deck count. Colour follows the player: **RGB**, **3BAND** (stacked blue / amber /
-white the way a CDJ draws it) or **BLUE**. The same switch is on the Monitor page,
-in Settings, and on the web panel. **Cue markers** (memory cues and hot cues A–H)
-and **phrase markers** (PSSI intro / verse / chorus / …) are drawn on overview and
-detail strips. Hover the wave for a time readout; click to pin a cue time. Each deck
-has its own zoom chip (`Nb*`); toolbar **All** clears overrides. On the web panel,
-Alt-click a wave to cycle that deck’s zoom; right-click clears it.
-
-**Session playlist.** Hit **Record session** on the Monitor toolbar (or open
-**Session**) to capture every newly played on-air track in order. Timestamps use a
-**set clock**: the first track is `00:00:00`, and the clock **pauses whenever nothing
-is on-air** (true set length, not wall clock). Stop keeps the list; Clear resets it.
-Export the playlist as **CSV**, **JSON** or **M3U** from the Session page, or enable
-**Settings → Session → Auto-save** to write all three when you press Stop
-(`~/.prolink-monitor/sessions` by default). The web panel has the same Record control
-and a live strip; HTTP endpoints are `/api/session`, `/api/session/start`,
-`/api/session/stop`, `/api/session/clear`, and `/api/session/export?fmt=csv|json|m3u`.
-
-**Smooth playhead.** Prolink Listener paints the playhead/waveforms on a separate timer
-(default **60 Hz**, Settings → Playhead refresh rate) while metadata and library
-stats refresh at ~20 Hz. Waveform strips are cached and scrolled instead of being
-fully redrawn every frame; the web panel uses the same scroll-cache idea. SSE
-sends lightweight playhead frames at 60 Hz and a full state snapshot ~15 times a
-second — see [doc/PERFORMANCE.md](doc/PERFORMANCE.md) for bottlenecks and a
-native (C++) roadmap.
-
-The monitor core itself still needs no packages; PySide6 is only for the desktop
-shell. The optional local web server can be started from Settings and opened with
-**Open web panel**. The **Overlay** page builds a transparent OBS Browser Source
-URL from the same server.
-
-### OBS overlay
-
-With the web server running (via `python app.py` or the desktop app), add a
-**Browser** source in OBS pointed at:
-
-```
-http://127.0.0.1:8777/overlay
-```
-
-The page background is transparent. Query parameters:
-
-| Param | Values | Default | Meaning |
-|---|---|---|---|
-| `layout` | `nowplaying` / `dual` / `minimal` / `setlist` | `nowplaying` | Card style (`setlist` = now-playing + scrolling history) |
-| `corner` | `bl` / `br` / `tl` / `tr` / `center` | `bl` | Screen corner |
-| `decks` | `1`–`4` | `1` (`2` for dual) | How many decks to show |
-| `wave` | `rgb` / `3band` / `blue` | `rgb` | Mini-waveform colour style |
-| `scale` / `font` | `0.5`–`2.5` | `1` | Overall overlay scale for different canvases |
-| `accent` | 6-digit hex | — | Custom accent colour (e.g. `accent=ff6b61`) |
-| `tags` | `1` / `0` | `1` | Show MASTER / SYNC / ON AIR tags |
-| `bpm` | `1` / `0` | `1` | Show BPM readout |
-| `next` | `1` / `0` | `1` | Show lower-third when MixStatus is about to promote |
-| `playing` | `1` / `0` | `1` | Only decks that have a track |
-| `mix` | `1` / `0` | `1` | Use SmartTiming now-playing (single-deck layouts) |
-| `preview` | `1` / `0` | `0` | Dark preview background (local testing) |
-
-With `mix=1` (default), `nowplaying` / `minimal` / `setlist` follow the **audience** track —
-the deck that has been playing and on-air long enough (prolink-connect
-SmartTiming: 128 beats ≈ two phrases, brief drop-outs ignored). The **setlist** layout
-shows that track on top with a scrolling history of previously reported tracks underneath
-(ideal for Twitch/OBS). Dual layout still
-shows the selected decks side by side and **spans the full window width** (4 decks
-in one row when `decks=4`), with a mini overview waveform and
-**elapsed / −remaining** times on each card. Live JSON is also on `/api/setlist`.
-
-Example:
-
-```
-http://127.0.0.1:8777/overlay?layout=dual&corner=tl&decks=4&playing=0
-http://127.0.0.1:8777/overlay?layout=nowplaying&mix=1
-http://127.0.0.1:8777/overlay?layout=setlist&corner=bl&mix=1
-http://127.0.0.1:8777/overlay?layout=nowplaying&scale=1.25&accent=ff6b61&tags=0&bpm=0
-```
-
-With `mix=1`, a **next-track** lower third appears when another on-air deck has
-accumulated enough SmartTiming beats to be about to take over (`pending` on
-`/api/state` / `/api/setlist`).
-
-In the desktop app, open **Overlay**, pick layout/corner/**waveform colour**, then
-**Copy URL** into OBS. Set the Browser source size to your canvas (e.g. 1920×1080).
-The same overlay waveform colour is also under **Settings → Overlay**.
-
-### Web panel
-
-```bash
-python app.py
-```
-
-It finds the player, picks a mode, starts the server and opens
-<http://127.0.0.1:8777/> in a normal browser tab. From the desktop app,
-**Open web panel** does the same. The page follows the **Monitor** view
-(decks, waveform, phrases, playhead, zoom). Those controls are not on the web
-panel. A small fullscreen button on the page can fill the screen after you
-click it; nothing opens fullscreen on its own. The HTTP server listens on
-**all interfaces** by default (`0.0.0.0`), so a phone on the same Wi‑Fi can
-open the panel too.
-
-| Option | What it does |
-|---|---|
-| `--host 192.168.2.100` | player address (auto-detected when omitted) |
-| `--mode vcdj` | force virtual device mode |
-| `--mode sniffer` | force passive capture |
-| `--number 5` | device number to announce as (1-6) |
-| `--port 8777` | web server port |
-| `--http-host 0.0.0.0` | bind address (`127.0.0.1` = this PC only) |
-| `--iface` | capture interface for sniffer mode (see `tshark -D`) |
-| `--no-open` | do not open a browser |
-
-#### Connect from Android (same Wi‑Fi)
-
-1. Start Prolink Listener on the laptop/PC that is on the DJ network  
-   (`python app.py` or the desktop app with **Start local web server** on).
-2. Confirm **Settings → Allow phones on the same Wi‑Fi (LAN)** is checked  
-   (or leave the default `--http-host 0.0.0.0`).
-3. Note the **phone / LAN** URL printed in the console, e.g.  
-   `http://192.168.1.42:8777/` — that is this PC’s LAN IP, not `127.0.0.1`.
-4. On the phone, join the **same Wi‑Fi** as the PC (not mobile data / guest VLAN).
-5. Open Chrome (or any browser) and paste that URL.  
-   For a read-only view (hides **Record**):  
-   `http://192.168.1.42:8777/?readonly=1`
-6. If it does not load: allow port **8777** (or your chosen port) through the PC
-   firewall for private networks; on Windows, when prompted accept “Private”
-   network access for Python / Prolink Listener.
-
-The panel is already usable on a phone (stacked deck cards, sticky header). Use
-`?readonly=1` when you only want to watch, not arm session recording.
-
-There is a console monitor too, no browser involved:
-
-```bash
-python monitor.py
-```
-
-### Protocol probe
-
-To find out whether some control on the player travels over the network:
-
-```bash
-python probe.py
-```
-
-It learns the idle state for five seconds, then prints every byte that changes,
-naming the field when it knows it. Move the control you want to check: if nothing
-appears, that data is not transmitted.
-
-Bytes that took more than two values while learning are dropped as counters. `--all`
-keeps them. It reports how many bytes it is watching, and runs alongside the panel.
-
----
-
-## The two modes
-
-The player **does not broadcast its status**: it sends it by unicast, and only to
-addresses that announced themselves beforehand. Beat packets and keep-alives are
-broadcast; the detailed status is not.
-
-### Virtual device mode (`--mode vcdj`)
-
-Announces itself on port 50000 as one more device, after which the player sends its
-status to us directly. The keep-alive is byte-for-byte identical to the one
-rekordbox emits, with only the name, device number, MAC and IP changed.
-
-Needs rekordbox closed: it claims UDP 50000-50002 exclusively and Windows returns
-`WSAEACCES` to anything else.
-
-An XDJ-AZ takes device numbers 1-4 plus 33 (the mixer section) and rekordbox uses
-17, so the default is **5**.
-
-### Passive mode (`--mode sniffer`)
-
-Captures through Npcap, which sits below the socket layer, so it reads the packets
-Windows is handing to rekordbox without opening a port. It needs some other program
-linked to the player: close rekordbox and it goes quiet.
-
-### `auto` (the default)
-
-Uses the virtual device when port 50002 is free, passive capture when it is not.
-
----
-
-## How it works
-
-### Live state — Pro DJ Link (UDP)
-
-| Port | Contents |
-|---|---|
-| 50000 | keep-alive: who is on the network (broadcast) |
-| 50001 | beats: arrives exactly on the beat, with tempo and position in the bar; **Absolute Position** (type `0x0b`) on CDJ-3000-class players ~every 30 ms |
-| 50002 | detailed status of each player (unicast) |
-| 50004 | mixer packet, type 0x20: 44 bytes at ~140 Hz, and only a counter inside |
-
-The XDJ-AZ status packet is 292 bytes. Field offsets are verified against real
-captures from the unit. Whether the AZ also emits Absolute Position packets is
-**unconfirmed** — each deck's live state exposes `absolute_packets` and
-`position_source` (`exact` vs `beat_grid`) so a capture or a running session
-shows it immediately. `python probe.py` also names type `0x0b` fields.
-
-#### The playhead
-
-Position is a continuous model (base position, base time, speed). When Absolute
-Position packets arrive they become the source of truth (~30 Hz playhead in ms).
-Otherwise the model is corrected from the beat grid: 20 % of the error per
-observation, re-placed outright only past 400 ms (cue / seek rather than noise).
-
-Each beat's instant comes from the **beat packet**, which arrives on the beat; the
-status packet lags it by a variable 2-50 ms. In passive mode the timestamp is
-`frame.time_epoch`, tshark's capture time, since tshark delivers its output in
-batches and read time says nothing about arrival time.
-
-Measured on the real stream (beat-grid path): ±1.3 ms.
-
-The scrolling detail waveform keeps that needle fixed and moves the wave under
-it. Players with a **Waveform Current Position** setting report it in the CDJ
-status packet when settings block 1 is present (`12 34 56 78` at offset `0xD0`;
-byte `0xDD` is `01` centre or `02` left; byte `0xDA` is the waveform colour).
-CDJ-3000 defaults to Centre. XDJ-AZ and Opus Quad default to Left. Older players
-(CDJ-2000NXS2, XDJ-XZ) have no setting and are always centred. The desktop
-Monitor view chooses the playhead: **Auto** (follow the player, with that model
-fallback when the byte is missing), **Centre**, or **Left**. The web panel
-follows that choice. Left places the needle at 25% of the strip width. Whether
-the XDJ-AZ actually sends
-the settings block is unverified — Auto still uses the Left fallback, and
-`python probe.py` names bytes `0xDA` and `0xDD` so toggling the setting on the
-player shows up. The OBS overlay wave is a full-track overview with a moving
-needle, so this control does not apply to it.
-
-### Metadata and waveforms — NFS
-
-The player exports the inserted USB/SD over **NFS v2 on UDP**. That is where
-these come from:
-
-- `PIONEER/rekordbox/export.pdb` — the rekordbox database: tracks, artists, albums,
-  genres, keys, labels and artwork paths.
-- `PIONEER/rekordbox/exportLibrary.db` — optional **OneLibrary / Device Library
-  Plus** (XDJ-AZ and friends). Encrypted SQLCipher; playlists and history created
-  on the player itself only live here. Classic `export.pdb` is still written by
-  rekordbox and remains the default for live deck metadata. To read OneLibrary::
-
-      pip install "pyrekordbox @ git+https://github.com/dylanljones/pyrekordbox.git@master"
-
-  The Library page then shows playlist / history counts when the file is present
-  and lets you browse playlists / history / USB tracks when `pyrekordbox` can
-  open the DB. Classic `export.pdb` search works without that dependency.
-  and readable.
-- `PIONEER/USBANLZ/.../ANLZ0000.DAT` / `.EXT` / `.2EX` — per-track analysis: beat
-  grid, cues, phrases and the waveforms.
-- `PIONEER/Artwork/...` — the artwork itself.
-
-This route needs no device number, unlike the dbserver protocol: an XDJ-AZ
-occupies all four player numbers.
-
-Cached in `~/.prolink-cache/<ip>/`.
-
-### Waveforms
-
-Detail waveforms follow [Beat Link `WaveformDetail`](https://deepsymmetry.org/beatlink/apidocs/org/deepsymmetry/beatlink/data/WaveformDetail.html):
-
-| Style | Tag | How a column is read |
-|---|---|---|
-| RGB | `PWV5` | 16-bit word. Height is bits 2-6. Colour is bits 13-15 red, 7-9 green, 10-12 blue, each scaled by 255/7. |
-| 3-Band | `PWV7` | 3 bytes, ordered mid, high, low. Heights are `round(low*0.4)`, `round(mid*0.3)`, `round(high*0.06)`, drawn as separate bands. |
-| Blue | `PWV3` | Height is bits 0-4. Bits 5-7 pick a shade from `WaveformDetail.COLOR_MAP`. |
-
-The scrolling overview is the detail waveform reduced by peak, not `PWV4`.
-
-Drawing takes the peak of **every** column falling inside a pixel. At 150 columns
-per second there are usually more columns than pixels, and sampling just one of them
-drops transients.
-
----
-
-## The mixer channels
-
-The mixer reports an **ON AIR** flag per channel, computed by the mixer section and
-carried in each deck's status packet (bit 0x08 of the flags, byte 0x89). It tracks
-the channel fader.
-
-Verified on the unit with `probe.py`, closing the faders:
-
-```
-dev 3  byte 0x89: 0xBC -> 0xB4     (base+on air+sync+master  ->  base+sync+master)
-dev 1  byte 0x89: 0x9C -> 0x94     (base+on air+sync         ->  base+sync)
-dev 2  byte 0x89: 0x9C -> 0x94
-dev 4  byte 0x89: 0x9C -> 0x94
-```
-
-The same state is duplicated in field **0x26-0x27**: `0x0100` open, `0x0000`
-closed. The reference documentation describes that field as "activity" (0 idle, 1
-playing), which does not hold here: two decks measured `0x0100` and two `0x0000`
-with all four tracks stopped.
-
-The panel shows this with an `ON AIR` tag, a `CHANNEL CLOSED` tag, and by dimming
-decks whose channel is closed.
-
-**The position of faders, volumes and EQ is not transmitted.** Moving the channel
-faders up and down with the probe watching 1548 of 1548 bytes, unfiltered, changed
-that one bit and nothing else.
-
----
+Independent project. Not affiliated with or endorsed by AlphaTheta or Pioneer DJ.
 
 ## Layout
 
 ```
-desktop.py          PySide6 desktop app launcher
-gui/                desktop shell (sidebar, pages, settings, waveforms)
-app.py              web server and API
-monitor.py          console monitor
-probe.py            protocol probe: reports bytes that change
-web/index.html      the panel
-web/overlay.html    transparent OBS Browser Source overlay
-doc/                README screenshots
-requirements.txt    desktop dependency (PySide6)
-updater/             signed update check (tufup); does not touch the players
-packaging/           PyInstaller spec and the Windows bundle check
-.github/workflows/   tests, and the Windows build / release
-prolink/
-  proto.py          Pro DJ Link packets (keep-alive, beat, status)
-  link.py           engine: virtual device, passive capture, deck state
-  nfs.py            ONC-RPC / MOUNT / NFS v2 client
-  pdb.py            export.pdb parser
-  anlz.py           analysis file parser (waveforms, beats, cues)
-  library.py        ties NFS + database + analysis together, with caching
-  mixstatus.py      SmartTiming now-playing / setlist (prolink-connect style)
-  session.py        realtime session playlist recorder (bars helpers too)
+desktop.py                 Prolink Listener launcher
+gui/                       desktop shell
+app.py                     web server and API
+monitor.py                 console monitor
+probe.py                   protocol probe and capture replay
+web/index.html             web panel
+web/overlay.html           OBS overlay
+doc/                       screenshots used above
+docs/screenshots/          overlay and floating-window shots
+requirements.txt           PySide6, addons, Pillow
+updater/                   signed update check (tufup)
+packaging/                 PyInstaller spec, root.json, bundle check
+prolink/                   link, NFS, pdb, ANLZ, library, artwork, vocals
 ```
-
-### API
-
-| Route | Returns |
-|---|---|
-| `/` | live monitor panel |
-| `/overlay` | transparent OBS overlay |
-| `/api/state` | full state as JSON (includes `now_playing` / `setlist` / `session`) |
-| `/api/setlist` | SmartTiming mix status and setlist only |
-| `/api/session` | session playlist recorder state (set clock) |
-| `/api/session/start` | start recording (first track → `00:00:00`) |
-| `/api/session/stop` | stop recording (keep the list) |
-| `/api/session/clear` | clear the session playlist |
-| `/api/library/tracks?q=` | search/filter `export.pdb` tracks |
-| `/api/library/playlists` | OneLibrary playlists + history lists |
-| `/api/library/playlist/<id>` | tracks in a OneLibrary playlist/history |
-| `/api/library/loaded` | tracks currently on decks |
-| `/api/events` | the same state over SSE, 60 times a second |
-| `/api/track/<id>` | metadata, beat grid, cues and phrases |
-| `/api/waveform/<id>` | waveforms in binary: detail and overview |
-| `/api/artwork/<id>` | artwork as JPEG |
-
-`/api/waveform/<id>` format: two blocks back to back (detail then overview), each
-with a 24-byte little-endian header — `PLWF`, version, column count, columns per
-second (float), duration in ms, flags — followed by the heights (1 byte, 0-31) and
-the RGB (3 bytes per column). Optional `PLWB` / `PLBC` blocks after that carry
-3-band and blue lanes for the style switch.
-
-State is sent with **stable keys**, not display text (`playing`, `cued`, `usb`...);
-the interface supplies the English labels.
-
----
-
-## Troubleshooting
-
-**`PermissionError: [WinError 10013]` when starting the web panel.** Windows has
-blocked the HTTP port (often Hyper-V / WSL reserved ranges, or something already
-listening). The app will try a few alternate ports automatically; to pick one
-yourself:
-
-```bash
-python app.py --port 18777
-```
-
-Or set **Web server port** in the desktop Settings. Check reserved ranges with
-`netsh interface ipv4 show excludedportrange protocol=tcp`.
-
-**"could not open UDP port 50000".** rekordbox is running. Close it, or use
-`--mode sniffer`.
-
-**No decks show up in virtual device mode.** Check the player is powered on and on
-the same subnet, and that the number you are using (`--number`) is not already taken.
-Devices seen are listed in the panel header even before their status arrives.
-
-**No decks show up in passive mode.** This mode only sees status while another
-program is linked to the player. With rekordbox closed, use virtual device mode.
-
-**"could not find interface".** Pass it by hand: `--iface` with the number `tshark -D`
-lists.
-
-**Auto-detection picks the wrong address.** On machines with VMware or Hyper-V
-installed there are several virtual adapters. Pass `--host` with the player's
-address.
-
-**The track shows but the waveform does not.** The USB drive has to be inserted in
-the player and carry rekordbox analysis. The header shows whether the library loaded
-and how many tracks it has.
-
----
-
-## Credits
-
-This repository is a **fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor)**
-by [@fidow](https://github.com/fidow). The Pro DJ Link engine, NFS library access,
-web panel architecture, console monitor and protocol probe started there.
-
-The protocol research that work builds on:
-
-- [dysentery](https://github.com/Deep-Symmetry/dysentery) and
-  [crate-digger](https://github.com/Deep-Symmetry/crate-digger) by Deep Symmetry,
-  which document the packets, `export.pdb` and the analysis files.
-- [Beat Link](https://github.com/Deep-Symmetry/beat-link) `WaveformDetail` /
-  `WaveformFinder` — used here as the reference for RGB, 3-Band and Blue column
-  layout.
-- The reverse engineering by [@henrybetts](https://github.com/henrybetts) and
-  [@flesniak](https://github.com/flesniak) that those projects are built on.
-
-Independent project — not affiliated with or endorsed by AlphaTheta / Pioneer DJ.
