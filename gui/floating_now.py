@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from PySide6.QtCore import QObject, QPoint, Qt, QTimer, QUrl, Slot
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtCore import QObject, QPoint, QPointF, Qt, QTimer, QUrl, Slot
+from PySide6.QtGui import QColor, QMouseEvent, QPainter
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QSizeGrip, QVBoxLayout, QWidget
 
 _log = logging.getLogger(__name__)
@@ -68,8 +68,10 @@ class _FloatingDragHandle(QWidget):
     """Drag strip above the web view.
 
     QWebEngineView is its own window and paints over ordinary siblings. This
-    strip stays stacked above that window, is tall enough to grab, and turns
-    solid on hover. Alt+drag on the page is handled in overlay.html.
+    strip stays stacked above that window. The bar is the same dark glass as
+    the overlay, with a light grip, so it stays readable when the window is
+    transparent over a light or dark desktop. Hover brightens it. Alt+drag
+    on the page is handled in overlay.html.
     """
 
     def __init__(self, window: "FloatingNowPlayingWindow", parent=None) -> None:
@@ -77,22 +79,60 @@ class _FloatingDragHandle(QWidget):
         self._window = window
         self.setObjectName("FloatingDragHandle")
         self.setFixedHeight(22)
+        self.setMouseTracking(True)
         self.setCursor(Qt.SizeAllCursor)
         self.setToolTip("Drag to move  ·  Alt+drag anywhere")
         self.setAttribute(Qt.WA_StyledBackground, True)
         # Stay above the WebEngine child window. A native window of our own
         # is what used to disappear under Chromium on Windows.
         self.setAttribute(Qt.WA_AlwaysStackOnTop, True)
+        # Dark glass, not a white wash. A white bar at low alpha vanishes on
+        # a bright desktop once the floating window itself is transparent.
         self.setStyleSheet(
             "#FloatingDragHandle{"
-            "background:rgba(255,255,255,0.28);"
-            "border-bottom:2px solid rgba(255,255,255,0.55);"
+            "background:rgba(8,10,14,0.92);"
+            "border-bottom:1px solid rgba(255,255,255,0.42);"
             "}"
             "#FloatingDragHandle:hover{"
-            "background:rgba(255,255,255,0.72);"
-            "border-bottom:2px solid rgba(255,255,255,0.95);"
+            "background:rgba(46,54,66,0.98);"
+            "border-bottom:1px solid rgba(255,255,255,0.88);"
             "}"
         )
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        self._paint_grip(painter, self.underMouse())
+        painter.end()
+
+    def _paint_grip(self, painter: QPainter, hot: bool) -> None:
+        """Two-by-three grip. A dark halo keeps the dots visible on light content."""
+        cols, rows = 2, 3
+        step = 6
+        radius = 2.15 if hot else 1.9
+        span_w = (cols - 1) * step
+        span_h = (rows - 1) * step
+        ox = (self.width() - span_w) / 2
+        oy = (self.height() - span_h) / 2 - 0.5
+        halo = QColor(0, 0, 0, 230)
+        fill = QColor(255, 255, 255, 255 if hot else 235)
+        painter.setPen(Qt.NoPen)
+        for row in range(rows):
+            for col in range(cols):
+                center = QPointF(ox + col * step, oy + row * step)
+                painter.setBrush(halo)
+                painter.drawEllipse(center, radius + 0.85, radius + 0.85)
+                painter.setBrush(fill)
+                painter.drawEllipse(center, radius, radius)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton:
@@ -338,12 +378,16 @@ class FloatingNowPlayingWindow(QWidget):
         settings = self._settings_getter()
         transparent = bool(settings.get("floating_now_transparent", True))
         self.setAttribute(Qt.WA_TranslucentBackground, transparent)
+        self.setObjectName("FloatingNowPlaying")
         if transparent:
-            self.setStyleSheet("background:transparent;")
+            bg = "transparent"
         else:
             from gui.theme import COLORS
 
-            self.setStyleSheet(f"background:{COLORS['bg']};")
+            bg = COLORS["bg"]
+        # An unscoped background rule also paints child widgets, which clears
+        # the drag strip when this window is transparent.
+        self.setStyleSheet(f"#FloatingNowPlaying{{background:{bg};}}")
 
     def _apply_mode_visibility(self) -> None:
         panel = self._style() == "panel"

@@ -240,7 +240,7 @@ The page background is transparent. Now Playing has two styles. There is no thir
 
 The **Overlay** page builds the URL. Copy it into OBS and size the source to the canvas (for example 1920×1080).
 
-**Floating window.** The same page also opens in a frameless always-on-top window. Drag the strip along the top; it brightens when the pointer is on it. **Alt+drag** moves the window from anywhere on the page, including the waveform. Card and panel each remember their own position.
+**Floating window.** The same page also opens in a frameless always-on-top window. Drag the strip along the top. It is a dark bar with a grip, brightens when the pointer is on it, and stays visible when the window is transparent. **Alt+drag** moves the window from anywhere on the page, including the waveform. Card and panel each remember their own position.
 
 | Param | Values | Default | Meaning |
 |---|---|---|---|
