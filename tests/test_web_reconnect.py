@@ -292,8 +292,13 @@ class HttpBindFallbackTests(unittest.TestCase):
     def test_busy_port_is_logged_and_the_next_port_is_used(self):
         from prolink import applog
 
+        # PanelServer sets SO_REUSEADDR so a reconnect can rebind. On Windows
+        # that also lets a second socket share a listening port, so the holder
+        # has to be exclusive or the fallback never runs.
         holder = socket.socket()
-        holder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+        if exclusive is not None:
+            holder.setsockopt(socket.SOL_SOCKET, exclusive, 1)
         holder.bind(("127.0.0.1", 0))
         busy = holder.getsockname()[1]
         holder.listen(1)

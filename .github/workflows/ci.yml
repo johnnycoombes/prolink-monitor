@@ -62,4 +62,16 @@ jobs:
           if [ "${RUNNER_OS}" = "Linux" ]; then
             unset LD_LIBRARY_PATH
           fi
+          # Qt WebEngine sometimes segfaults the process mid-suite (exit 139
+          # or 135 on Linux, 127 or 3 on Windows). Actions runs bash with
+          # -e, so a crash would stop the step before we could retry.
+          # A real assertion exits 1 and is not retried.
+          set +e
           python -m pytest -q
+          code=$?
+          if [ "$code" -eq 139 ] || [ "$code" -eq 135 ] || [ "$code" -eq 134 ] || [ "$code" -eq 127 ] || [ "$code" -eq 3 ]; then
+            echo "pytest crashed (exit $code); retrying once"
+            python -m pytest -q
+            code=$?
+          fi
+          exit "$code"
