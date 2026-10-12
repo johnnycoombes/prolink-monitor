@@ -39,6 +39,7 @@ from prolink.track_key import keys_match, track_cache_key, track_key_token  # no
 from prolink.wnp import WnpPublisher  # noqa: E402
 from prolink.loopback_audio import LoopbackCapturer  # noqa: E402
 from prolink.db_recovery import STATS as _DB_STATS  # noqa: E402
+from prolink import applog  # noqa: E402
 from prolink.web_server import PanelServer, serve_sse  # noqa: E402
 
 
@@ -142,6 +143,7 @@ class Monitor:
                  local_ip: str | None = None):
         self.host = host
         self.local_ip = local_ip      # to ignore our own announcement
+        applog.configure()
         self.engine = link.ProLink(source)
         self.library = Library(cache_dir)
         self.engine.on_track_change = self._on_track_change
@@ -172,16 +174,103 @@ class Monitor:
         self.wnp = WnpPublisher()
 
     def _device_number_for_host(self, host: str) -> int | None:
+        """Player to query. The mixer that shares an XDJ-AZ address is not one."""
+        with self.engine.lock:
+            numbers = [
+                int(ann.device_number)
+                for ann in self.engine.devices.values()
+                if ann.ip == host and getattr(ann, "kind", "") == "player"
+            ]
+        if not numbers:
+            return None
+        loaded: list[int] = []
+        for deck in self.engine.active_decks():
+            status = getattr(deck, "status", None)
+            slot = self._db_slot_for_status(status)
+            number = int(getattr(deck, "number", 0) or 0)
+            if slot in remotedb_wire.LIBRARY_SLOTS and number in numbers:
+                loaded.append(number)
+        if loaded:
+            return min(loaded)
+        return min(numbers)
+
+    def _requesting_player_for_db(self, target: int | None = None) -> int:
+        src = self.engine.source
+        raw = getattr(src, "device_number", None)
+        try:
+            announced = int(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            announced = None
+        taken: set[int] = set()
+        local = getattr(self, "local_ip", None)
         with self.engine.lock:
             for ann in self.engine.devices.values():
-                if ann.ip == host:
-                    return int(ann.device_number)
-        return None
+                number = int(ann.device_number)
+                if announced is not None and number == announced:
+                    continue
+                if local and ann.ip == local:
+                    continue
+                taken.add(number)
+        return choose_requesting_player(
+            announced, target_player=target, taken=taken)
 
-    def _requesting_player_for_db(self) -> int:
-        src = self.engine.source
-        vn = getattr(src, "device_number", None)
-        return choose_requesting_player(vn)
+    def _db_unavailable_reason(self, host: str) -> str:
+        with self.engine.lock:
+            same = [ann for ann in self.engine.devices.values() if ann.ip == host]
+        if not same:
+            return f"dbserver not attempted: no device announced at {host}"
+        kinds = ", ".join(
+            f"{int(ann.device_number)} ({getattr(ann, 'kind', '?')})" for ann in same
+        )
+        players = [ann for ann in same if getattr(ann, "kind", "") == "player"]
+        if not players:
+            return (
+                f"dbserver not attempted: {host} has no player device, only {kinds}. "
+                "The XDJ-AZ mixer (33) is not the library server."
+            )
+        return f"dbserver not attempted at {host} ({kinds})"
+
+    def _remember_db_failure(self, host: str, media, reason: str) -> None:
+        text = str(reason or "dbserver failed")
+        self._remotedb_fail[host] = text
+        _DB_STATS.fail(text)
+        if media is None:
+            return
+        if getattr(media, "library_source", "") == "remotedb":
+            return
+        cache_dir = getattr(media, "cache_dir", "") or ""
+        if getattr(media, "db", None) is not None:
+            media.set_library_source(
+                "nfs-cache",
+                f"NFS export.pdb cache ({cache_dir}); live dbserver failed: {text}",
+            )
+        else:
+            media.set_library_source("none", text)
+
+    def _probe_live_library(self, host: str) -> None:
+        """Open dbserver once so Health shows live-or-the-exact-error before Library is opened."""
+        if not host:
+            return
+        with self.library.lock:
+            media = self.library.media.get(host)
+        browser = self._open_remotedb(host)
+        if browser is None:
+            self._remember_db_failure(host, media, self._db_unavailable_reason(host))
+            return
+        try:
+            with browser:
+                port = int(getattr(getattr(browser, "last_status", None), "port", 0) or 0)
+                detail = (
+                    f"TCP dbserver · port discovery {remotedb_wire.REMOTE_DB_DISCOVERY_PORT}"
+                    f" → {port} · player {browser.target_player}"
+                    f" as client #{browser.requesting_player} slot {browser.slot}"
+                )
+                self._remotedb_fail.pop(host, None)
+                _DB_STATS.clear_error()
+                if media is not None:
+                    media.set_library_source("remotedb", detail)
+        except Exception as exc:
+            self._remember_db_failure(host, media, str(exc))
 
     def _db_slot_for_status(self, status) -> int:
         """Sr byte for this deck's loaded track, not for some other deck."""
@@ -210,7 +299,7 @@ class Monitor:
         return RemoteDbBrowser(
             host=host,
             target_player=target,
-            requesting_player=self._requesting_player_for_db(),
+            requesting_player=self._requesting_player_for_db(target),
             slot=int(slot),
         )
 
@@ -288,9 +377,19 @@ class Monitor:
         # USB may not be mounted yet — retry rather than stick on the first miss.
         for _ in range(12):
             if self.library.get(self.host) is not None:
-                return
+                break
             self.library.retry(self.host)
             time.sleep(2.0)
+        if self.library.get(self.host) is None:
+            return
+        # Live dbserver first. A few tries cover a player that announces after NFS.
+        for _ in range(6):
+            self._probe_live_library(self.host)
+            with self.library.lock:
+                media = self.library.media.get(self.host)
+            if media is not None and getattr(media, "library_source", "") == "remotedb":
+                return
+            time.sleep(1.0)
 
     # -- tracks -------------------------------------------------------------
     def _host_for(self, status) -> str | None:
@@ -982,6 +1081,8 @@ class Monitor:
             for slot in self._library_db_slots():
                 browser = self._open_remotedb(host, slot=slot)
                 if browser is None:
+                    self._remember_db_failure(
+                        host, media, self._db_unavailable_reason(host))
                     continue
                 try:
                     with browser:
@@ -1105,6 +1206,8 @@ class Monitor:
             for slot in self._library_db_slots():
                 browser = self._open_remotedb(host, slot=slot)
                 if browser is None:
+                    self._remember_db_failure(
+                        host, media, self._db_unavailable_reason(host))
                     continue
                 try:
                     with browser:
@@ -1204,6 +1307,8 @@ class Monitor:
             for slot in self._library_db_slots():
                 browser = self._open_remotedb(h, slot=slot)
                 if browser is None:
+                    self._remember_db_failure(
+                        h, media, self._db_unavailable_reason(h))
                     continue
                 try:
                     with browser:
@@ -1291,11 +1396,14 @@ class Monitor:
             return self._library_cache
         totals: dict[str, int | str] = {}
         onelibrary_info = None
+        pdb_error = ""
         for m in media_list:
-            if m.db is None:
-                continue
-            for k, v in m.db.counts().items():
-                totals[k] = totals.get(k, 0) + v
+            err = str(getattr(m, "pdb_error", "") or "").strip()
+            if err and not pdb_error:
+                pdb_error = err
+            if m.db is not None:
+                for k, v in m.db.counts().items():
+                    totals[k] = totals.get(k, 0) + v
             ol = getattr(m, "onelibrary", None)
             if ol is not None and ol.present:
                 ol_error = onelibrary.library_failure_text(ol.error)
@@ -1316,7 +1424,12 @@ class Monitor:
                         int(totals.get("onelibrary_playlists", 0)) + ol.playlists)
                     totals["onelibrary_history"] = (
                         int(totals.get("onelibrary_history", 0)) + ol.history)
-        snap = (totals or None, None if totals else first_error, onelibrary_info)
+        library_error = first_error or pdb_error or None
+        if totals and not pdb_error:
+            library_error = None
+        elif pdb_error and not first_error:
+            library_error = pdb_error
+        snap = (totals or None, library_error, onelibrary_info)
         self._library_cache_key = key
         self._library_cache = snap
         return snap

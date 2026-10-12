@@ -52,12 +52,37 @@ hiddenimports = [
     "requests",
     "packaging",
     "packaging.version",
+    # OneLibrary. Imported lazily, so name the modules and collect their files.
+    "pyrekordbox",
+    "pyrekordbox.masterdb",
+    "pyrekordbox.masterdb.database",
+    "pyrekordbox.masterdb.models",
+    "pyrekordbox.onelibrary",
+    "pyrekordbox.onelibrary.database",
+    "pyrekordbox.onelibrary.models",
+    "pyrekordbox.utils",
+    "sqlcipher3",
+    "sqlcipher3.dbapi2",
+    "sqlcipher3._sqlite3",
+    "prolink.pysqlcipher_dialect",
+    "prolink.onelibrary_check",
 ]
+
+# sqlcipher3 ships a binary extension. collect_all keeps the DLL and the
+# pyrekordbox package data that a hidden import alone can miss.
+from PyInstaller.utils.hooks import collect_all
+
+_collected_bins = []
+for _pkg in ("pyrekordbox", "sqlcipher3", "sqlalchemy", "numpy"):
+    _datas, _bins, _hidden = collect_all(_pkg)
+    datas += _datas
+    _collected_bins += _bins
+    hiddenimports += _hidden
 
 a = Analysis(
     [os.path.join(root, "desktop.py")],
     pathex=[root],
-    binaries=[],
+    binaries=_collected_bins,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

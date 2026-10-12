@@ -1121,17 +1121,7 @@ class HealthPage(Page):
         ol = state.get("onelibrary") or {}
         lib_err = state.get("library_error")
         src = state.get("library_source") or {}
-        src_name = str(src.get("source") or "none")
-        if src_name == "remotedb":
-            src_text = self._i18n.t("library_source_remotedb")
-        elif src_name == "nfs-cache":
-            src_text = self._i18n.t("library_source_nfs")
-        elif src_name == "onelibrary":
-            src_text = self._i18n.t("library_source_onelibrary")
-        else:
-            src_text = self._i18n.t("library_source_none")
-        detail = src.get("detail") or src.get("remotedb_error") or ""
-        self._lib_src_val.setText(f"{src_text}\n{detail}" if detail else src_text)
+        self._lib_src_val.setText(format_library_source(src, self._i18n))
         art_by_deck = state.get("artwork_sources") or {}
         last_art = str(state.get("artwork_source_last") or "none")
         if art_by_deck:
@@ -1151,6 +1141,8 @@ class HealthPage(Page):
                 status = ol.get("detail") or "readable"
             else:
                 status = ol.get("error") or ol.get("detail") or "present but unreadable"
+            if lib_err and str(lib_err) not in str(status):
+                status = f"{status}\n{lib_err}"
             self._ol_status_val.setText(str(status))
             self._ol_status_val.setStyleSheet(
                 "font-family:monospace; font-size:13px; color:#2ee89a;"
@@ -1222,6 +1214,30 @@ class HealthPage(Page):
                 self.nfs_table.setItem(row, col, QTableWidgetItem(val))
 
         self.link_panel.update_state(state)
+
+
+def format_library_source(src: dict | None, i18n) -> str:
+    """Health and Library label, including the exact dbserver failure."""
+    src = src or {}
+    name = str(src.get("source") or "none")
+    if name == "remotedb":
+        text = i18n.t("library_source_remotedb")
+    elif name == "nfs-cache":
+        text = i18n.t("library_source_nfs")
+    elif name == "onelibrary":
+        text = i18n.t("library_source_onelibrary")
+    else:
+        text = i18n.t("library_source_none")
+    detail = str(src.get("detail") or "").strip()
+    err = str(src.get("remotedb_error") or "").strip()
+    extra = []
+    if detail:
+        extra.append(detail)
+    if err and err not in detail:
+        extra.append(err)
+    if extra:
+        return text + "\n" + "\n".join(extra)
+    return text
 
 
 def load_library_view(backend, query: str, source: str):
@@ -1570,16 +1586,7 @@ class LibraryPage(Page):
         host = state.get("host") or ""
         self.host_label.setText(host)
         src = state.get("library_source") or {}
-        src_name = str(src.get("source") or "none")
-        if src_name == "remotedb":
-            src_text = self._i18n.t("library_source_remotedb")
-        elif src_name == "nfs-cache":
-            src_text = self._i18n.t("library_source_nfs")
-        elif src_name == "onelibrary":
-            src_text = self._i18n.t("library_source_onelibrary")
-        else:
-            src_text = self._i18n.t("library_source_none")
-        self.source_label.setText(src_text)
+        self.source_label.setText(format_library_source(src, self._i18n))
         ol = state.get("onelibrary")
         if ol and ol.get("present"):
             if ol.get("readable"):

@@ -205,16 +205,25 @@ class PdbDatabase:
             target[ident] = _sql_string(d, row + offset)
 
     def _load(self) -> None:
-        self._load_named(ARTISTS, near_off=0x09, far_off=0x0A, id_off=0x04,
-                         target=self.artists)
-        self._load_named(ALBUMS, near_off=0x15, far_off=0x16, id_off=0x0C,
-                         target=self.albums)
-        self._load_simple(GENRES, "<I", 0x00, 0x04, self.genres)
-        self._load_simple(LABELS, "<I", 0x00, 0x04, self.labels)
-        self._load_simple(KEYS, "<I", 0x00, 0x08, self.keys)
-        self._load_simple(COLORS, "<H", 0x05, 0x08, self.colors)
-        self._load_simple(ARTWORK, "<I", 0x00, 0x04, self.artwork)
-        self._load_tracks()
+        """Load each table on its own. One bad table must not drop the rest."""
+        steps = (
+            ("artists", lambda: self._load_named(
+                ARTISTS, near_off=0x09, far_off=0x0A, id_off=0x04, target=self.artists)),
+            ("albums", lambda: self._load_named(
+                ALBUMS, near_off=0x15, far_off=0x16, id_off=0x0C, target=self.albums)),
+            ("genres", lambda: self._load_simple(GENRES, "<I", 0x00, 0x04, self.genres)),
+            ("labels", lambda: self._load_simple(LABELS, "<I", 0x00, 0x04, self.labels)),
+            ("keys", lambda: self._load_simple(KEYS, "<I", 0x00, 0x08, self.keys)),
+            ("colors", lambda: self._load_simple(COLORS, "<H", 0x05, 0x08, self.colors)),
+            ("artwork", lambda: self._load_simple(ARTWORK, "<I", 0x00, 0x04, self.artwork)),
+            ("tracks", self._load_tracks),
+        )
+        self.parse_errors: list[str] = []
+        for name, step in steps:
+            try:
+                step()
+            except Exception as exc:
+                self.parse_errors.append(f"{name}: {exc}")
 
     # -- tracks -------------------------------------------------------------
     def _load_tracks(self) -> None:

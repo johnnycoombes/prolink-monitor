@@ -23,13 +23,36 @@ DEFAULT_TIMEOUT = 4.0
 def choose_requesting_player(
     virtual_number: int | None,
     *,
-    fallback: int = 3,
+    target_player: int | None = None,
+    taken: set[int] | None = None,
+    fallback: int = 5,
 ) -> int:
-    """Pick a dbserver client player number (must often be 1–4 on classic CDJs)."""
-    if virtual_number is not None and 1 <= virtual_number <= 6:
-        if 1 <= virtual_number <= 4:
-            return virtual_number
-    return fallback
+    """Client number for the dbserver setup packet.
+
+    That number has to be a device that is on the link, and it must not be
+    the player being queried. The virtual CDJ's own device number is that
+    device. Rewriting 5 (the default announcement) to 3 collides with deck 3
+    on an XDJ-AZ, which already uses 1–4. Classic players still get 1–4 when
+    that is the number we announced and it is free.
+    """
+    occupied = {int(n) for n in (taken or set())}
+    if target_player:
+        occupied.add(int(target_player))
+
+    def free(number: int) -> bool:
+        return 1 <= number <= 127 and number not in occupied
+
+    if virtual_number is not None:
+        try:
+            announced = int(virtual_number)
+        except (TypeError, ValueError):
+            announced = 0
+        if free(announced):
+            return announced
+    for candidate in (fallback, 6, 4, 3, 2, 1, 5):
+        if free(candidate):
+            return candidate
+    return fallback if free(fallback) else 5
 
 
 @dataclass
@@ -77,8 +100,10 @@ class RemoteDbBrowser:
                 raise wire.DbServerError(f"setup failed type {setup_resp.msg_type:#x}")
             self._sock = sock
             self._tx = 0
+            STATS.clear_error()
             detail = (
-                f"port {port} · player {self.target_player} "
+                f"port discovery {wire.REMOTE_DB_DISCOVERY_PORT} → {port} · "
+                f"player {self.target_player} "
                 f"as client #{self.requesting_player} slot {self.slot}"
             )
             self.last_status = RemoteDbStatus(
@@ -130,6 +155,16 @@ class RemoteDbBrowser:
                 return fn()
             except Exception as exc:
                 if not is_connection_drop(exc):
+                    # A rejected setup is not a reconnect. Health still needs
+                    # the exact text (client number, port discovery, and so on).
+                    STATS.fail(str(exc))
+                    self.last_status = RemoteDbStatus(
+                        ok=False,
+                        error=str(exc),
+                        requesting_player=self.requesting_player,
+                        target_player=self.target_player,
+                        slot=self.slot,
+                    )
                     raise
                 last = exc
                 self._dead = True
@@ -142,6 +177,7 @@ class RemoteDbBrowser:
                     slot=self.slot,
                 )
         if last is not None:
+            STATS.fail(str(last))
             raise last
         raise wire.DbServerError("not connected")
 

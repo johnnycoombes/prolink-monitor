@@ -17,7 +17,7 @@ import threading
 import time
 from collections import OrderedDict
 
-from . import anlz, onelibrary, pdb
+from . import anlz, applog, onelibrary, pdb
 from .anlz_resolve import AnlzChoice, choose_by_id, match_by_title
 from .nfs import NfsClient
 
@@ -26,6 +26,18 @@ ONE_LIBRARY_PATH = onelibrary.ONE_LIBRARY_PATH
 
 # How long a failed library open stays sticky before the next get() retries.
 ERROR_RETRY_SECONDS = 5.0
+
+
+def read_export_pdb(data: bytes) -> tuple[pdb.PdbDatabase | None, str]:
+    """Parse ``export.pdb``. A bad file returns ``(None, reason)`` and does not raise."""
+    try:
+        database = pdb.PdbDatabase(data)
+    except Exception as exc:
+        return None, f"export.pdb: {exc}"
+    notes = getattr(database, "parse_errors", None) or []
+    if notes:
+        return database, "export.pdb: " + "; ".join(notes)
+    return database, ""
 
 
 def _track_useful(track) -> bool:
@@ -80,6 +92,7 @@ class Media:
         # How the Library UI reads metadata: remotedb (live TCP) or nfs-cache (USB export files).
         self.library_source: str = "none"
         self.library_source_detail: str = ""
+        self.pdb_error: str = ""
         self._exports_fingerprint: tuple[str, ...] = ()
 
         self.nfs = NfsClient(host)
@@ -149,9 +162,24 @@ class Media:
     def set_library_source(self, source: str, detail: str = "") -> None:
         self.library_source = source or "none"
         self.library_source_detail = detail or ""
+        counts: dict = {}
+        if self.db is not None:
+            try:
+                counts = self.db.counts()
+            except Exception:
+                counts = {}
+        summary = getattr(self, "onelibrary", None)
+        applog.log_library(
+            host=getattr(self, "host", "") or "",
+            source=self.library_source,
+            detail=self.library_source_detail,
+            counts=counts,
+            error=self.pdb_error or (getattr(summary, "error", "") or ""),
+            onelibrary_tracks=getattr(summary, "tracks", None),
+        )
 
     # -- database -----------------------------------------------------------
-    def load_database(self, force: bool = False) -> pdb.PdbDatabase:
+    def load_database(self, force: bool = False) -> pdb.PdbDatabase | None:
         """Download and parse export.pdb. Reuses the cached copy when it matches."""
         with self.lock:
             _fh, attr = self.nfs.resolve(self.root, PDB_PATH)
@@ -184,11 +212,40 @@ class Media:
                         f.write(want)
                 except OSError:
                     pass
-            with open(local, "rb") as f:
-                self.db = pdb.PdbDatabase(f.read())
+            try:
+                with open(local, "rb") as f:
+                    raw = f.read()
+            except OSError as exc:
+                self.db = None
+                self.pdb_error = f"export.pdb: {exc}"
+                raw = b""
+            if raw:
+                self.db, self.pdb_error = read_export_pdb(raw)
             self._pdb_fingerprint = fingerprint
             self.loaded_at = time.time()
-            self._load_onelibrary(force=force)
+            try:
+                self._load_onelibrary(force=force)
+            except Exception as exc:
+                # OneLibrary is optional. A failure there must not drop export.pdb.
+                if not getattr(self, "onelibrary", None) or not self.onelibrary.error:
+                    self.onelibrary = onelibrary.summarize(
+                        None, present=bool(self.onelibrary_path),
+                        path=self.onelibrary_path, error=str(exc))
+            if self.library_source == "remotedb":
+                if self.pdb_error:
+                    applog.log_library(
+                        host=self.host,
+                        source=self.library_source,
+                        detail=self.library_source_detail,
+                        error=self.pdb_error,
+                    )
+            elif self.db is not None:
+                detail = f"NFS export.pdb cache ({self.cache_dir})"
+                if self.pdb_error:
+                    detail = f"{detail}; {self.pdb_error}"
+                self.set_library_source("nfs-cache", detail)
+            elif self.pdb_error:
+                self.set_library_source("none", self.pdb_error)
             return self.db
 
     def _load_onelibrary(self, force: bool = False) -> None:
@@ -487,7 +544,6 @@ class Library:
                 self._error_at.pop(host, None)
         try:
             m = Media(host, cache_dir=self.cache_dir)
-            m.load_database()
         except Exception as e:                    # no medium, no NFS, drive removed
             text = onelibrary.library_failure_text(e)
             if text is None:
@@ -497,6 +553,18 @@ class Library:
                 self.errors[host] = text
                 self._error_at[host] = time.time()
             return None
+        try:
+            m.load_database()
+        except Exception as e:
+            # A bad export.pdb must not throw away the mount or OneLibrary.
+            m.db = None
+            m.pdb_error = m.pdb_error or f"export.pdb: {e}"
+            try:
+                m._load_onelibrary()
+            except Exception:
+                pass
+            if m.library_source != "remotedb":
+                m.set_library_source("none", m.pdb_error)
         with self.lock:
             self.media[host] = m
             self.errors.pop(host, None)

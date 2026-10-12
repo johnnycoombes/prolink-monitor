@@ -60,9 +60,35 @@ class OneLibraryTrack:
     comment: str = ""
 
 
+def onelibrary_cls() -> Any:
+    """The opener for ``exportLibrary.db``.
+
+    Current pyrekordbox calls it ``OneLibrary``. Older checkouts exported
+    ``DeviceLibraryPlus``. Either one is enough.
+    """
+    tried: list[BaseException] = []
+    candidates = (
+        ("pyrekordbox.onelibrary", "OneLibrary"),
+        ("pyrekordbox", "OneLibrary"),
+        ("pyrekordbox", "DeviceLibraryPlus"),
+    )
+    for module_name, attr in candidates:
+        try:
+            module = importlib.import_module(module_name)
+            cls = getattr(module, attr)
+        except Exception as exc:
+            tried.append(exc)
+            continue
+        if cls is not None:
+            return cls
+    if tried:
+        raise tried[-1]
+    raise ImportError("No module named 'pyrekordbox'")
+
+
 def pyrekordbox_available() -> bool:
     try:
-        from pyrekordbox import DeviceLibraryPlus  # noqa: F401
+        onelibrary_cls()
         return True
     except Exception:
         return False
@@ -276,17 +302,24 @@ def open_onelibrary(path: str) -> tuple[Any | None, str | None]:
     """
     install_tolerant_datetimes()
     try:
+        from .pysqlcipher_dialect import register as register_pysqlcipher
+
+        register_pysqlcipher()
+    except Exception:
+        # Opening still reports the real import error below.
+        pass
+    try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             warnings.simplefilter("ignore", PendingDeprecationWarning)
-            from pyrekordbox import DeviceLibraryPlus
+            opener = onelibrary_cls()
     except Exception as exc:
         text = library_failure_text(exc)
         if text is None:
             return None, None
         return None, f"pyrekordbox missing or incomplete ({text})"
     try:
-        db = DeviceLibraryPlus(path)
+        db = opener(path)
         return db, None
     except Exception as exc:
         return None, library_failure_text(exc)

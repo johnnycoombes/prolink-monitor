@@ -28,6 +28,14 @@ class RecoveryStats:
         self.last_error = error
         self.last_at = time.time()
 
+    def fail(self, error: str) -> None:
+        """Record why the live session is down without counting a reconnect."""
+        self.last_error = error or ""
+        self.last_at = time.time()
+
+    def clear_error(self) -> None:
+        self.last_error = ""
+
     def snapshot(self) -> dict:
         return {
             "reconnects": self.reconnects,
@@ -42,6 +50,9 @@ STATS = RecoveryStats()
 def is_connection_drop(exc: BaseException) -> bool:
     """True when the socket died, as opposed to a normal 'menu empty' reply."""
     if isinstance(exc, (OSError, TimeoutError)):
+        return True
+    cause = getattr(exc, "__cause__", None)
+    if isinstance(cause, (OSError, TimeoutError)):
         return True
     text = str(exc).lower()
     return any(
