@@ -6,17 +6,20 @@ import struct
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal, QSize, QPoint
-from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QFont, QMouseEvent
+from PySide6.QtGui import (
+    QColor, QFontMetrics, QImage, QPainter, QPen, QPixmap, QFont, QMouseEvent,
+)
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
-from prolink.countdown import format_countdown, next_mark, urgency_color
+from prolink.countdown import current_phrase, format_countdown, next_mark, urgency_color
+from prolink.fields import beat_phrase_text, color_label, display_text, display_year, rating_stars
 from prolink.vocal import VOCAL_STRIP_H
 from gui.deck_layout import (
-    ACCENT_PX, ART_PX, ART_RADIUS, BODY_GAP, BODY_MARGINS, BPM_PX,
-    IDENT_COLLAPSED, IDENT_WIDTH, PHRASE_H, PHASE_H, PHASE_W, PITCH_PX,
-    READOUT_PANEL_MAX, READOUT_PANEL_MIN, TIME_PX, overview_height,
+    ACCENT_PX, ARTIST_PX, ART_PX, ART_RADIUS, BODY_GAP, BODY_MARGINS, BPM_PX,
+    DETAIL_PX, IDENT_COLLAPSED, IDENT_WIDTH, PHRASE_H, PHASE_H, PHASE_W, PITCH_PX,
+    READOUT_PANEL_MAX, READOUT_PANEL_MIN, TIME_PX, TITLE_PX, overview_height,
 )
 from gui.theme import COLORS, DECK_COLORS
 from gui.settings import deck_elements_from
@@ -912,6 +915,32 @@ class WaveformView(QWidget):
         # Cues are drawn live in _blit_detail so they stay sharp while scrolling.
 
 
+class PlayedBar(QWidget):
+    """Thin played / remaining bar. Empty until a duration is known."""
+
+    def __init__(self, color: str, parent=None):
+        super().__init__(parent)
+        self._color = QColor(color)
+        self._frac = 0.0
+        self.setFixedHeight(6)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+    def set_fraction(self, frac: float) -> None:
+        self._frac = max(0.0, min(1.0, float(frac or 0)))
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(COLORS["line"]))
+        painter.drawRoundedRect(self.rect(), 2, 2)
+        width = int(self.width() * self._frac)
+        if width > 0:
+            painter.setBrush(self._color)
+            painter.drawRoundedRect(0, 0, width, self.height(), 2, 2)
+        painter.end()
+
+
 class DeckCard(QFrame):
     zoom_override_changed = Signal(int, int)  # deck number, bars
     focused = Signal(int)                     # deck number
@@ -958,10 +987,12 @@ class DeckCard(QFrame):
         root.addLayout(body, 1)
         self._body = body
 
-        # identity
+        # identity — title and the track details. Tags live in the readout column.
         ident = QVBoxLayout()
-        ident.setSpacing(6)
+        ident.setSpacing(4)
+        self._ident_layout = ident
         top = QHBoxLayout()
+        top.setSpacing(8)
         self.art = QLabel("♪")
         self.art.setFixedSize(ART_PX, ART_PX)
         self.art.setAlignment(Qt.AlignCenter)
@@ -969,40 +1000,52 @@ class DeckCard(QFrame):
             f"background:{COLORS['panel_high']}; border:1px solid {COLORS['line']};"
             f"border-radius:{ART_RADIUS}px; color:{COLORS['dimmest']}; font-size:22px;"
         )
-        top.addWidget(self.art)
+        top.addWidget(self.art, 0, Qt.AlignTop)
 
         who = QVBoxLayout()
-        who.setSpacing(3)
-        row = QHBoxLayout()
+        who.setSpacing(1)
+        self._who = who
         self.num = QLabel(str(number))
-        self.num.setStyleSheet(
-            f"font-family:monospace; font-size:18px; font-weight:700; color:{self._color};"
-        )
-        row.addWidget(self.num)
-        row.addStretch(1)
-        who.addLayout(row)
         self.title = QLabel("—")
         self.title.setWordWrap(True)
-        self.title.setStyleSheet("font-size:14px; font-weight:600;")
         self.artist = QLabel("")
         self.artist.setObjectName("Dim")
-        self.artist.setStyleSheet(f"color:{COLORS['dim']}; font-size:12px;")
-        self.meta_line = QLabel("")
-        self.meta_line.setStyleSheet(
-            f"font-family:monospace; font-size:10px; color:{COLORS['dimmest']};"
-        )
-        who.addWidget(self.title)
-        who.addWidget(self.artist)
-        who.addWidget(self.meta_line)
-        who.addStretch(1)
+        self.album = QLabel("")
+        self.album.setObjectName("DeckMeta")
+        self.label_line = QLabel("")
+        self.label_line.setObjectName("DeckMeta")
+        self.genre = QLabel("")
+        self.genre.setObjectName("DeckMeta")
+        self.genre.setWordWrap(True)
+        self._genre_raw = ""
+        facts = QHBoxLayout()
+        facts.setSpacing(8)
+        facts.setContentsMargins(0, 0, 0, 0)
+        self.year = QLabel("")
+        self.year.setObjectName("DeckMeta")
+        self.key = QLabel("")
+        self.rating = QLabel("")
+        self.rating.setObjectName("DeckMeta")
+        self.color_line = QLabel("")
+        self.color_line.setObjectName("DeckExtra")
+        self.color_line.setTextFormat(Qt.RichText)
+        for widget in (self.year, self.key, self.rating, self.color_line):
+            facts.addWidget(widget)
+        facts.addStretch(1)
+        self._facts = QWidget()
+        self._facts.setLayout(facts)
+        self.comment = QLabel("")
+        self.comment.setObjectName("DeckExtra")
+        self.comment.setWordWrap(True)
+        for widget in (
+            self.num, self.title, self.artist, self.album, self.label_line,
+            self.genre, self._facts, self.comment,
+        ):
+            who.addWidget(widget)
         top.addLayout(who, 1)
         ident.addLayout(top)
-        # Tags on their own full-width row so MASTER / SYNC / ON AIR never clip.
-        self.tags = QLabel("")
-        self.tags.setObjectName("Mono")
-        self.tags.setWordWrap(True)
-        self.tags.setStyleSheet("font-size:10px;")
-        ident.addWidget(self.tags)
+        self.played = PlayedBar(self._color)
+        ident.addWidget(self.played)
         self.wrap_ident = QWidget()
         self.wrap_ident.setFixedWidth(IDENT_WIDTH)
         self.wrap_ident.setLayout(ident)
@@ -1019,14 +1062,7 @@ class DeckCard(QFrame):
             f"font-family:monospace; font-size:11px; color:{COLORS['dim']};"
         )
         wave_tools.addWidget(self.cue_readout)
-        self.next_cue = QLabel("")
-        self.next_cue.setObjectName("NextCue")
-        self.next_cue.setStyleSheet(
-            "font-family:monospace; font-size:11px; font-weight:700; color:#e8eaf0;"
-        )
-        self.next_cue.hide()
         self._show_next_cue = True
-        wave_tools.addWidget(self.next_cue)
         wave_tools.addStretch(1)
         self.zoom_btn = QPushButton(f"{self._zoom_bars}b")
         self.zoom_btn.setObjectName("Chip")
@@ -1075,9 +1111,6 @@ class DeckCard(QFrame):
         times.addWidget(self.remaining)
         times.addStretch(1)
         self.state = QLabel("")
-        self.state.setStyleSheet(
-            f"font-family:monospace; font-size:10px; color:{COLORS['dim']};"
-        )
         self.loop_badge = QLabel("")
         self.loop_badge.setObjectName("LoopBadge")
         self.loop_badge.setStyleSheet(
@@ -1087,10 +1120,6 @@ class DeckCard(QFrame):
             "padding:2px 7px 2px 5px; background:rgba(46,232,154,26);"
         )
         self.loop_badge.hide()
-        self.key = QLabel("")
-        self.key.setStyleSheet(
-            f"font-family:monospace; font-size:12px; font-weight:700; color:{self._color};"
-        )
         self.phase = QWidget()
         self.phase.setFixedHeight(10)
         phase_row = QHBoxLayout(self.phase)
@@ -1105,21 +1134,35 @@ class DeckCard(QFrame):
             )
             phase_row.addWidget(dot)
             self._phase_dots.append(dot)
-        phase_row.addStretch(1)
+        self.phrase = QLabel("")
+        self.phrase.setWordWrap(True)
+        phase_row.addWidget(self.phrase, 1)
         self._phase_beat = 0
+        self.tags = QLabel("")
+        self.tags.setObjectName("Mono")
+        self.tags.setWordWrap(True)
         self.state_wrap = QWidget()
         state_row = QHBoxLayout(self.state_wrap)
         state_row.setContentsMargins(0, 0, 0, 0)
         state_row.setSpacing(6)
         state_row.addWidget(self.loop_badge, 0)
         state_row.addWidget(self.state, 1)
-        state_row.addWidget(self.key)
+        self.next_cue = QLabel("")
+        self.next_cue.setObjectName("NextCue")
+        self.next_cue.setWordWrap(True)
+        self.next_cue.hide()
+        self._read = read
+        self._pitch_color = COLORS["dim"]
+        self._remain_color = COLORS["dim"]
+        self._type_scale = 0.0
+        self._roomy = True
         read.addWidget(self.bpm)
         read.addWidget(self.pitch)
-        read.addSpacing(4)
         read.addWidget(self.times_wrap)
-        read.addWidget(self.phase)
+        read.addWidget(self.tags)
         read.addWidget(self.state_wrap)
+        read.addWidget(self.phase)
+        read.addWidget(self.next_cue)
         read.addStretch(1)
         self.wrap_read = QWidget()
         self.wrap_read.setMinimumWidth(READOUT_PANEL_MIN)
@@ -1137,34 +1180,25 @@ class DeckCard(QFrame):
         e = self._elements
 
         self.art.setVisible(e["deck_show_artwork"])
-        self.title.setVisible(e["deck_show_title"])
-        self.artist.setVisible(e["deck_show_artist"])
-        self.meta_line.setVisible(e["deck_show_meta"])
-        self.tags.setVisible(e["deck_show_tags"])
         self.wave.setVisible(e["deck_show_waveform"])
         self.zoom_btn.setVisible(e["deck_show_waveform"])
         self.cue_readout.setVisible(e["deck_show_waveform"])
-        if not e["deck_show_waveform"]:
-            self.next_cue.hide()
         self.bpm.setVisible(e["deck_show_bpm"])
         self.pitch.setVisible(e["deck_show_tempo"])
         self.times_wrap.setVisible(e["deck_show_time"])
-        self.key.setVisible(e["deck_show_key"])
-        self.state.setVisible(e["deck_show_state"])
         self.phase.setVisible(e["deck_show_state"] or e["deck_show_bpm"])
-        self.state_wrap.setVisible(e["deck_show_key"] or e["deck_show_state"])
 
         # Left column stays if any identity piece (or always the deck number) shows.
         left_bits = (
             e["deck_show_artwork"] or e["deck_show_title"] or e["deck_show_artist"]
-            or e["deck_show_meta"] or e["deck_show_tags"]
+            or e["deck_show_meta"] or e["deck_show_key"]
         )
         self.wrap_ident.setVisible(True)  # deck number always present
         self.wrap_ident.setFixedWidth(IDENT_WIDTH if left_bits else IDENT_COLLAPSED)
 
         right_bits = (
             e["deck_show_bpm"] or e["deck_show_tempo"] or e["deck_show_time"]
-            or e["deck_show_key"] or e["deck_show_state"]
+            or e["deck_show_state"] or e["deck_show_tags"]
         )
         self.wrap_read.setVisible(right_bits)
 
@@ -1176,6 +1210,7 @@ class DeckCard(QFrame):
         else:
             self.setMinimumHeight(80)
         self.setMaximumHeight(16777215)
+        self._layout_details()
 
     def set_fill_height(self, height: int) -> None:
         """Stretch this card so its waveform uses the allotted panel slice."""
@@ -1185,6 +1220,132 @@ class DeckCard(QFrame):
         self.setMinimumHeight(max(floor, int(height)))
         # Cap max so equal stretch stays even when the host is viewport-sized.
         self.setMaximumHeight(max(floor, int(height)))
+        self._layout_details()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._layout_details()
+
+    def _row_height(self) -> int:
+        return max(self.height(), self.minimumHeight(), 80)
+
+    def _px(self, base: int, floor: int = 11) -> int:
+        scale = self._type_scale or 1.0
+        return max(floor, int(round(base * scale)))
+
+    def _put(self, widget: QLabel, text: str) -> None:
+        widget.setText(text or "")
+        widget.setProperty("filled", bool(text))
+
+    def _show_filled(self, widget: QWidget, allowed: bool, *, extra: bool = False) -> None:
+        filled = bool(widget.property("filled"))
+        widget.setVisible(bool(allowed and filled and (self._roomy or not extra)))
+
+    def _layout_details(self) -> None:
+        """Scale type with the row, and spend the spare height on more fields."""
+        height = self._row_height()
+        roomy = height >= 200
+        scale = max(0.9, min(1.5, height / 240.0))
+        if abs(scale - self._type_scale) < 0.02 and roomy == self._roomy and self._type_scale:
+            # Fonts already match. Still re-hide empty fields after a data update.
+            pass
+        self._roomy = roomy
+        self._type_scale = scale
+        title_px = self._px(TITLE_PX, 16)
+        artist_px = self._px(ARTIST_PX, 13)
+        detail_px = self._px(DETAIL_PX, 11)
+        num_px = self._px(20, 16)
+        self.num.setStyleSheet(
+            f"font-family:monospace; font-size:{num_px}px; font-weight:700; color:{self._color};"
+        )
+        self.title.setStyleSheet(f"font-size:{title_px}px; font-weight:700;")
+        self.title.setMaximumHeight(title_px + 6 if not roomy else (title_px * 2) + 8)
+        self.artist.setStyleSheet(f"color:{COLORS['dim']}; font-size:{artist_px}px;")
+        detail = (
+            f"font-family:monospace; font-size:{detail_px}px; color:{COLORS['dim']};"
+        )
+        for widget in (self.album, self.label_line, self.year, self.rating, self.comment):
+            widget.setStyleSheet(detail)
+        self.genre.setStyleSheet(detail)
+        self.phrase.setStyleSheet(detail)
+        self.key.setStyleSheet(
+            f"font-family:monospace; font-size:{self._px(18, 14)}px; font-weight:700;"
+            f"color:{self._color};"
+        )
+        self.color_line.setStyleSheet(detail)
+        self.comment.setMaximumHeight(detail_px * 2 + 8 if roomy else detail_px + 4)
+        text_w = IDENT_WIDTH - 16 - (ART_PX + 8 if self.art.isVisible() else 0)
+        text_w = max(80, text_w)
+        for widget in (self.title, self.artist, self.album, self.label_line, self.genre, self.comment):
+            widget.setMaximumWidth(text_w)
+        self.genre.setWordWrap(roomy)
+        self.genre.setMaximumHeight((detail_px * 3 + 8) if roomy else detail_px + 4)
+        if self._genre_raw:
+            if roomy:
+                self.genre.setText(self._genre_raw)
+            else:
+                width = IDENT_WIDTH - 28
+                if self.art.isVisible():
+                    width -= ART_PX
+                self.genre.setText(
+                    QFontMetrics(self.genre.font()).elidedText(
+                        self._genre_raw, Qt.ElideRight, max(40, width),
+                    )
+                )
+        self.bpm.setStyleSheet(
+            f"font-family:monospace; font-size:{self._px(BPM_PX, 20)}px; font-weight:700;"
+        )
+        self._style_pitch()
+        self._style_times()
+        self.state.setStyleSheet(
+            f"font-family:monospace; font-size:{detail_px}px; color:{COLORS['dim']};"
+        )
+        self.tags.setStyleSheet("font-size:10px;")
+        self.next_cue.setStyleSheet(
+            "font-family:monospace; font-size:"
+            f"{self._px(13, 12)}px; font-weight:700; color:{self._next_color()};"
+        )
+        e = self._elements
+        self.title.setVisible(e["deck_show_title"])
+        self._show_filled(self.artist, e["deck_show_artist"])
+        self._show_filled(self.album, e["deck_show_meta"], extra=True)
+        self._show_filled(self.label_line, e["deck_show_meta"], extra=True)
+        self._show_filled(self.genre, e["deck_show_meta"])
+        self._show_filled(self.year, e["deck_show_meta"])
+        self._show_filled(self.key, e["deck_show_key"])
+        self._show_filled(self.rating, e["deck_show_meta"])
+        self._show_filled(self.color_line, e["deck_show_meta"], extra=True)
+        self._show_filled(self.comment, e["deck_show_meta"], extra=True)
+        self._facts.setVisible(any(
+            w.isVisible() for w in (self.year, self.key, self.rating, self.color_line)
+        ))
+        self.played.setVisible(
+            e["deck_show_time"] and bool(self.played.property("filled"))
+        )
+        self._show_filled(self.tags, e["deck_show_tags"])
+        self._show_filled(self.state, e["deck_show_state"])
+        self._show_filled(self.phrase, e["deck_show_state"])
+        looping = self.loop_badge.isVisible()
+        self.state_wrap.setVisible(e["deck_show_state"] and (looping or self.state.isVisible()))
+
+    def _next_color(self) -> str:
+        return getattr(self, "_next_cue_color", "#e8eaf0")
+
+    def _style_pitch(self) -> None:
+        self.pitch.setStyleSheet(
+            f"font-family:monospace; font-size:{self._px(PITCH_PX, 11)}px;"
+            f"color:{self._pitch_color};"
+        )
+
+    def _style_times(self) -> None:
+        size = self._px(TIME_PX, 13)
+        self.elapsed.setStyleSheet(
+            f"font-family:monospace; font-size:{size}px; font-weight:700;"
+        )
+        self.remaining.setStyleSheet(
+            f"font-family:monospace; font-size:{size}px; font-weight:700;"
+            f"color:{self._remain_color};"
+        )
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton:
@@ -1231,7 +1392,7 @@ class DeckCard(QFrame):
         label = getattr(self, "next_cue", None)
         if label is None:
             return
-        if not getattr(self, "_show_next_cue", True) or not self._meta or not self.wave.isVisible():
+        if not getattr(self, "_show_next_cue", True) or not self._meta:
             label.hide()
             label.setText("")
             return
@@ -1247,10 +1408,11 @@ class DeckCard(QFrame):
             label.hide()
             label.setText("")
             return
+        self._next_cue_color = urgency_color(mark["remain_ms"])
         label.setText(text)
         label.setStyleSheet(
-            "font-family:monospace; font-size:11px; font-weight:700; color:"
-            + urgency_color(mark["remain_ms"]) + ";"
+            "font-family:monospace; font-size:"
+            f"{self._px(13, 12)}px; font-weight:700; color:{self._next_cue_color};"
         )
         label.show()
 
@@ -1323,6 +1485,45 @@ class DeckCard(QFrame):
         )
         self.wave.set_playhead_position(position)
 
+    def _fill_meta(self, meta: dict) -> None:
+        self.title.setText(display_text(meta.get("title")) or "—")
+        self._put(self.artist, display_text(meta.get("artist")))
+        self._put(self.album, display_text(meta.get("album")))
+        self._put(self.label_line, display_text(meta.get("label")))
+        self._genre_raw = display_text(meta.get("genre"))
+        self.genre.setProperty("filled", bool(self._genre_raw))
+        self.genre.setText(self._genre_raw)
+        self._put(self.year, display_year(meta.get("year")))
+        self._put(self.key, display_text(meta.get("key")))
+        self._put(self.rating, rating_stars(meta.get("rating")))
+        name, swatch = color_label(meta.get("color"))
+        if name and swatch:
+            self._put(self.color_line, f'<span style="color:{swatch}">●</span> {name}')
+        else:
+            self._put(self.color_line, name)
+        self._put(self.comment, display_text(meta.get("comment")))
+
+    def _clear_details(self, note: str = "") -> None:
+        self.title.setText("—")
+        self._genre_raw = ""
+        for widget in (
+            self.album, self.label_line, self.genre, self.year, self.key,
+            self.rating, self.color_line, self.comment, self.phrase,
+        ):
+            self._put(widget, "")
+        self._put(self.artist, note)
+        self.played.setProperty("filled", False)
+        self.played.set_fraction(0)
+
+    def _paint_phrase(self, pos_ms: float, bar: int) -> None:
+        meta = self._meta or {}
+        text = beat_phrase_text(
+            bar,
+            current_phrase(pos_ms, meta.get("phrases"), meta.get("beats")),
+        )
+        self._put(self.phrase, text)
+        self._show_filled(self.phrase, self._elements.get("deck_show_state", True))
+
     def set_track_data(self, meta: dict | None, detail, overview, art: bytes | None) -> None:
         if meta and self._track_key and meta.get("track_key") != self._track_key:
             return
@@ -1336,12 +1537,8 @@ class DeckCard(QFrame):
         self.wave.set_track(detail, overview, meta)
         self._paint_next(self.wave._pos_ms)
         if meta:
-            self.title.setText(meta.get("title") or "—")
-            self.artist.setText(meta.get("artist") or "")
-            bits = [meta.get("album"), meta.get("genre"), meta.get("label"),
-                    str(meta.get("year") or "") or None]
-            self.meta_line.setText(" · ".join(b for b in bits if b))
-            self.key.setText(meta.get("key") or "")
+            self._fill_meta(meta)
+        self._layout_details()
         if art and self._art_key != token:
             img = QImage.fromData(art)
             if not img.isNull():
@@ -1377,12 +1574,19 @@ class DeckCard(QFrame):
         self.elapsed.setText(mmss(pos_ms))
         remain = max(0.0, dur - pos_ms) if dur else 0.0
         self.remaining.setText(("-" + mmss(remain)) if dur else "—")
-        low = bool(dur and remain < 30000)
-        self.remaining.setStyleSheet(
-            f"font-family:monospace; font-size:{TIME_PX}px; font-weight:700; color:"
-            + (COLORS["danger"] if low else COLORS["dim"]) + ";"
+        self._remain_color = COLORS["danger"] if (dur and remain < 30000) else COLORS["dim"]
+        self._style_times()
+        if dur:
+            self.played.set_fraction(max(0.0, min(1.0, pos_ms / dur)))
+            self.played.setProperty("filled", True)
+        else:
+            self.played.set_fraction(0)
+            self.played.setProperty("filled", False)
+        self.played.setVisible(
+            self._elements.get("deck_show_time", True) and bool(self.played.property("filled"))
         )
         self._set_phase(bar)
+        self._paint_phrase(pos_ms, bar)
         self._apply_loop_region(pos_ms, looping)
         self._paint_next(pos_ms)
         self.wave.set_position(pos_ms, playing)
@@ -1447,6 +1651,10 @@ class DeckCard(QFrame):
         else:
             self.loop_badge.hide()
             self.loop_badge.setText("")
+        self.state_wrap.setVisible(
+            self._elements.get("deck_show_state", True)
+            and (self.loop_badge.isVisible() or self.state.isVisible())
+        )
 
     def update_deck(self, deck: dict, pos_ms: float) -> None:
         tid = deck.get("track_id") or 0
@@ -1464,11 +1672,10 @@ class DeckCard(QFrame):
             self._art_miss_key = ""
             self._last_offair = None
             self._last_tags = ""
+            self._clear_details("" if tid else self._i18n.t("no_track_loaded"))
+            if tid:
+                self.title.setText(self._i18n.t("loading"))
             if not tid:
-                self.title.setText("—")
-                self.artist.setText("")
-                self.meta_line.setText(self._i18n.t("no_track_loaded"))
-                self.key.setText("")
                 self.art.setPixmap(QPixmap())
                 self.art.setText("♪")
                 self.wave.set_track(None, None, None)
@@ -1496,6 +1703,7 @@ class DeckCard(QFrame):
         if tags_html != self._last_tags:
             self._last_tags = tags_html
             self.tags.setText(tags_html)
+            self.tags.setProperty("filled", bool(tags_html))
 
         bpm = deck.get("bpm") or 0
         self._last_bpm = float(bpm or 0)
@@ -1505,26 +1713,27 @@ class DeckCard(QFrame):
         sign = "+" if pitch >= 0 else ""
         self.pitch.setText(f"{sign}{pitch:.2f} %" if tid else "")
         if pitch > 0.01:
-            self.pitch.setStyleSheet(
-                f"font-family:monospace; font-size:{PITCH_PX}px; color:#ff9f45;"
-            )
+            self._pitch_color = "#ff9f45"
         elif pitch < -0.01:
-            self.pitch.setStyleSheet(
-                f"font-family:monospace; font-size:{PITCH_PX}px; color:#5eb0ff;"
-            )
+            self._pitch_color = "#5eb0ff"
         else:
-            self.pitch.setStyleSheet(
-                f"font-family:monospace; font-size:{PITCH_PX}px; color:{COLORS['dim']};"
-            )
+            self._pitch_color = COLORS["dim"]
+        self._style_pitch()
 
-        self.state.setText(self._i18n.state(deck.get("state") or "unknown"))
+        state = display_text(self._i18n.state(deck.get("state") or ""))
+        if state.lower() == "unknown":
+            state = ""
+        self._put(self.state, state)
         self._last_deck = deck
         self._paint_next(pos_ms)
         self._apply_playhead()
         if empty and not self._meta:
             self.title.setText("—")
+            self._put(self.artist, self._i18n.t("no_track_loaded"))
         elif tid and not self._meta:
             self.title.setText(self._i18n.t("loading"))
+            self._put(self.artist, "")
+        self._layout_details()
 
         self.advance_playhead(
             pos_ms,

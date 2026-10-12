@@ -74,6 +74,7 @@ def _fields_from_track(track) -> dict:
         "key": getattr(track, "key", "") or "",
         "label": getattr(track, "label", "") or "",
         "comment": getattr(track, "comment", "") or "",
+        "color": getattr(track, "color", "") or "",
         "year": int(getattr(track, "year", 0) or 0),
         "rating": int(getattr(track, "rating", 0) or 0),
         "tempo": float(getattr(track, "tempo", 0) or 0),
@@ -130,6 +131,7 @@ def _shell_track(track_id: int, fields: dict):
         key=str(fields.get("key") or ""),
         label=str(fields.get("label") or ""),
         comment=str(fields.get("comment") or ""),
+        color=str(fields.get("color") or ""),
         year=int(fields.get("year") or 0),
         rating=int(fields.get("rating") or 0),
         tempo=float(fields.get("tempo") or fields.get("track_bpm") or 0),
@@ -177,6 +179,7 @@ class Monitor:
         self._display: dict[str, Any] = {}
         self.loopback = LoopbackCapturer()
         self.wnp = WnpPublisher()
+        self._workers: list[threading.Thread] = []
 
     def _device_number_for_host(self, host: str) -> int | None:
         """Player to query. The mixer that shares an XDJ-AZ address is not one."""
@@ -358,15 +361,30 @@ class Monitor:
         if not host or media is None:
             return None
         return self._cache_key(host, media, track_id)
+    def _spawn(self, target, name: str, args=()) -> threading.Thread:
+        """Daemon worker joined on stop so a quit does not leave it running."""
+        thread = threading.Thread(target=target, args=args, daemon=True, name=name)
+        workers = getattr(self, "_workers", None)
+        if workers is None:
+            workers = []
+            self._workers = workers
+        workers.append(thread)
+        thread.start()
+        return thread
+
     def start(self) -> None:
         self.engine.start()
-        threading.Thread(target=self._preload, daemon=True).start()
+        self._spawn(self._preload, "prolink-preload")
 
     def stop(self) -> None:
         self._stop.set()
         self.loopback.stop()
         self.engine.stop()
         self.library.close()
+        deadline = time.monotonic() + 1.5
+        for thread in list(getattr(self, "_workers", []) or []):
+            if thread.is_alive() and thread is not threading.current_thread():
+                thread.join(max(0.0, deadline - time.monotonic()))
 
     def configure_display(self, prefs: dict | None) -> None:
         """Live Monitor-view prefs for the web panel and overlay."""
@@ -400,7 +418,8 @@ class Monitor:
                 self.host = players[0].ip
                 print(f"  player found at {self.host}")
                 break
-            time.sleep(0.5)
+            if self._stop.wait(0.5):
+                return
         if not self.host:
             applog.log_note("dbserver not attempted: no player host")
             return
@@ -429,9 +448,7 @@ class Monitor:
     def _load_player_library(self, host: str) -> None:
         """dbserver first. export.pdb loads beside it and must not delay the TCP session."""
         applog.log_note(f"dbserver {host}: starting live read before export.pdb finishes")
-        threading.Thread(
-            target=self._keep_probing, args=(host,), daemon=True, name="prolink-dbserver",
-        ).start()
+        self._spawn(self._keep_probing, "prolink-dbserver", args=(host,))
         for _ in range(12):
             if self._stop.is_set():
                 return
@@ -749,7 +766,7 @@ class Monitor:
             if meta is None:
                 return
             if live:
-                for field in ("title", "artist", "album", "genre", "key", "label", "comment"):
+                for field in ("title", "artist", "album", "genre", "key", "label", "comment", "color"):
                     text = str(live.get(field) or "").strip()
                     if text:
                         meta[field] = text
@@ -779,6 +796,7 @@ class Monitor:
             "key": str(fields.get("key") or ""),
             "label": str(fields.get("label") or ""),
             "comment": str(fields.get("comment") or ""),
+            "color": str(fields.get("color") or ""),
             "year": int(fields.get("year") or 0),
             "rating": int(fields.get("rating") or 0),
             "track_bpm": float(fields.get("tempo") or fields.get("track_bpm") or 0),
@@ -854,6 +872,7 @@ class Monitor:
             "key": t.key if t else "",
             "label": t.label if t else "",
             "comment": t.comment if t else "",
+            "color": t.color if t else "",
             "year": t.year if t else 0,
             "rating": t.rating if t else 0,
             "track_bpm": t.tempo if t else 0.0,

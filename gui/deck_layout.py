@@ -8,13 +8,18 @@ with its own toolkit (Qt versus canvas); the card measurements stay one set.
 
 from __future__ import annotations
 
-# Left identity column: artwork plus the title block. Tags sit under that.
-IDENT_WIDTH = 300
+# Left identity column: artwork plus title, artist, and the detail lines.
+IDENT_WIDTH = 360
 # Deck number only, once artwork / title / artist / meta / tags are hidden.
 IDENT_COLLAPSED = 44
-# Right readout column: wide enough for "174.00 BPM" at 28px monospace.
-READOUT_PANEL_MIN = 188
-READOUT_PANEL_MAX = 220
+# Right readout column: BPM, pitch, tags, loop, phrase, and the next cue.
+READOUT_PANEL_MIN = 208
+READOUT_PANEL_MAX = 248
+
+# Type sizes at a ~240px row. Both views scale these with the row height.
+TITLE_PX = 22
+ARTIST_PX = 16
+DETAIL_PX = 13
 
 ART_PX = 72
 ART_RADIUS = 4

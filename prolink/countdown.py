@@ -79,6 +79,23 @@ def next_mark(pos_ms: float, *, cues: list | None = None,
     return best
 
 
+def current_phrase(pos_ms: float, phrases: list | None = None,
+                   beats: list | None = None) -> str:
+    """Label of the phrase the playhead is in, or ``""`` before the first one."""
+    pos = float(pos_ms or 0)
+    best_t: float | None = None
+    best = ""
+    for phrase in phrases or []:
+        t = _phrase_time(phrase, beats or [])
+        if t is None or t > pos + 1:
+            continue
+        name = str(phrase.get("text") or phrase.get("label") or "").strip()
+        if best_t is None or t >= best_t:
+            best_t = t
+            best = name
+    return best
+
+
 def urgency_color(remain_ms: float, base: str = "#e8eaf0") -> str:
     """Calm, then amber inside 10s, then red inside 3s."""
     remain = float(remain_ms or 0)

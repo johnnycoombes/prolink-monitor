@@ -219,6 +219,21 @@ QToolButton#Chip::menu-indicator {{
     width: 0;
 }}
 
+QMenu {{
+    background-color: {COLORS["panel"]};
+    border: 1px solid {COLORS["line"]};
+    padding: 4px 0;
+}}
+
+QMenu::item {{
+    padding: 6px 18px;
+    background: transparent;
+}}
+
+QMenu::item:selected {{
+    background-color: {COLORS["panel_hover"]};
+}}
+
 QLineEdit, QSpinBox, QComboBox, QPlainTextEdit {{
     background-color: {COLORS["input_bg"]};
     border: 1px solid {COLORS["line"]};
