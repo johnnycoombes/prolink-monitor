@@ -33,6 +33,15 @@ class ClientNumberTests(unittest.TestCase):
         self.assertNotEqual(number, 1)
         self.assertEqual(number, 5)
 
+    def test_slot_three_is_the_usb_slot_not_deck_three(self):
+        self.assertEqual(wire.SLOT_USB, 3)
+        self.assertEqual(wire.slot_label(3), "USB slot")
+        text = wire.session_detail(port=42258, target=1, client=5, slot=3)
+        self.assertIn("client #5", text)
+        self.assertIn("USB slot", text)
+        self.assertIn("42258", text)
+        self.assertNotIn("slot 3", text)
+
 
 class PortDiscoveryTests(unittest.TestCase):
     def test_query_uses_the_discovery_service(self):
@@ -129,6 +138,8 @@ class ProbeTests(unittest.TestCase):
         _source, detail = media.set_library_source.call_args[0]
         self.assertEqual(_source, "remotedb")
         self.assertIn("client #5", detail)
+        self.assertIn("USB slot", detail)
+        self.assertNotIn("slot 3", detail)
         self.assertIn("12523", detail)
         self.assertIn("1051", detail)
         self.assertEqual(STATS.last_error, "")
@@ -191,6 +202,25 @@ class LiveLoadTests(unittest.TestCase):
         mon._load_player_library("192.168.1.212")
         self.assertEqual(order[0], "db")
         self.assertIn("nfs", order)
+
+    def test_probe_stops_once_the_session_is_live(self):
+        from app import Monitor
+
+        mon = Monitor.__new__(Monitor)
+        mon._stop = threading.Event()
+        mon._live_detail = {}
+        mon.library = mock.Mock()
+        mon.library.lock = threading.RLock()
+        mon.library.media = {}
+        calls = {"n": 0}
+
+        def probe(host: str) -> None:
+            calls["n"] += 1
+            mon._live_detail[host] = ("remotedb", "ok")
+
+        mon._probe_live_library = probe
+        mon._keep_probing("192.168.1.212")
+        self.assertEqual(calls["n"], 1)
 
     def test_missing_announce_still_opens_the_discovered_port(self):
         from app import Monitor

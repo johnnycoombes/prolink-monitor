@@ -271,10 +271,11 @@ class Monitor:
         try:
             with browser:
                 port = int(getattr(getattr(browser, "last_status", None), "port", 0) or 0)
-                detail = (
-                    f"TCP dbserver · port discovery {remotedb_wire.REMOTE_DB_DISCOVERY_PORT}"
-                    f" → {port} · player {browser.target_player}"
-                    f" as client #{browser.requesting_player} slot {browser.slot}"
+                detail = "TCP dbserver · " + remotedb_wire.session_detail(
+                    port=port,
+                    target=browser.target_player,
+                    client=browser.requesting_player,
+                    slot=browser.slot,
                 )
                 self._remotedb_fail.pop(host, None)
                 _DB_STATS.clear_error()
@@ -409,6 +410,13 @@ class Monitor:
             if self._stop.is_set():
                 return
             self._probe_live_library(host)
+            # A live session is enough. export.pdb can still be parsing, and
+            # opening TCP again every second makes the player drop the next
+            # handshake. Those drops were counted as reconnects.
+            pending = getattr(self, "_live_detail", None) or {}
+            live = pending.get(host)
+            if live and live[0] == "remotedb":
+                return
             with self.library.lock:
                 media = self.library.media.get(host)
             if media is not None and getattr(media, "library_source", "") == "remotedb":
@@ -1280,9 +1288,11 @@ class Monitor:
                     continue
                 try:
                     with browser:
-                        detail = (
-                            f"TCP dbserver · player {browser.target_player} "
-                            f"as client #{browser.requesting_player} slot {browser.slot}"
+                        detail = "TCP dbserver · " + remotedb_wire.session_detail(
+                            port=int(getattr(browser.last_status, "port", 0) or 0),
+                            target=browser.target_player,
+                            client=browser.requesting_player,
+                            slot=browser.slot,
                         )
                         media.set_library_source("remotedb", detail)
                         library_source = "remotedb"

@@ -2,7 +2,7 @@
 
 A live Pro DJ Link monitor. It joins the booth network as a virtual player, reads the library and analysis from the player while the set is running, and draws decks, waveforms, and artwork on this computer. It is read-only toward the player and the USB stick: it never writes a Rekordbox database, never sends library edits, and a packet capture only records what already arrived.
 
-This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.1**.
+This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.2**.
 
 ## Contents
 

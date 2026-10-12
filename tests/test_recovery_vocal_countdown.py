@@ -80,6 +80,25 @@ class ReconnectTests(unittest.TestCase):
         self.assertEqual(STATS.reconnects, 1)
         self.assertIn("reset", STATS.last_error)
 
+    def test_first_handshake_retry_is_not_a_reconnect(self):
+        browser = RemoteDbBrowser(
+            host="192.0.2.10", target_player=1, requesting_player=5, slot=3,
+        )
+        browser.sleeper = lambda _delay: None
+        tries = {"n": 0}
+
+        def connect():
+            tries["n"] += 1
+            if tries["n"] == 1:
+                raise OSError("timed out")
+            browser._sock = object()
+            browser._dead = False
+
+        browser.connect = connect
+        self.assertEqual(browser.call(lambda: "ok"), "ok")
+        self.assertEqual(tries["n"], 2)
+        self.assertEqual(STATS.reconnects, 0)
+
     def test_menu_unavailable_is_not_a_reconnect(self):
         browser = self._browser()
 

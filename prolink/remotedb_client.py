@@ -78,6 +78,7 @@ class RemoteDbBrowser:
     _sock: socket.socket | None = field(default=None, init=False, repr=False)
     _tx: int = field(default=0, init=False, repr=False)
     _dead: bool = field(default=False, init=False, repr=False)
+    _connected_once: bool = field(default=False, init=False, repr=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
     sleeper: Callable[[float], None] = field(default=time.sleep, repr=False)
     last_status: RemoteDbStatus = field(default_factory=RemoteDbStatus, init=False)
@@ -100,11 +101,13 @@ class RemoteDbBrowser:
                 raise wire.DbServerError(f"setup failed type {setup_resp.msg_type:#x}")
             self._sock = sock
             self._tx = 0
+            self._connected_once = True
             STATS.clear_error()
-            detail = (
-                f"port discovery {wire.REMOTE_DB_DISCOVERY_PORT} → {port} · "
-                f"player {self.target_player} "
-                f"as client #{self.requesting_player} slot {self.slot}"
+            detail = wire.session_detail(
+                port=port,
+                target=self.target_player,
+                client=self.requesting_player,
+                slot=self.slot,
             )
             self.last_status = RemoteDbStatus(
                 ok=True,
@@ -145,11 +148,17 @@ class RemoteDbBrowser:
         last: BaseException | None = None
         for attempt in range(1 + len(RECONNECT_BACKOFF_S)):
             try:
+                if self._sock is not None and not self._dead:
+                    self._connected_once = True
                 if self._sock is None or self._dead:
                     if attempt:
                         self.sleeper(backoff_delay(attempt - 1))
+                    # A retry before the first successful handshake is still
+                    # the initial connect. Health's reconnect count is a
+                    # session that was up and then dropped.
+                    was_up = self._connected_once
                     self.connect()
-                    if attempt:
+                    if attempt and was_up:
                         STATS.note(str(last) if last else "connection dropped")
                     self._dead = False
                 return fn()

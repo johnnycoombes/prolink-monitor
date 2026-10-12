@@ -128,6 +128,37 @@ def discover_db_port(host: str, *, timeout: float = 3.0) -> int:
     return port
 
 
+_SLOT_LABELS = {
+    SLOT_CD: "CD",
+    SLOT_SD: "SD",
+    SLOT_USB: "USB",
+    SLOT_REKORDBOX: "rekordbox",
+    SLOT_DIRECT_PLAY: "direct play",
+    SLOT_USB2: "USB 2",
+    SLOT_BEATPORT: "Beatport",
+}
+
+
+def slot_label(slot: int) -> str:
+    """Name for a dbserver Sr byte.
+
+    3 is the USB slot. It is not deck 3. Device numbers and this byte are
+    different fields in the menu request.
+    """
+    name = _SLOT_LABELS.get(int(slot) & 0xFF)
+    if name:
+        return f"{name} slot"
+    return f"slot {int(slot) & 0xFF}"
+
+
+def session_detail(*, port: int, target: int, client: int, slot: int) -> str:
+    """One Health line: discovery port, queried deck, virtual client, media slot."""
+    return (
+        f"port discovery {REMOTE_DB_DISCOVERY_PORT} → {int(port)} · "
+        f"player {int(target)} as client #{int(client)}, {slot_label(slot)}"
+    )
+
+
 def slot_byte(name: str, raw: int = 0) -> int:
     """Dbserver Sr byte for a parsed slot name, falling back to the raw status byte."""
     if name in _SLOT_BY_NAME:
