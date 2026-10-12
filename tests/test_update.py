@@ -189,6 +189,14 @@ class BundleLayoutTests(unittest.TestCase):
             (internal / "web" / "index.html").write_text("ok", encoding="utf-8")
             (internal / "web" / "overlay.html").write_text("ok", encoding="utf-8")
             (internal / "QtWebEngineProcess.exe").write_text("proc", encoding="utf-8")
+            missing = verify(dist)
+            self.assertTrue(any("pyrekordbox" in item for item in missing))
+            (internal / "pyrekordbox").mkdir()
+            (internal / "pyrekordbox" / "__init__.py").write_text("x", encoding="utf-8")
+            (internal / "sqlcipher3").mkdir()
+            (internal / "sqlcipher3" / "__init__.py").write_text("x", encoding="utf-8")
+            (internal / "sqlcipher3" / "_sqlite3.pyd").write_bytes(b"bin")
+            (internal / "_sqlite3.pyd").write_bytes(b"bin")
             self.assertEqual(verify(dist), [])
 
 

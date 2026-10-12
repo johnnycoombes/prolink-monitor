@@ -198,7 +198,6 @@ class Backend(QObject):
                 close_http_server(orphan[0], orphan[1])
                 return
             if bound != port:
-                self._settings["port"] = bound
                 self.port_changed.emit(bound)
             self.web_restarted.emit()
         except Exception as exc:
@@ -446,8 +445,8 @@ class Backend(QObject):
                 return
 
             if server is not None and bound_port != int(args.port):
-                # Keep overlay URL / Open web panel in sync with the real port.
-                self._settings["port"] = bound_port
+                # Tell the UI which port is listening. Leave the saved port
+                # alone so the next launch still tries what the user chose.
                 self.port_changed.emit(bound_port)
 
             if gen != self._boot_gen:

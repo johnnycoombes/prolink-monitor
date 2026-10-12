@@ -56,6 +56,15 @@ def reset_for_tests(path: str | None = None) -> str:
     return configure(path)
 
 
+def log_note(message: str) -> None:
+    """One line in the same rotating file (HTTP bind, dbserver attempts)."""
+    configure()
+    text = " ".join(str(message or "").split())
+    if not text:
+        return
+    logging.getLogger(_LOGGER_NAME).info(text)
+
+
 def log_library(
     *,
     host: str = "",

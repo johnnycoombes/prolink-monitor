@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import socket
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from prolink import library, remotedb as wire
@@ -154,6 +156,137 @@ class ProbeTests(unittest.TestCase):
         args = media.set_library_source.call_args[0]
         self.assertEqual(args[0], "nfs-cache")
         self.assertIn("33 (mixer)", args[1])
+
+
+class LiveLoadTests(unittest.TestCase):
+    def test_nfs_load_does_not_wait_to_open_dbserver(self):
+        from app import Monitor
+
+        mon = Monitor.__new__(Monitor)
+        mon._stop = threading.Event()
+        mon._live_detail = {}
+        gate = threading.Event()
+        order: list[str] = []
+        media = mock.Mock()
+        media.library_source = "none"
+        mon.library = mock.Mock()
+        mon.library.lock = threading.RLock()
+        mon.library.media = {}
+
+        def probe(host: str) -> None:
+            order.append("db")
+            gate.set()
+            media.library_source = "remotedb"
+
+        def get(host: str):
+            self.assertTrue(gate.wait(2), "dbserver did not start before export.pdb returned")
+            order.append("nfs")
+            mon.library.media[host] = media
+            return media
+
+        mon.library.get = get
+        mon.library.retry = mock.Mock()
+        mon._probe_live_library = probe
+        mon._apply_live_source = lambda: None
+        mon._load_player_library("192.168.1.212")
+        self.assertEqual(order[0], "db")
+        self.assertIn("nfs", order)
+
+    def test_missing_announce_still_opens_the_discovered_port(self):
+        from app import Monitor
+
+        discovered: dict = {}
+        ready = threading.Event()
+
+        def serve_discovery() -> None:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(("127.0.0.1", 0))
+            discovered["disc"] = sock.getsockname()[1]
+            sock.listen(1)
+            sock.settimeout(3)
+            ready.set()
+            conn, _addr = sock.accept()
+            try:
+                conn.settimeout(2)
+                conn.recv(64)
+                conn.sendall(int(discovered["db"]).to_bytes(2, "big"))
+            finally:
+                conn.close()
+                sock.close()
+
+        def serve_db() -> None:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(("127.0.0.1", 0))
+            discovered["db"] = sock.getsockname()[1]
+            sock.listen(1)
+            sock.settimeout(3)
+            conn, _addr = sock.accept()
+            try:
+                conn.settimeout(2)
+                got = b""
+                while len(got) < 5:
+                    chunk = conn.recv(5 - len(got))
+                    if not chunk:
+                        break
+                    got += chunk
+                conn.sendall(wire._num_field(wire.GREETING, 4))
+                wire.read_message(conn)
+                conn.sendall(wire.encode_message(
+                    wire.SETUP_TX, wire.TYPE_MENU_AVAILABLE, [],
+                ))
+                discovered["opened"] = True
+                try:
+                    conn.recv(8)
+                except OSError:
+                    pass
+            finally:
+                conn.close()
+                sock.close()
+
+        db_thread = threading.Thread(target=serve_db)
+        db_thread.start()
+        for _ in range(50):
+            if "db" in discovered:
+                break
+            time_sleep = __import__("time").sleep
+            time_sleep(0.01)
+        disc_thread = threading.Thread(target=serve_discovery)
+        disc_thread.start()
+        self.assertTrue(ready.wait(2))
+
+        mon = Monitor.__new__(Monitor)
+        mon._stop = threading.Event()
+        mon._live_detail = {}
+        mon._remotedb_fail = {}
+        mon.local_ip = "127.0.0.1"
+        mon.engine = SimpleNamespace(
+            lock=threading.RLock(),
+            devices={},
+            source=SimpleNamespace(device_number=5),
+            active_decks=lambda: [],
+        )
+        mon.library = mock.Mock()
+        mon.library.lock = threading.RLock()
+        media = mock.Mock()
+        media.library_source = "nfs-cache"
+        media.db = object()
+        media.cache_dir = "cache"
+        mon.library.media = {"127.0.0.1": media}
+        STATS.last_error = "stale"
+        try:
+            with mock.patch.object(wire, "REMOTE_DB_DISCOVERY_PORT", discovered["disc"]):
+                mon._probe_live_library("127.0.0.1")
+        finally:
+            disc_thread.join(3)
+            db_thread.join(3)
+        self.assertTrue(discovered.get("opened"))
+        source, detail = media.set_library_source.call_args[0]
+        self.assertEqual(source, "remotedb")
+        self.assertIn(str(discovered["db"]), detail)
+        self.assertIn(str(discovered["disc"]), detail)
+        self.assertIn("client #5", detail)
+        self.assertEqual(STATS.last_error, "")
+        self.assertEqual(mon._live_detail["127.0.0.1"][0], "remotedb")
 
 
 class HealthLabelTests(unittest.TestCase):

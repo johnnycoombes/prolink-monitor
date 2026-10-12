@@ -29,6 +29,43 @@ def verify(dist: Path) -> list[str]:
         errors.append("web/overlay.html is missing")
     if not list(dist.rglob("QtWebEngineProcess.exe")) and not list(dist.rglob("QtWebEngineProcess")):
         errors.append("QtWebEngineProcess is missing")
+
+    def _parts() -> list[tuple[tuple[str, ...], Path]]:
+        found = []
+        for path in dist.rglob("*"):
+            if path.is_file():
+                found.append((path.relative_to(dist).parts, path))
+        return found
+
+    files = _parts()
+
+    def _has_part(name: str) -> bool:
+        return any(name in parts for parts, _path in files)
+
+    if not _has_part("pyrekordbox"):
+        errors.append("pyrekordbox is missing from the frozen folder")
+    if not _has_part("sqlcipher3"):
+        errors.append("sqlcipher3 is missing from the frozen folder")
+    has_sqlite = False
+    for parts, path in files:
+        if "sqlcipher3" in parts:
+            continue
+        if any(part == "sqlite3" or part.startswith("_sqlite3") for part in parts):
+            has_sqlite = True
+            break
+        if path.name.startswith("_sqlite3") or path.name.startswith("sqlite3"):
+            has_sqlite = True
+            break
+    if not has_sqlite:
+        errors.append("sqlite3 is missing from the frozen folder")
+    cipher_bins = [
+        path for parts, path in files
+        if "sqlcipher3" in parts and (
+            path.suffix.lower() in {".pyd", ".dll", ".so"} or ".so" in path.name
+        )
+    ]
+    if not cipher_bins:
+        errors.append("sqlcipher3 binary extension is missing from the frozen folder")
     return errors
 
 

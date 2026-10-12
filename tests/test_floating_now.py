@@ -84,6 +84,15 @@ class OverlayNowPosSettingsTests(unittest.TestCase):
         clean = _sanitize({**load_settings(), "overlay_now_pos": "nope"})
         self.assertEqual(clean["overlay_now_pos"], "bl")
 
+    def test_floating_position_keeps_a_left_monitor(self):
+        clean = _sanitize({
+            **load_settings(),
+            "floating_now_x": -240,
+            "floating_now_y": 36,
+        })
+        self.assertEqual(clean["floating_now_x"], -240)
+        self.assertEqual(clean["floating_now_y"], 36)
+
     def test_panel_pos_when_style_panel(self):
         base = {**load_settings(), "overlay_now_style": "panel"}
         clean = _sanitize({**base, "overlay_now_pos": "top"})
