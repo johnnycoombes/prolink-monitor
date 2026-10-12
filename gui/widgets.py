@@ -1316,13 +1316,15 @@ class DeckCard(QFrame):
         raw = " ".join(str(text or "").split())
         if not raw or width <= 8:
             return px
-        while px > minimum:
+        while px >= minimum:
             font = self._make_font(px, bold=bold, mono=mono)
             shown = elide_lines(raw, QFontMetrics(font), width, lines)
             if "…" not in shown and shown.replace("\n", " ") == raw:
                 return px
+            if px == minimum:
+                break
             px -= 1
-        return px
+        return minimum
 
     def _line_box(self, font: QFont, lines: int = 1) -> int:
         spacing = QFontMetrics(font).lineSpacing()
@@ -1757,9 +1759,11 @@ class DeckCard(QFrame):
             )
         )
 
-        phrase_w = max(48, self._read_w - (PHASE_W * 4 + 3 * 3 + 8))
+        phrase_w = self._phrase_text_width()
+        # One step under the usual detail floor: a wide Windows face was
+        # cutting "Chorus" down to "Chor…" at 11px in this column.
         phrase_px = self._px_that_fits(
-            self._phrase_raw, meta_px, META_MIN, phrase_w, 1, mono=True,
+            self._phrase_raw, meta_px, META_MIN - 2, phrase_w, 1, mono=True,
         )
         phrase_font = self._make_font(phrase_px, mono=True)
         phrase_h = self._line_box(phrase_font)
@@ -1774,6 +1778,17 @@ class DeckCard(QFrame):
         self.next_cue.setText(elide_lines(self._next_raw, QFontMetrics(next_font), self._read_w, 1))
         self.next_cue.setFixedHeight(self._line_box(next_font))
         self.next_cue.setVisible("next" in shown and bool(self._next_raw))
+
+    def _readout_width(self) -> int:
+        live = int(self.wrap_read.width() or 0)
+        if live >= READOUT_PANEL_MIN:
+            return live
+        return READOUT_PANEL_MIN
+
+    def _phrase_text_width(self) -> int:
+        """Width left for the phrase once the four beat dots are in the row."""
+        chrome = PHASE_W * 4 + 3 * 4
+        return max(64, self._readout_width() - chrome)
 
     def _next_color(self) -> str:
         return getattr(self, "_next_cue_color", "#e8eaf0")
@@ -2013,7 +2028,7 @@ class DeckCard(QFrame):
         if font.pixelSize() <= 0:
             font = self._make_font(META_MIN, mono=True)
         self.phrase.setText(elide_lines(
-            text, QFontMetrics(font), max(8, self._read_w - 40), 1,
+            text, QFontMetrics(font), self._phrase_text_width(), 1,
         ))
         self.phase.setVisible(True)
 
