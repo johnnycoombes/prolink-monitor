@@ -16,6 +16,11 @@ from PySide6.QtWidgets import (
 from prolink.countdown import current_phrase, format_countdown, next_mark, urgency_color
 from prolink.fields import beat_phrase_text, color_label, display_text, display_year, rating_stars
 from prolink.vocal import VOCAL_STRIP_H
+from gui.deck_fit import (
+    ARTIST_MIN, BPM_MIN, DETAIL_MIN, META_MIN, NUM_MIN, PITCH_MIN, READOUT_DROP,
+    TIME_MIN, TITLE_MIN, art_side, choose_optional, effective_dpr, elide_lines,
+    row_scale, snap_line, title_line_count,
+)
 from gui.deck_layout import (
     ACCENT_PX, ARTIST_PX, ART_PX, ART_RADIUS, BODY_GAP, BODY_MARGINS, BPM_PX,
     DETAIL_PX, IDENT_COLLAPSED, IDENT_WIDTH, PHRASE_H, PHASE_H, PHASE_W, PITCH_PX,
@@ -989,9 +994,11 @@ class DeckCard(QFrame):
 
         # identity — title and the track details. Tags live in the readout column.
         ident = QVBoxLayout()
+        ident.setContentsMargins(0, 0, 0, 0)
         ident.setSpacing(4)
         self._ident_layout = ident
         top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
         top.setSpacing(8)
         self.art = QLabel("♪")
         self.art.setFixedSize(ART_PX, ART_PX)
@@ -1003,11 +1010,12 @@ class DeckCard(QFrame):
         top.addWidget(self.art, 0, Qt.AlignTop)
 
         who = QVBoxLayout()
+        who.setContentsMargins(0, 0, 0, 0)
         who.setSpacing(1)
         self._who = who
         self.num = QLabel(str(number))
-        self.title = QLabel("—")
-        self.title.setWordWrap(True)
+        self.title = QLabel("")
+        self.title.setWordWrap(False)
         self.artist = QLabel("")
         self.artist.setObjectName("Dim")
         self.album = QLabel("")
@@ -1016,7 +1024,7 @@ class DeckCard(QFrame):
         self.label_line.setObjectName("DeckMeta")
         self.genre = QLabel("")
         self.genre.setObjectName("DeckMeta")
-        self.genre.setWordWrap(True)
+        self.genre.setWordWrap(False)
         self._genre_raw = ""
         facts = QHBoxLayout()
         facts.setSpacing(8)
@@ -1036,12 +1044,13 @@ class DeckCard(QFrame):
         self._facts.setLayout(facts)
         self.comment = QLabel("")
         self.comment.setObjectName("DeckExtra")
-        self.comment.setWordWrap(True)
+        self.comment.setWordWrap(False)
         for widget in (
             self.num, self.title, self.artist, self.album, self.label_line,
             self.genre, self._facts, self.comment,
         ):
             who.addWidget(widget)
+        who.addStretch(1)
         top.addLayout(who, 1)
         ident.addLayout(top)
         self.played = PlayedBar(self._color)
@@ -1053,8 +1062,10 @@ class DeckCard(QFrame):
 
         # waveform — takes all leftover horizontal (and vertical) space
         wave_col = QVBoxLayout()
+        wave_col.setContentsMargins(0, 0, 0, 0)
         wave_col.setSpacing(2)
         wave_tools = QHBoxLayout()
+        wave_tools.setContentsMargins(0, 0, 0, 0)
         wave_tools.setSpacing(4)
         self.cue_readout = QLabel("")
         self.cue_readout.setObjectName("Mono")
@@ -1082,7 +1093,8 @@ class DeckCard(QFrame):
 
         # readouts
         read = QVBoxLayout()
-        read.setSpacing(2)
+        read.setContentsMargins(0, 0, 0, 0)
+        read.setSpacing(1)
         self.bpm = QLabel("— BPM")
         self.bpm.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.bpm.setStyleSheet(
@@ -1135,12 +1147,12 @@ class DeckCard(QFrame):
             phase_row.addWidget(dot)
             self._phase_dots.append(dot)
         self.phrase = QLabel("")
-        self.phrase.setWordWrap(True)
+        self.phrase.setWordWrap(False)
         phase_row.addWidget(self.phrase, 1)
         self._phase_beat = 0
         self.tags = QLabel("")
         self.tags.setObjectName("Mono")
-        self.tags.setWordWrap(True)
+        self.tags.setWordWrap(False)
         self.state_wrap = QWidget()
         state_row = QHBoxLayout(self.state_wrap)
         state_row.setContentsMargins(0, 0, 0, 0)
@@ -1149,13 +1161,34 @@ class DeckCard(QFrame):
         state_row.addWidget(self.state, 1)
         self.next_cue = QLabel("")
         self.next_cue.setObjectName("NextCue")
-        self.next_cue.setWordWrap(True)
+        self.next_cue.setWordWrap(False)
         self.next_cue.hide()
         self._read = read
         self._pitch_color = COLORS["dim"]
         self._remain_color = COLORS["dim"]
-        self._type_scale = 0.0
-        self._roomy = True
+        self._fill_h = 0
+        self._laying_out = False
+        self._empty = True
+        self._packed: set[str] = set()
+        self._fit_sig = None
+        self._art_image: QImage | None = None
+        self._title_raw = ""
+        self._artist_raw = ""
+        self._album_raw = ""
+        self._label_raw = ""
+        self._year_raw = ""
+        self._key_raw = ""
+        self._rating_raw = ""
+        self._color_html = ""
+        self._comment_raw = ""
+        self._phrase_raw = ""
+        self._next_raw = ""
+        self._text_w = 200
+        self._read_w = READOUT_PANEL_MIN - 8
+        self._pitch_px = PITCH_PX
+        self._time_px = TIME_PX
+        self._next_px = 13
+        self._title_lines = 1
         read.addWidget(self.bpm)
         read.addWidget(self.pitch)
         read.addWidget(self.times_wrap)
@@ -1171,7 +1204,7 @@ class DeckCard(QFrame):
         self.wrap_read.setLayout(read)
         body.addWidget(self.wrap_read, 0)
 
-        self.setMinimumHeight(200)
+        self.setMinimumHeight(96)
         self.apply_elements(self._elements)
 
     def apply_elements(self, elements: dict[str, bool] | None) -> None:
@@ -1203,23 +1236,34 @@ class DeckCard(QFrame):
         self.wrap_read.setVisible(right_bits)
 
         # Base mins — MonitorPage raises these further so cards fill the panel.
+        # The floor stays under a 120px row so four decks can pack instead of scroll.
         if e["deck_show_waveform"] and not left_bits and not right_bits:
-            self.setMinimumHeight(160)
+            floor = 112
         elif e["deck_show_waveform"]:
-            self.setMinimumHeight(140)
+            floor = 96
         else:
-            self.setMinimumHeight(80)
+            floor = 72
+        if self._fill_h:
+            self.set_fill_height(self._fill_h)
+            return
+        self.setMinimumHeight(floor)
         self.setMaximumHeight(16777215)
         self._layout_details()
 
     def set_fill_height(self, height: int) -> None:
         """Stretch this card so its waveform uses the allotted panel slice."""
-        floor = 80
+        floor = 72
         if self._elements.get("deck_show_waveform", True):
-            floor = 140
-        self.setMinimumHeight(max(floor, int(height)))
-        # Cap max so equal stretch stays even when the host is viewport-sized.
-        self.setMaximumHeight(max(floor, int(height)))
+            floor = 96
+        fitted = max(floor, int(height))
+        self._fill_h = fitted
+        self._laying_out = True
+        try:
+            self.setMinimumHeight(fitted)
+            # Cap max so equal stretch stays even when the host is viewport-sized.
+            self.setMaximumHeight(fitted)
+        finally:
+            self._laying_out = False
         self._layout_details()
 
     def resizeEvent(self, event) -> None:  # noqa: N802
@@ -1227,125 +1271,491 @@ class DeckCard(QFrame):
         self._layout_details()
 
     def _row_height(self) -> int:
-        return max(self.height(), self.minimumHeight(), 80)
+        """Height the packer should trust.
 
-    def _px(self, base: int, floor: int = 11) -> int:
-        scale = self._type_scale or 1.0
-        return max(floor, int(round(base * scale)))
+        A stale minimum (the card is born at 96, and used to be born at 200)
+        must not win over the pixels the row was actually given. ``_fill_h``
+        is the slice MonitorPage asked for; once the widget is on screen its
+        live height is the one that clips.
+        """
+        live = int(self.height() or 0)
+        fill = int(self._fill_h or 0)
+        if live > 1 and fill > 1:
+            return min(live, fill)
+        if live > 1:
+            return live
+        if fill > 1:
+            return fill
+        return max(int(self.minimumHeight()), 80)
+
+    def _dpr(self) -> float:
+        return effective_dpr(float(self.devicePixelRatioF() or 1.0))
+
+    def _make_font(self, px: int, *, bold: bool = False, mono: bool = False) -> QFont:
+        if mono:
+            font = QFont("DejaVu Sans Mono")
+            font.setStyleHint(QFont.StyleHint.Monospace)
+        else:
+            font = QFont("DejaVu Sans")
+            font.setStyleHint(QFont.StyleHint.SansSerif)
+        font.setPixelSize(max(1, int(px)))
+        font.setBold(bool(bold))
+        return font
+
+    def _line_box(self, font: QFont, lines: int = 1) -> int:
+        spacing = QFontMetrics(font).lineSpacing()
+        return snap_line(spacing, self._dpr()) * max(1, int(lines))
+
+    def _paint_font(self, widget: QLabel, font: QFont, color: str) -> None:
+        """Set the same pixel size on the QFont and the stylesheet.
+
+        Measuring ``widget.font()`` after a stylesheet ``font-size`` used to
+        see the application default, so elision and the line box disagreed
+        with what was painted.
+        """
+        widget.setFont(font)
+        weight = 700 if font.bold() else 400
+        family = font.family().replace("'", "")
+        widget.setStyleSheet(
+            f"font-family:'{family}'; font-size:{font.pixelSize()}px;"
+            f"font-weight:{weight}; color:{color};"
+        )
 
     def _put(self, widget: QLabel, text: str) -> None:
         widget.setText(text or "")
         widget.setProperty("filled", bool(text))
 
-    def _show_filled(self, widget: QWidget, allowed: bool, *, extra: bool = False) -> None:
-        filled = bool(widget.property("filled"))
-        widget.setVisible(bool(allowed and filled and (self._roomy or not extra)))
+    def _packed_has(self, name: str) -> bool:
+        return name in self._packed
+
+    def _fit_signature(self) -> tuple:
+        e = self._elements
+        return (
+            self._row_height(),
+            round(self._dpr(), 2),
+            bool(self._empty),
+            self._title_raw,
+            self._artist_raw,
+            self._album_raw,
+            self._label_raw,
+            self._genre_raw,
+            self._year_raw,
+            self._key_raw,
+            self._rating_raw,
+            self._color_html,
+            self._comment_raw,
+            bool(self._phrase_raw),
+            bool(self._next_raw),
+            self._last_tags,
+            bool(self.state.property("filled")),
+            not self.loop_badge.isHidden(),
+            bool(self.played.property("filled")),
+            bool(e.get("deck_show_artwork")),
+            bool(e.get("deck_show_title")),
+            bool(e.get("deck_show_artist")),
+            bool(e.get("deck_show_meta")),
+            bool(e.get("deck_show_key")),
+            bool(e.get("deck_show_bpm")),
+            bool(e.get("deck_show_tempo")),
+            bool(e.get("deck_show_time")),
+            bool(e.get("deck_show_state")),
+            bool(e.get("deck_show_tags")),
+            bool(getattr(self, "_show_next_cue", True)),
+        )
 
     def _layout_details(self) -> None:
-        """Scale type with the row, and spend the spare height on more fields."""
-        height = self._row_height()
-        roomy = height >= 200
-        scale = max(0.9, min(1.5, height / 240.0))
-        if abs(scale - self._type_scale) < 0.02 and roomy == self._roomy and self._type_scale:
-            # Fonts already match. Still re-hide empty fields after a data update.
-            pass
-        self._roomy = roomy
-        self._type_scale = scale
-        title_px = self._px(TITLE_PX, 16)
-        artist_px = self._px(ARTIST_PX, 13)
-        detail_px = self._px(DETAIL_PX, 11)
-        num_px = self._px(20, 16)
-        self.num.setStyleSheet(
-            f"font-family:monospace; font-size:{num_px}px; font-weight:700; color:{self._color};"
-        )
-        self.title.setStyleSheet(f"font-size:{title_px}px; font-weight:700;")
-        self.title.setMaximumHeight(title_px + 6 if not roomy else (title_px * 2) + 8)
-        self.artist.setStyleSheet(f"color:{COLORS['dim']}; font-size:{artist_px}px;")
-        detail = (
-            f"font-family:monospace; font-size:{detail_px}px; color:{COLORS['dim']};"
-        )
-        for widget in (self.album, self.label_line, self.year, self.rating, self.comment):
-            widget.setStyleSheet(detail)
-        self.genre.setStyleSheet(detail)
-        self.phrase.setStyleSheet(detail)
-        self.key.setStyleSheet(
-            f"font-family:monospace; font-size:{self._px(18, 14)}px; font-weight:700;"
-            f"color:{self._color};"
-        )
-        self.color_line.setStyleSheet(detail)
-        self.comment.setMaximumHeight(detail_px * 2 + 8 if roomy else detail_px + 4)
-        text_w = IDENT_WIDTH - 16 - (ART_PX + 8 if self.art.isVisible() else 0)
-        text_w = max(80, text_w)
-        for widget in (self.title, self.artist, self.album, self.label_line, self.genre, self.comment):
-            widget.setMaximumWidth(text_w)
-        self.genre.setWordWrap(roomy)
-        self.genre.setMaximumHeight((detail_px * 3 + 8) if roomy else detail_px + 4)
-        if self._genre_raw:
-            if roomy:
-                self.genre.setText(self._genre_raw)
-            else:
-                width = IDENT_WIDTH - 28
-                if self.art.isVisible():
-                    width -= ART_PX
-                self.genre.setText(
-                    QFontMetrics(self.genre.font()).elidedText(
-                        self._genre_raw, Qt.ElideRight, max(40, width),
-                    )
-                )
-        self.bpm.setStyleSheet(
-            f"font-family:monospace; font-size:{self._px(BPM_PX, 20)}px; font-weight:700;"
-        )
-        self._style_pitch()
-        self._style_times()
-        self.state.setStyleSheet(
-            f"font-family:monospace; font-size:{detail_px}px; color:{COLORS['dim']};"
-        )
-        self.tags.setStyleSheet("font-size:10px;")
-        self.next_cue.setStyleSheet(
-            "font-family:monospace; font-size:"
-            f"{self._px(13, 12)}px; font-weight:700; color:{self._next_color()};"
-        )
+        """Pack the identity and readout columns into the row height."""
+        if self._laying_out:
+            return
+        self._laying_out = True
+        try:
+            self._pack_card()
+            self._fit_sig = self._fit_signature()
+        finally:
+            self._laying_out = False
+
+    def _pack_card(self) -> None:
+        row = self._row_height()
+        inner = max(32, row - BODY_MARGINS[1] - BODY_MARGINS[3])
+        scale = row_scale(row)
+        dpr = self._dpr()
         e = self._elements
-        self.title.setVisible(e["deck_show_title"])
-        self._show_filled(self.artist, e["deck_show_artist"])
-        self._show_filled(self.album, e["deck_show_meta"], extra=True)
-        self._show_filled(self.label_line, e["deck_show_meta"], extra=True)
-        self._show_filled(self.genre, e["deck_show_meta"])
-        self._show_filled(self.year, e["deck_show_meta"])
-        self._show_filled(self.key, e["deck_show_key"])
-        self._show_filled(self.rating, e["deck_show_meta"])
-        self._show_filled(self.color_line, e["deck_show_meta"], extra=True)
-        self._show_filled(self.comment, e["deck_show_meta"], extra=True)
-        self._facts.setVisible(any(
-            w.isVisible() for w in (self.year, self.key, self.rating, self.color_line)
-        ))
-        self.played.setVisible(
-            e["deck_show_time"] and bool(self.played.property("filled"))
+        gap = 1
+        show_art = bool(e.get("deck_show_artwork")) and not (
+            self.wrap_ident.width() and self.wrap_ident.width() <= IDENT_COLLAPSED
         )
-        self._show_filled(self.tags, e["deck_show_tags"])
-        self._show_filled(self.state, e["deck_show_state"])
-        self._show_filled(self.phrase, e["deck_show_state"])
-        looping = self.loop_badge.isVisible()
-        self.state_wrap.setVisible(e["deck_show_state"] and (looping or self.state.isVisible()))
+        side = art_side(row, art_max=ART_PX, margin_y=BODY_MARGINS[1] + BODY_MARGINS[3])
+        if self._empty:
+            side = min(side, 40)
+        if show_art:
+            self.art.setFixedSize(side, side)
+            self.art.setVisible(True)
+            self._rescale_art()
+        else:
+            self.art.setVisible(False)
+            side = 0
+        ident_w = self.wrap_ident.width() or (
+            IDENT_COLLAPSED if not show_art and self.wrap_ident.width() == IDENT_COLLAPSED
+            else IDENT_WIDTH
+        )
+        if ident_w < 80 and not self._empty:
+            ident_w = IDENT_WIDTH
+        text_w = ident_w - (side + 8 if side else 0) - 2
+        self._text_w = max(48, text_w)
+        self._read_w = max(48, (self.wrap_read.width() or READOUT_PANEL_MIN) - 4)
+
+        def box(px: int, *, bold: bool = False, mono: bool = False, lines: int = 1) -> tuple[QFont, int]:
+            font = self._make_font(px, bold=bold, mono=mono)
+            return font, self._line_box(font, lines)
+
+        title_lines = title_line_count(row)
+        self._title_lines = title_lines
+        title_px = max(TITLE_MIN, int(round(TITLE_PX * scale)))
+        artist_px = max(ARTIST_MIN, int(round(ARTIST_PX * scale)))
+        detail_px = max(DETAIL_MIN, int(round(DETAIL_PX * scale)))
+        num_px = max(NUM_MIN, int(round(16 * scale)))
+        show_title = bool(e.get("deck_show_title")) and bool(self._title_raw) and not self._empty
+        show_artist = bool(e.get("deck_show_artist")) and bool(self._artist_raw)
+        show_num = True
+
+        if show_title and self._title_raw:
+            while title_px > TITLE_MIN:
+                font = self._make_font(title_px, bold=True)
+                if QFontMetrics(font).horizontalAdvance(self._title_raw) <= self._text_w * title_lines:
+                    break
+                title_px -= 1
+
+        def required_height(t_px: int, a_px: int, n_px: int) -> int:
+            total = 0
+            count = 0
+            if show_num:
+                total += box(n_px, bold=True, mono=True)[1]
+                count += 1
+            if show_title:
+                total += box(t_px, bold=True, lines=title_lines)[1]
+                count += 1
+            if show_artist:
+                total += box(a_px, mono=False)[1]
+                count += 1
+            if count > 1:
+                total += gap * (count - 1)
+            return total
+
+        while required_height(title_px, artist_px, num_px) > inner and title_px > TITLE_MIN:
+            title_px -= 1
+        while required_height(title_px, artist_px, num_px) > inner and artist_px > ARTIST_MIN:
+            artist_px -= 1
+        while required_height(title_px, artist_px, num_px) > inner and num_px > NUM_MIN:
+            num_px -= 1
+
+        remain = inner - required_height(title_px, artist_px, num_px)
+        # The stretch between the text block and the next line costs one gap
+        # once an optional line joins the column.
+        genre_lines = 1
+        if (
+            not self._empty
+            and title_lines > 1
+            and self._genre_raw
+            and QFontMetrics(self._make_font(detail_px, mono=True)).horizontalAdvance(self._genre_raw)
+            > self._text_w
+        ):
+            genre_lines = 2
+
+        optional: list[tuple[str, int]] = []
+        if not self._empty and e.get("deck_show_meta"):
+            if self._album_raw:
+                optional.append(("album", box(detail_px, mono=True)[1] + gap))
+            if self._label_raw:
+                optional.append(("label", box(detail_px, mono=True)[1] + gap))
+            if self._genre_raw:
+                optional.append(("genre", box(detail_px, mono=True, lines=genre_lines)[1] + gap))
+            facts_filled = any((self._year_raw, self._key_raw, self._rating_raw, self._color_html))
+            if facts_filled and (e.get("deck_show_meta") or e.get("deck_show_key")):
+                key_px = max(DETAIL_MIN, int(round(16 * scale)))
+                facts_h = max(box(detail_px, mono=True)[1], box(key_px, bold=True, mono=True)[1])
+                optional.append(("facts", facts_h + gap))
+            if self._comment_raw:
+                optional.append(("comment", box(detail_px, mono=True)[1] + gap))
+        # Key-only rows still get the facts line when meta is hidden.
+        if (
+            not self._empty
+            and e.get("deck_show_key")
+            and self._key_raw
+            and not any(name == "facts" for name, _h in optional)
+        ):
+            key_px = max(DETAIL_MIN, int(round(16 * scale)))
+            optional.append(("facts", box(key_px, bold=True, mono=True)[1] + gap))
+
+        # Detail lines spend the leftover first. The played bar is last, so it
+        # cannot push the artist (or a detail that already fit) off the card.
+        chosen = choose_optional(remain, optional)
+        used = sum(h for name, h in optional if name in set(chosen))
+        bar_h = 10  # 6px bar plus the gap the identity column leaves above it
+        show_bar = (
+            bool(e.get("deck_show_time"))
+            and bool(self.played.property("filled"))
+            and not self._empty
+            and (remain - used) >= bar_h
+        )
+
+        packed = {"num"}
+        if show_title:
+            packed.add("title")
+        if show_artist:
+            packed.add("artist")
+        packed.update(chosen)
+        if show_bar:
+            packed.add("played")
+
+        self._apply_identity(
+            packed,
+            num_px=num_px,
+            title_px=title_px,
+            artist_px=artist_px,
+            detail_px=detail_px,
+            title_lines=title_lines,
+            genre_lines=genre_lines if "genre" in packed else 1,
+            key_px=max(DETAIL_MIN, int(round(16 * scale))),
+            show_art_side=side,
+        )
+        self._pack_readout(inner, scale, dpr, packed)
+        self._packed = packed
+        self.played.setVisible("played" in packed)
+
+    def _apply_identity(
+        self,
+        packed: set[str],
+        *,
+        num_px: int,
+        title_px: int,
+        artist_px: int,
+        detail_px: int,
+        title_lines: int,
+        genre_lines: int,
+        key_px: int,
+        show_art_side: int,
+    ) -> None:
+        e = self._elements
+        num_font = self._make_font(num_px, bold=True, mono=True)
+        num_h = self._line_box(num_font)
+        self._paint_font(self.num, num_font, self._color)
+        self.num.setText(str(self.number))
+        self.num.setFixedHeight(num_h)
+        self.num.setVisible(True)
+
+        title_font = self._make_font(title_px, bold=True)
+        shown_title = elide_lines(self._title_raw, QFontMetrics(title_font), self._text_w, title_lines)
+        title_h = self._line_box(title_font, shown_title.count("\n") + 1 if shown_title else 1)
+        self._paint_font(self.title, title_font, COLORS["text"])
+        self.title.setText(shown_title)
+        self.title.setWordWrap(False)
+        self.title.setFixedHeight(title_h)
+        self.title.setMaximumWidth(self._text_w)
+        self.title.setVisible("title" in packed and bool(e.get("deck_show_title")))
+
+        artist_font = self._make_font(artist_px)
+        self._paint_font(self.artist, artist_font, COLORS["dim"])
+        self.artist.setText(elide_lines(self._artist_raw, QFontMetrics(artist_font), self._text_w, 1))
+        self.artist.setWordWrap(False)
+        self.artist.setFixedHeight(self._line_box(artist_font))
+        self.artist.setMaximumWidth(self._text_w)
+        self.artist.setVisible("artist" in packed and bool(e.get("deck_show_artist")))
+
+        detail_font = self._make_font(detail_px, mono=True)
+        detail_h = self._line_box(detail_font)
+        for widget, raw, name in (
+            (self.album, self._album_raw, "album"),
+            (self.label_line, self._label_raw, "label"),
+            (self.comment, self._comment_raw, "comment"),
+        ):
+            self._paint_font(widget, detail_font, COLORS["dim"])
+            widget.setWordWrap(False)
+            widget.setFixedHeight(detail_h)
+            widget.setMaximumWidth(self._text_w)
+            widget.setText(elide_lines(raw, QFontMetrics(detail_font), self._text_w, 1))
+            widget.setVisible(name in packed and bool(raw))
+
+        g_lines = genre_lines if "genre" in packed else 1
+        genre_font = detail_font
+        genre_shown = elide_lines(self._genre_raw, QFontMetrics(genre_font), self._text_w, g_lines)
+        self._paint_font(self.genre, genre_font, COLORS["dim"])
+        self.genre.setWordWrap(False)
+        self.genre.setText(genre_shown)
+        self.genre.setFixedHeight(self._line_box(genre_font, genre_shown.count("\n") + 1 if genre_shown else 1))
+        self.genre.setMaximumWidth(self._text_w)
+        self.genre.setVisible("genre" in packed and bool(self._genre_raw))
+
+        key_font = self._make_font(key_px, bold=True, mono=True)
+        facts_h = max(detail_h, self._line_box(key_font))
+        self._paint_font(self.year, detail_font, COLORS["dim"])
+        self.year.setText(self._year_raw)
+        self.year.setFixedHeight(detail_h)
+        self._paint_font(self.key, key_font, self._color)
+        self.key.setText(self._key_raw)
+        self.key.setFixedHeight(self._line_box(key_font))
+        self._paint_font(self.rating, detail_font, "#ffd45e")
+        self.rating.setText(self._rating_raw)
+        self.rating.setFixedHeight(detail_h)
+        self._paint_font(self.color_line, detail_font, COLORS["dim"])
+        self.color_line.setText(self._color_html)
+        self.color_line.setFixedHeight(detail_h)
+        show_facts = "facts" in packed
+        self.year.setVisible(show_facts and bool(self._year_raw) and bool(e.get("deck_show_meta")))
+        self.rating.setVisible(show_facts and bool(self._rating_raw) and bool(e.get("deck_show_meta")))
+        self.color_line.setVisible(show_facts and bool(self._color_html) and bool(e.get("deck_show_meta")))
+        self.key.setVisible(
+            show_facts
+            and bool(self._key_raw)
+            and bool(e.get("deck_show_key") or e.get("deck_show_meta"))
+        )
+        self._facts.setFixedHeight(facts_h)
+        # isHidden, not isVisible: a hidden card makes isVisible() false and
+        # would drop the facts row on the first layout.
+        self._facts.setVisible(show_facts and any(not w.isHidden() for w in (
+            self.year, self.key, self.rating, self.color_line,
+        )))
+        if show_art_side:
+            note = max(10, show_art_side // 3)
+            self.art.setStyleSheet(
+                f"background:{COLORS['panel_high']}; border:1px solid {COLORS['line']};"
+                f"border-radius:{ART_RADIUS}px; color:{COLORS['dimmest']}; font-size:{note}px;"
+            )
+
+    def _pack_readout(self, inner: int, scale: float, dpr: float, packed: set[str]) -> None:
+        """One readout row per line, dropped from the bottom when the row is short."""
+        del dpr  # line boxes already snap with effective_dpr
+        e = self._elements
+        gap = 1
+        bpm_px = max(BPM_MIN, int(round(BPM_PX * scale)))
+        pitch_px = max(PITCH_MIN, int(round(PITCH_PX * scale)))
+        time_px = max(TIME_MIN, int(round(TIME_PX * scale)))
+        meta_px = max(META_MIN, int(round(DETAIL_PX * scale)))
+        next_px = max(META_MIN, int(round(13 * scale)))
+
+        def total(items: list[tuple[str, int]]) -> int:
+            if not items:
+                return 0
+            heights = []
+            for name, px in items:
+                font = self._make_font(px, bold=(name == "bpm"), mono=True)
+                heights.append(self._line_box(font))
+            return sum(heights) + gap * (len(items) - 1)
+
+        # Display order. Lower-priority names are the ones READOUT_DROP lists.
+        rows: list[tuple[str, int]] = []
+        if self._empty:
+            if e.get("deck_show_bpm"):
+                rows.append(("bpm", BPM_MIN))
+        else:
+            if e.get("deck_show_bpm"):
+                rows.append(("bpm", bpm_px))
+            if e.get("deck_show_tempo") and self.pitch.text():
+                rows.append(("pitch", pitch_px))
+            if e.get("deck_show_time"):
+                rows.append(("time", time_px))
+            if e.get("deck_show_tags") and self.tags.property("filled"):
+                rows.append(("tags", meta_px))
+            state_on = bool(self.state.property("filled")) or not self.loop_badge.isHidden()
+            if e.get("deck_show_state") and state_on:
+                rows.append(("state", meta_px))
+            if e.get("deck_show_state") and self._phrase_raw:
+                rows.append(("phrase", meta_px))
+            if self._next_raw and getattr(self, "_show_next_cue", True):
+                rows.append(("next", next_px))
+
+        droppable = set(READOUT_DROP)
+        while total(rows) > inner and any(name in droppable for name, _px in rows):
+            for index in range(len(rows) - 1, -1, -1):
+                if rows[index][0] in droppable:
+                    rows.pop(index)
+                    break
+        # Shrink BPM before giving up pitch or the clock.
+        while total(rows) > inner:
+            bpm_i = next((i for i, (name, _px) in enumerate(rows) if name == "bpm"), None)
+            if bpm_i is None:
+                break
+            name, px = rows[bpm_i]
+            if px <= BPM_MIN:
+                break
+            rows[bpm_i] = (name, px - 1)
+        while total(rows) > inner and len(rows) > 1:
+            # Last resort: drop the clock, then pitch, so glyphs cannot overlap.
+            rows.pop()
+
+        shown = {name for name, _px in rows}
+        packed.update(shown)
+        self._pitch_px = pitch_px
+        self._time_px = time_px
+        self._next_px = next_px
+
+        bpm_font_px = next((px for name, px in rows if name == "bpm"), BPM_MIN)
+        bpm_font = self._make_font(bpm_font_px, bold=True, mono=True)
+        self._paint_font(self.bpm, bpm_font, COLORS["text"])
+        self.bpm.setFixedHeight(self._line_box(bpm_font))
+        self.bpm.setVisible("bpm" in shown)
+
+        self._style_pitch()
+        pitch_font = self._make_font(self._pitch_px, mono=True)
+        self.pitch.setFixedHeight(self._line_box(pitch_font))
+        self.pitch.setVisible("pitch" in shown and bool(self.pitch.text()))
+
+        self._style_times()
+        time_font = self._make_font(self._time_px, bold=True, mono=True)
+        time_h = self._line_box(time_font)
+        self.elapsed.setFixedHeight(time_h)
+        self.remaining.setFixedHeight(time_h)
+        self.times_wrap.setFixedHeight(time_h)
+        self.times_wrap.setVisible("time" in shown)
+
+        meta_font = self._make_font(meta_px, mono=True)
+        meta_h = self._line_box(meta_font)
+        self.tags.setFont(meta_font)
+        self.tags.setFixedHeight(meta_h)
+        self.tags.setVisible("tags" in shown and bool(self.tags.property("filled")))
+
+        self._paint_font(self.state, meta_font, COLORS["dim"])
+        self.state.setFixedHeight(meta_h)
+        self.state.setVisible("state" in shown and bool(self.state.property("filled")))
+        self.loop_badge.setStyleSheet(
+            f"font-family:monospace; font-size:{meta_px}px; font-weight:700; "
+            "letter-spacing:1px; color:#2ee89a; "
+            "border:1px solid rgba(46,232,154,140); border-radius:8px; "
+            "padding:0px 6px; background:rgba(46,232,154,26);"
+        )
+        self.state_wrap.setFixedHeight(meta_h)
+        # isHidden, not isVisible: a hidden parent makes isVisible() false and
+        # used to keep this row hidden forever after the first layout.
+        self.state_wrap.setVisible(
+            "state" in shown and (
+                bool(self.state.property("filled")) or not self.loop_badge.isHidden()
+            )
+        )
+
+        self._paint_font(self.phrase, meta_font, COLORS["dim"])
+        self.phrase.setText(elide_lines(self._phrase_raw, QFontMetrics(meta_font), self._read_w - 40, 1))
+        self.phrase.setFixedHeight(meta_h)
+        self.phase.setFixedHeight(meta_h)
+        self.phase.setVisible("phrase" in shown and bool(self._phrase_raw))
+
+        next_font = self._make_font(next_px, bold=True, mono=True)
+        self._paint_font(self.next_cue, next_font, self._next_color())
+        self.next_cue.setText(elide_lines(self._next_raw, QFontMetrics(next_font), self._read_w, 1))
+        self.next_cue.setFixedHeight(self._line_box(next_font))
+        self.next_cue.setVisible("next" in shown and bool(self._next_raw))
 
     def _next_color(self) -> str:
         return getattr(self, "_next_cue_color", "#e8eaf0")
 
     def _style_pitch(self) -> None:
-        self.pitch.setStyleSheet(
-            f"font-family:monospace; font-size:{self._px(PITCH_PX, 11)}px;"
-            f"color:{self._pitch_color};"
-        )
+        px = int(self._pitch_px or PITCH_PX)
+        font = self._make_font(px, mono=True)
+        self._paint_font(self.pitch, font, self._pitch_color)
 
     def _style_times(self) -> None:
-        size = self._px(TIME_PX, 13)
-        self.elapsed.setStyleSheet(
-            f"font-family:monospace; font-size:{size}px; font-weight:700;"
-        )
-        self.remaining.setStyleSheet(
-            f"font-family:monospace; font-size:{size}px; font-weight:700;"
-            f"color:{self._remain_color};"
-        )
+        px = int(self._time_px or TIME_PX)
+        font = self._make_font(px, bold=True, mono=True)
+        self._paint_font(self.elapsed, font, COLORS["text"])
+        self._paint_font(self.remaining, font, self._remain_color)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton:
@@ -1392,28 +1802,33 @@ class DeckCard(QFrame):
         label = getattr(self, "next_cue", None)
         if label is None:
             return
-        if not getattr(self, "_show_next_cue", True) or not self._meta:
+        text = ""
+        if getattr(self, "_show_next_cue", True) and self._meta:
+            meta = self._meta or {}
+            mark = next_mark(
+                pos_ms,
+                cues=meta.get("cues"),
+                phrases=meta.get("phrases"),
+                beats=meta.get("beats"),
+            )
+            text = format_countdown(mark)
+            if mark:
+                self._next_cue_color = urgency_color(mark["remain_ms"])
+        was_empty = not self._next_raw
+        self._next_raw = text
+        if self._laying_out:
+            return
+        if was_empty != (not text):
+            self._layout_details()
+            return
+        if not text or not self._packed_has("next"):
             label.hide()
             label.setText("")
             return
-        meta = self._meta or {}
-        mark = next_mark(
-            pos_ms,
-            cues=meta.get("cues"),
-            phrases=meta.get("phrases"),
-            beats=meta.get("beats"),
-        )
-        text = format_countdown(mark)
-        if not text:
-            label.hide()
-            label.setText("")
-            return
-        self._next_cue_color = urgency_color(mark["remain_ms"])
-        label.setText(text)
-        label.setStyleSheet(
-            "font-family:monospace; font-size:"
-            f"{self._px(13, 12)}px; font-weight:700; color:{self._next_cue_color};"
-        )
+        font = self._make_font(int(self._next_px or 13), bold=True, mono=True)
+        self._paint_font(label, font, self._next_color())
+        label.setText(elide_lines(text, QFontMetrics(font), self._read_w, 1))
+        label.setFixedHeight(self._line_box(font))
         label.show()
 
     def _on_cue_ms(self, ms: float) -> None:
@@ -1464,12 +1879,21 @@ class DeckCard(QFrame):
             if token:
                 self._art_miss_key = token
             return
-        pix = QPixmap.fromImage(img).scaled(
-            ART_PX, ART_PX, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-        self.art.setPixmap(pix)
-        self.art.setText("")
+        self._art_image = img
         self._art_key = token
         self._art_miss_key = ""
+        self._rescale_art()
+
+    def _rescale_art(self) -> None:
+        """Draw the stored cover at the artwork box the row actually has."""
+        img = self._art_image
+        if img is None or img.isNull():
+            return
+        side = max(1, self.art.width())
+        pix = QPixmap.fromImage(img).scaled(
+            side, side, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        self.art.setPixmap(pix)
+        self.art.setText("")
 
     def set_playhead_mode(self, mode: str) -> None:
         """User override (auto / centre / left). Applies immediately."""
@@ -1486,26 +1910,47 @@ class DeckCard(QFrame):
         self.wave.set_playhead_position(position)
 
     def _fill_meta(self, meta: dict) -> None:
-        self.title.setText(display_text(meta.get("title")) or "—")
-        self._put(self.artist, display_text(meta.get("artist")))
-        self._put(self.album, display_text(meta.get("album")))
-        self._put(self.label_line, display_text(meta.get("label")))
+        self._empty = False
+        self._title_raw = display_text(meta.get("title"))
+        self._artist_raw = display_text(meta.get("artist"))
+        self._album_raw = display_text(meta.get("album"))
+        self._label_raw = display_text(meta.get("label"))
         self._genre_raw = display_text(meta.get("genre"))
-        self.genre.setProperty("filled", bool(self._genre_raw))
-        self.genre.setText(self._genre_raw)
-        self._put(self.year, display_year(meta.get("year")))
-        self._put(self.key, display_text(meta.get("key")))
-        self._put(self.rating, rating_stars(meta.get("rating")))
+        self._year_raw = display_year(meta.get("year"))
+        self._key_raw = display_text(meta.get("key"))
+        self._rating_raw = rating_stars(meta.get("rating"))
         name, swatch = color_label(meta.get("color"))
         if name and swatch:
-            self._put(self.color_line, f'<span style="color:{swatch}">●</span> {name}')
+            self._color_html = f'<span style="color:{swatch}">●</span> {name}'
         else:
-            self._put(self.color_line, name)
-        self._put(self.comment, display_text(meta.get("comment")))
+            self._color_html = name
+        self._comment_raw = display_text(meta.get("comment"))
+        self._put(self.artist, self._artist_raw)
+        self._put(self.album, self._album_raw)
+        self._put(self.label_line, self._label_raw)
+        self.genre.setProperty("filled", bool(self._genre_raw))
+        self.genre.setText(self._genre_raw)
+        self._put(self.year, self._year_raw)
+        self._put(self.key, self._key_raw)
+        self._put(self.rating, self._rating_raw)
+        self._put(self.color_line, self._color_html)
+        self._put(self.comment, self._comment_raw)
+        self.title.setText(self._title_raw)
 
     def _clear_details(self, note: str = "") -> None:
-        self.title.setText("—")
+        self._title_raw = ""
+        self._artist_raw = note
+        self._album_raw = ""
+        self._label_raw = ""
         self._genre_raw = ""
+        self._year_raw = ""
+        self._key_raw = ""
+        self._rating_raw = ""
+        self._color_html = ""
+        self._comment_raw = ""
+        self._phrase_raw = ""
+        self._next_raw = ""
+        self.title.setText("")
         for widget in (
             self.album, self.label_line, self.genre, self.year, self.key,
             self.rating, self.color_line, self.comment, self.phrase,
@@ -1521,8 +1966,24 @@ class DeckCard(QFrame):
             bar,
             current_phrase(pos_ms, meta.get("phrases"), meta.get("beats")),
         )
-        self._put(self.phrase, text)
-        self._show_filled(self.phrase, self._elements.get("deck_show_state", True))
+        was_empty = not self._phrase_raw
+        self._phrase_raw = text
+        self.phrase.setProperty("filled", bool(text))
+        if self._laying_out:
+            return
+        if was_empty != (not text):
+            self._layout_details()
+            return
+        if not text or not self._packed_has("phrase"):
+            self.phase.setVisible(False)
+            return
+        font = self.phrase.font()
+        if font.pixelSize() <= 0:
+            font = self._make_font(META_MIN, mono=True)
+        self.phrase.setText(elide_lines(
+            text, QFontMetrics(font), max(8, self._read_w - 40), 1,
+        ))
+        self.phase.setVisible(True)
 
     def set_track_data(self, meta: dict | None, detail, overview, art: bytes | None) -> None:
         if meta and self._track_key and meta.get("track_key") != self._track_key:
@@ -1542,12 +2003,10 @@ class DeckCard(QFrame):
         if art and self._art_key != token:
             img = QImage.fromData(art)
             if not img.isNull():
-                pix = QPixmap.fromImage(img).scaled(
-                    ART_PX, ART_PX, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-                self.art.setPixmap(pix)
-                self.art.setText("")
+                self._art_image = img
                 self._art_id = (meta or {}).get("id", 0)
                 self._art_key = token
+                self._rescale_art()
 
     def needs_waveform(self, track_id: int, track_key: str = "") -> bool:
         key = track_key or ""
@@ -1583,13 +2042,15 @@ class DeckCard(QFrame):
             self.played.set_fraction(0)
             self.played.setProperty("filled", False)
         self.played.setVisible(
-            self._elements.get("deck_show_time", True) and bool(self.played.property("filled"))
+            self._packed_has("played") and bool(self.played.property("filled"))
         )
         self._set_phase(bar)
         self._paint_phrase(pos_ms, bar)
         self._apply_loop_region(pos_ms, looping)
         self._paint_next(pos_ms)
         self.wave.set_position(pos_ms, playing)
+        if not self._laying_out and self._fit_signature() != self._fit_sig:
+            self._layout_details()
 
     def _set_phase(self, bar: int) -> None:
         bar = int(bar or 0)
@@ -1651,9 +2112,11 @@ class DeckCard(QFrame):
         else:
             self.loop_badge.hide()
             self.loop_badge.setText("")
+        if self._laying_out:
+            return
         self.state_wrap.setVisible(
-            self._elements.get("deck_show_state", True)
-            and (self.loop_badge.isVisible() or self.state.isVisible())
+            self._packed_has("state")
+            and (bool(self.state.property("filled")) or not self.loop_badge.isHidden())
         )
 
     def update_deck(self, deck: dict, pos_ms: float) -> None:
@@ -1672,10 +2135,15 @@ class DeckCard(QFrame):
             self._art_miss_key = ""
             self._last_offair = None
             self._last_tags = ""
-            self._clear_details("" if tid else self._i18n.t("no_track_loaded"))
+            self._clear_details("" if tid else self._i18n.t("no_track"))
+            self._art_image = None
             if tid:
-                self.title.setText(self._i18n.t("loading"))
+                self._empty = False
+                self._title_raw = self._i18n.t("loading")
+                self.title.setText(self._title_raw)
             if not tid:
+                self._empty = True
+                self._title_raw = ""
                 self.art.setPixmap(QPixmap())
                 self.art.setText("♪")
                 self.wave.set_track(None, None, None)
@@ -1728,11 +2196,19 @@ class DeckCard(QFrame):
         self._paint_next(pos_ms)
         self._apply_playhead()
         if empty and not self._meta:
-            self.title.setText("—")
-            self._put(self.artist, self._i18n.t("no_track_loaded"))
+            self._empty = True
+            self._title_raw = ""
+            self._artist_raw = self._i18n.t("no_track")
+            self.title.setText("")
+            self._put(self.artist, self._artist_raw)
         elif tid and not self._meta:
-            self.title.setText(self._i18n.t("loading"))
+            self._empty = False
+            self._title_raw = self._i18n.t("loading")
+            self._artist_raw = ""
+            self.title.setText(self._title_raw)
             self._put(self.artist, "")
+        else:
+            self._empty = False
         self._layout_details()
 
         self.advance_playhead(
