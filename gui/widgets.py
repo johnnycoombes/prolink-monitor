@@ -7,7 +7,7 @@ from typing import Any
 
 from PySide6.QtCore import Qt, Signal, QSize, QPoint
 from PySide6.QtGui import (
-    QColor, QFontMetrics, QImage, QPainter, QPen, QPixmap, QFont, QMouseEvent,
+    QColor, QFontInfo, QFontMetrics, QImage, QPainter, QPen, QPixmap, QFont, QMouseEvent,
 )
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
@@ -1292,15 +1292,37 @@ class DeckCard(QFrame):
         return effective_dpr(float(self.devicePixelRatioF() or 1.0))
 
     def _make_font(self, px: int, *, bold: bool = False, mono: bool = False) -> QFont:
+        # Name a family that is installed. A missing DejaVu face on Windows
+        # makes QFontMetrics treat every glyph as a square of ``pixelSize``,
+        # so a line that fits on Linux ellipsizes after a few words.
+        font = QFont()
         if mono:
-            font = QFont("DejaVu Sans Mono")
+            font.setFamilies(["DejaVu Sans Mono", "Cascadia Mono", "Consolas", "Courier New"])
             font.setStyleHint(QFont.StyleHint.Monospace)
         else:
-            font = QFont("DejaVu Sans")
+            font.setFamilies(["DejaVu Sans", "Segoe UI"])
             font.setStyleHint(QFont.StyleHint.SansSerif)
+        matched = QFontInfo(font).family()
+        if matched:
+            font.setFamily(matched)
         font.setPixelSize(max(1, int(px)))
         font.setBold(bool(bold))
         return font
+
+    def _px_that_fits(self, text: str, px: int, minimum: int, width: int, lines: int, *,
+                      mono: bool = False, bold: bool = False) -> int:
+        """Shrink ``px`` until ``text`` fits, or stop at ``minimum``."""
+        px = max(minimum, int(px))
+        raw = " ".join(str(text or "").split())
+        if not raw or width <= 8:
+            return px
+        while px > minimum:
+            font = self._make_font(px, bold=bold, mono=mono)
+            shown = elide_lines(raw, QFontMetrics(font), width, lines)
+            if "…" not in shown and shown.replace("\n", " ") == raw:
+                return px
+            px -= 1
+        return px
 
     def _line_box(self, font: QFont, lines: int = 1) -> int:
         spacing = QFontMetrics(font).lineSpacing()
@@ -1460,6 +1482,10 @@ class DeckCard(QFrame):
             > self._text_w
         ):
             genre_lines = 2
+        if self._genre_raw and not self._empty:
+            detail_px = self._px_that_fits(
+                self._genre_raw, detail_px, DETAIL_MIN, self._text_w, genre_lines, mono=True,
+            )
 
         optional: list[tuple[str, int]] = []
         if not self._empty and e.get("deck_show_meta"):
@@ -1731,10 +1757,16 @@ class DeckCard(QFrame):
             )
         )
 
-        self._paint_font(self.phrase, meta_font, COLORS["dim"])
-        self.phrase.setText(elide_lines(self._phrase_raw, QFontMetrics(meta_font), self._read_w - 40, 1))
-        self.phrase.setFixedHeight(meta_h)
-        self.phase.setFixedHeight(meta_h)
+        phrase_w = max(48, self._read_w - (PHASE_W * 4 + 3 * 3 + 8))
+        phrase_px = self._px_that_fits(
+            self._phrase_raw, meta_px, META_MIN, phrase_w, 1, mono=True,
+        )
+        phrase_font = self._make_font(phrase_px, mono=True)
+        phrase_h = self._line_box(phrase_font)
+        self._paint_font(self.phrase, phrase_font, COLORS["dim"])
+        self.phrase.setText(elide_lines(self._phrase_raw, QFontMetrics(phrase_font), phrase_w, 1))
+        self.phrase.setFixedHeight(phrase_h)
+        self.phase.setFixedHeight(max(meta_h, phrase_h))
         self.phase.setVisible("phrase" in shown and bool(self._phrase_raw))
 
         next_font = self._make_font(next_px, bold=True, mono=True)
