@@ -15,7 +15,9 @@ from typing import Any
 import errno
 import json
 import os
+import re
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -760,6 +762,8 @@ class Monitor:
                 meta["library_source"] = "remotedb"
             else:
                 meta["library_source"] = fallback_source or meta.get("library_source") or ""
+            if self._artwork_known(key):
+                meta["has_artwork"] = True
             self._meta[key] = proto.apply_source_label(meta, slot, track_type)
 
     def _publish_basic(self, key: tuple, track_id: int, fields: dict, *,
@@ -790,6 +794,8 @@ class Monitor:
             "overview_columns": 0,
         }
         meta = proto.apply_source_label(meta, slot, track_type)
+        if self._artwork_known(key):
+            meta["has_artwork"] = True
         with self._lock:
             self._meta[key] = meta
 
@@ -906,6 +912,8 @@ class Monitor:
                     if stored == bound_key:
                         self._deck_keys[deck_no] = key
             meta = _merge_track_meta(previous, meta)
+            if self._artwork_known(key) or self._artwork_known(bound_key):
+                meta["has_artwork"] = True
             meta["track_key"] = track_key_token(key)
             meta["detail_columns"] = _wave_column_count(payload)
             self._waveforms[key] = payload
@@ -1057,8 +1065,31 @@ class Monitor:
             self._last_art_source = source
             if deck is not None:
                 self._art_source_by_deck[int(deck)] = source
+            if source and source != "none":
+                self._remember_artwork(key)
             while len(self._art_cache) > 48:
                 self._art_cache.pop(next(iter(self._art_cache)))
+
+    def _remember_artwork(self, key: tuple) -> None:
+        """A dbserver or NFS artwork read returned bytes. Mark the track now.
+
+        Waveform metadata arrives later. Leaving ``has_artwork`` false until
+        then made every client skip the image that ``/api/artwork`` already had.
+        """
+        ready = getattr(self, "_artwork_ready", None)
+        if ready is None:
+            ready = set()
+            self._artwork_ready = ready
+        ready.add(key)
+        meta = self._meta.get(key)
+        if isinstance(meta, dict):
+            meta["has_artwork"] = True
+
+    def _artwork_known(self, key: tuple | None) -> bool:
+        if not key:
+            return False
+        ready = getattr(self, "_artwork_ready", None)
+        return bool(ready and key in ready)
 
     def artwork(self, track_id: int, *, deck: int | None = None,
                 size: str | None = None) -> bytes | None:
@@ -2206,7 +2237,7 @@ _HTTP_BIND_RETRIES = 12
 _HTTP_BIND_RETRY_S = 0.1
 
 
-def _format_bind_error(port: int, exc: OSError) -> str:
+def _format_bind_error(port: int, exc: OSError, *, ranges: list[tuple[int, int]] | None = None) -> str:
     """Exact reason a listen socket was refused, including the Windows code."""
     win = getattr(exc, "winerror", None)
     err = getattr(exc, "errno", None)
@@ -2217,6 +2248,11 @@ def _format_bind_error(port: int, exc: OSError) -> str:
         text += f" (errno {err})"
     if win == 10013 or err in (errno.EACCES, errno.EPERM):
         text += " — port blocked or reserved"
+        if ranges is not None and excluded_range_for(port, ranges) is None:
+            text += (
+                "; not inside `netsh interface ipv4 show excludedportrange"
+                " protocol=tcp`"
+            )
     elif win == 10048 or err == errno.EADDRINUSE:
         text += " — port in use"
     return text
@@ -2228,6 +2264,66 @@ def _bind_in_use(exc: OSError) -> bool:
     return win == 10048 or err == errno.EADDRINUSE
 
 
+_EXCLUDED_PORT_RE = re.compile(r"^\s*(\d{1,5})\s+(\d{1,5})\b")
+
+
+def parse_excluded_port_ranges(text: str) -> list[tuple[int, int]]:
+    """Read ``netsh interface ipv4 show excludedportrange`` output.
+
+    Each range is inclusive. Header lines and the administered-port footnote
+    do not match.
+    """
+    ranges: list[tuple[int, int]] = []
+    for line in (text or "").splitlines():
+        match = _EXCLUDED_PORT_RE.match(line)
+        if not match:
+            continue
+        start, end = int(match.group(1)), int(match.group(2))
+        if 0 <= start <= end <= 65535:
+            ranges.append((start, end))
+    return ranges
+
+
+def windows_excluded_tcp_ranges() -> list[tuple[int, int]]:
+    """TCP exclusions from ``netsh interface ipv4 show excludedportrange protocol=tcp``.
+
+    Empty off Windows, or when netsh cannot be run. Hyper-V, WSL, and the
+    Windows NAT driver reserve blocks this way. A port inside one of those
+    blocks is not in ``netstat`` and ``bind`` fails with WinError 10013.
+    """
+    if os.name != "nt":
+        return []
+    try:
+        proc = subprocess.run(
+            ["netsh", "interface", "ipv4", "show", "excludedportrange", "protocol=tcp"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return parse_excluded_port_ranges(proc.stdout or "")
+
+
+def excluded_range_for(port: int, ranges: list[tuple[int, int]]) -> tuple[int, int] | None:
+    """Return the inclusive range that contains ``port``, if any."""
+    number = int(port)
+    for start, end in ranges:
+        if start <= number <= end:
+            return start, end
+    return None
+
+
+def _format_excluded(port: int, start: int, end: int) -> str:
+    return (
+        f"HTTP port {port} is inside a Windows excluded port range {start}-{end} "
+        f"(netsh interface ipv4 show excludedportrange protocol=tcp). "
+        f"Hyper-V, WSL, or another reservation owns that range, so it cannot be bound. "
+        f"Choose a port outside {start}-{end}."
+    )
+
+
 def open_http_server(port: int, handler=None, host: str = "0.0.0.0"):
     """Bind the panel HTTP server, trying alternate ports if ``port`` is blocked.
 
@@ -2236,14 +2332,17 @@ def open_http_server(port: int, handler=None, host: str = "0.0.0.0"):
     Port ``0`` asks the OS for any free port.
 
     The requested port is tried first, and a few more times when it is only
-    momentarily in use. A reserved port (WinError 10013) falls through to the
-    next candidate. Each failure is written to the app log. The saved setting
-    stays the port the user asked for; Health shows the port that actually listened.
+    momentarily in use. A port inside a Windows excluded range is skipped, and
+    the next candidate outside that range is used. A reserved port that netsh
+    did not list (WinError 10013) falls through the same way. Each failure is
+    written to the app log and shown on Health. The saved setting stays the
+    port the user asked for; Health shows the port that actually listened.
     """
     handler = handler or Handler
     wanted = int(port)
     tried: list[int] = []
     errors: list[str] = []
+    ranges = windows_excluded_tcp_ranges()
 
     candidates = [wanted]
     for alt in _HTTP_PORT_FALLBACKS:
@@ -2251,13 +2350,22 @@ def open_http_server(port: int, handler=None, host: str = "0.0.0.0"):
             candidates.append(alt)
 
     for index, candidate in enumerate(candidates):
+        if candidate:
+            hit = excluded_range_for(int(candidate), ranges)
+            if hit is not None:
+                note = _format_excluded(int(candidate), hit[0], hit[1])
+                if note not in errors:
+                    errors.append(note)
+                applog.log_note(note)
+                continue
         retries = _HTTP_BIND_RETRIES if index == 0 else 1
         for attempt in range(retries):
             tried.append(candidate)
             try:
                 server = QuietServer((host, candidate), handler)
             except OSError as exc:
-                note = _format_bind_error(candidate, exc)
+                note = _format_bind_error(
+                    candidate, exc, ranges=ranges if os.name == "nt" else None)
                 if note not in errors:
                     errors.append(note)
                 applog.log_note(note)

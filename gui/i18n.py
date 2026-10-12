@@ -72,7 +72,8 @@ STRINGS = {
     "overlay_layout": "Layout",
     "overlay_now_style": "Now playing style",
     "overlay_now_style_card": "Card (artwork + overview wave)",
-    "overlay_now_style_panel": "Panel (full-width scrolling wave)",
+    "overlay_now_style_panel": "Panel (larger artwork + visualiser)",
+    "overlay_now_style_bar": "Bar (full-width, small artwork)",
     "overlay_now_pos": "Now playing position",
     "overlay_now_pos_tl": "Top left",
     "overlay_now_pos_tr": "Top right",
@@ -83,7 +84,7 @@ STRINGS = {
     "overlay_now_pos_bottom": "Bottom (full width)",
     "overlay_now_pos_top": "Top (full width)",
     "floating_now_panel_pos_doc": (
-        "Panel style: Bottom puts track info above the waveform; Top puts the waveform above the info."
+        "Panel and bar: Bottom puts track info above the waveform; Top puts the waveform above the info."
     ),
     "overlay_corner": "Corner",
     "floating_now": "Floating now playing",

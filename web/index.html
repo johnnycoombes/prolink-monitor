@@ -941,18 +941,32 @@ function drawInfo(d, s) {
   }
   d.noWave.textContent = T('noTrack');
   d.noWave.style.display = s.track_id ? 'none' : 'flex';
-  if (s.track_id && m && keyOk && (m.has_artwork || m.mock_art)) {
-    const artToken = `${s.track_id}:${s.track_key || m.track_key || ''}`;
+  // Artwork is served as soon as the track id is known. Do not wait for waveform meta.
+  if (s.track_id && keyOk) {
+    const mockArt = m && m.mock_art;
+    const artToken = `${s.track_id}:${s.track_key || (m && m.track_key) || ''}:${mockArt ? 'mock' : 'live'}`;
     if (d.artKey !== artToken) {
       d.artKey = artToken;
       const img = new Image();
-      img.onload = () => { d.art.replaceWith(img); img.className = 'art'; d.art = img; };
-      img.src = m.mock_art || `/api/artwork/${s.track_id}${trackApiQuery(s)}`;
+      img.alt = '';
+      img.onload = () => {
+        if (d.artKey !== artToken) return;
+        d.art.replaceWith(img); img.className = 'art'; d.art = img;
+      };
+      img.onerror = () => {
+        img.onerror = null;
+        if (d.artKey !== artToken) return;
+        const blank = document.createElement('div');
+        blank.className = 'art blank'; blank.innerHTML = '&#9834;';
+        d.art.replaceWith(blank); d.art = blank;
+      };
+      img.src = mockArt || `/api/artwork/${s.track_id}${trackApiQuery(s)}`;
     }
-  } else if (s.track_id && trackChanged && d.art.tagName === 'IMG') {
+  } else if (!s.track_id && d.art.tagName === 'IMG') {
     const blank = document.createElement('div');
     blank.className = 'art blank'; blank.innerHTML = '&#9834;';
     d.art.replaceWith(blank); d.art = blank;
+    d.artKey = '';
   }
 
   const tags = [];
