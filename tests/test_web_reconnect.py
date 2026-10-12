@@ -288,6 +288,54 @@ class FloatingReloadTests(unittest.TestCase):
         self.assertEqual(loads[0], loads[1])
 
 
+class ExcludedPortRangeTests(unittest.TestCase):
+    def test_parse_netsh_excludedportrange(self):
+        from app import excluded_range_for, parse_excluded_port_ranges
+
+        text = """
+Protocol tcp Port Exclusion Ranges
+
+Start Port    End Port
+----------    --------
+      8756        8855
+     50000       50059     *
+
+* - Administered port exclusions.
+"""
+        ranges = parse_excluded_port_ranges(text)
+        self.assertEqual(ranges, [(8756, 8855), (50000, 50059)])
+        self.assertEqual(excluded_range_for(8777, ranges), (8756, 8855))
+        self.assertEqual(excluded_range_for(8787, ranges), (8756, 8855))
+        self.assertIsNone(excluded_range_for(8877, ranges))
+        self.assertIsNone(excluded_range_for(18777, ranges))
+
+    def test_excluded_port_is_skipped_for_the_next_free_candidate(self):
+        from prolink import applog
+
+        path = applog.reset_for_tests(
+            os.path.join(tempfile.mkdtemp(), "prolink-monitor.log"))
+        server = None
+        try:
+            with mock.patch("app.windows_excluded_tcp_ranges", return_value=[(8770, 8790)]):
+                with mock.patch("app._HTTP_PORT_FALLBACKS", (8787, 0)):
+                    server, bound = open_http_server(8777, host="127.0.0.1")
+            self.assertNotEqual(bound, 8777)
+            self.assertNotEqual(bound, 8787)
+            self.assertIn("excluded port range", server.last_error)
+            self.assertIn("8770-8790", server.last_error)
+            self.assertIn("8777", server.last_error)
+            self.assertIn("8787", server.last_error)
+            self.assertIn(f"listening on {bound}", server.last_error)
+            with open(path, encoding="utf-8") as handle:
+                body = handle.read()
+            self.assertIn("8777 is inside a Windows excluded port range 8770-8790", body)
+            self.assertIn("netsh interface ipv4 show excludedportrange", body)
+        finally:
+            if server is not None:
+                server.server_close()
+            applog.reset_for_tests(path)
+
+
 class HttpBindFallbackTests(unittest.TestCase):
     def test_busy_port_is_logged_and_the_next_port_is_used(self):
         from prolink import applog

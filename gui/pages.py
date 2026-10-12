@@ -57,7 +57,7 @@ def _repopulate_overlay_now_pos(combo: QComboBox, i18n, style: str, pos=None) ->
     pos = normalize_now_pos(style, pos)
     combo.blockSignals(True)
     combo.clear()
-    if style == "panel":
+    if style in ("panel", "bar"):
         opts = (
             ("overlay_now_pos_bottom", "bottom"),
             ("overlay_now_pos_top", "top"),
@@ -1921,6 +1921,7 @@ class OverlayPage(Page):
         self.now_style_box = QComboBox()
         self.now_style_box.addItem(i18n.t("overlay_now_style_card"), "card")
         self.now_style_box.addItem(i18n.t("overlay_now_style_panel"), "panel")
+        self.now_style_box.addItem(i18n.t("overlay_now_style_bar"), "bar")
         self.now_pos_box = QComboBox()
         _repopulate_overlay_now_pos(self.now_pos_box, i18n, "card", "bl")
         self._overlay_now_style = "card"
@@ -2126,10 +2127,10 @@ class OverlayPage(Page):
         ]
         if layout == "nowplaying":
             style = normalize_now_style(self.now_style_box.currentData())
-            if style == "panel":
-                qs.append("style=panel")
+            if style in ("panel", "bar"):
+                qs.append(f"style={style}")
             pos = self.now_pos_box.currentData() or (
-                "bottom" if style == "panel" else "bl")
+                "bottom" if style in ("panel", "bar") else "bl")
             qs.append(f"pos={pos}")
         else:
             qs.append(f"corner={self.corner_box.currentData()}")
@@ -2335,6 +2336,7 @@ class SettingsPage(Page):
         self.settings_now_style = QComboBox()
         self.settings_now_style.addItem(i18n.t("overlay_now_style_card"), "card")
         self.settings_now_style.addItem(i18n.t("overlay_now_style_panel"), "panel")
+        self.settings_now_style.addItem(i18n.t("overlay_now_style_bar"), "bar")
         self.settings_now_pos = QComboBox()
         _repopulate_overlay_now_pos(self.settings_now_pos, i18n, "card", "bl")
         self._settings_now_style = "card"
@@ -2483,7 +2485,7 @@ class SettingsPage(Page):
         self.settings_corner_label.setVisible(not now)
         self.overlay_corner.setVisible(not now)
         self.settings_now_pos_doc.setVisible(
-            now and normalize_now_style(self.settings_now_style.currentData()) == "panel")
+            now and normalize_now_style(self.settings_now_style.currentData()) in ("panel", "bar"))
 
     def load_settings(self, data: dict) -> None:
         self._loading_settings = True

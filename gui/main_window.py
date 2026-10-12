@@ -174,7 +174,7 @@ class MainWindow(QMainWindow):
         self.backend.wnp_test_finished.connect(self._on_wnp_test_finished)
         self.page_monitor.on_prefs_changed = self._push_monitor_prefs
         self.page_monitor.apply_prefs(self.settings)
-        self.page_overlay.load_prefs(self.settings, port=int(self.settings.get("port", 8777)))
+        self.page_overlay.load_prefs(self.settings, port=self.backend.port)
         self.page_overlay.prefs_changed.connect(self._on_overlay_prefs)
         self.page_overlay.set_floating_now_handler(self.toggle_floating_now)
         self.page_settings.settings_floating_btn.clicked.connect(self.toggle_floating_now)
@@ -537,7 +537,7 @@ class MainWindow(QMainWindow):
         self.settings = load_settings()
         self.page_monitor.apply_prefs(self.settings)
         self.page_settings.load_settings(self.settings)
-        self.page_overlay.load_prefs(self.settings, port=int(self.settings.get("port", 8777)))
+        self.page_overlay.load_prefs(self.settings, port=self.backend.port)
         self.set_sidebar_visible(bool(self.settings.get("sidebar_visible", True)), persist=False)
         if self.backend.monitor is not None:
             self.backend.push_display(self.settings)
@@ -575,8 +575,7 @@ class MainWindow(QMainWindow):
         except OSError:
             pass
         self._apply_display_settings()
-        self.page_overlay.load_prefs(
-            self.settings, port=int(self.settings.get("port", 8777)))
+        self.page_overlay.load_prefs(self.settings, port=self.backend.port)
 
     def _on_overlay_prefs(self, data: dict) -> None:
         self.settings.update(data)

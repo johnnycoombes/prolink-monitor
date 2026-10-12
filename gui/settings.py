@@ -54,7 +54,7 @@ DEFAULTS: dict[str, Any] = {
     "deck_show_key": True,
     "deck_show_state": True,
     "overlay_layout": "nowplaying",   # nowplaying | dual | minimal | setlist
-    "overlay_now_style": "card",      # card | panel — now playing layout (layout=nowplaying)
+    "overlay_now_style": "card",      # card | panel | bar — now playing layout
     "overlay_now_pos": "bl",          # card: tl|tr|bl|br — panel: bottom|top
     "overlay_corner": "bl",           # bl | br | tl | tr | center
     "floating_now_topmost": True,

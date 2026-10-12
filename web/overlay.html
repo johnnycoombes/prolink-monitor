@@ -226,6 +226,11 @@ body.float-window canvas{-webkit-app-region:no-drag}
   width:calc(48px * var(--scale));height:calc(48px * var(--scale));flex-shrink:0;
   border-radius:calc(8px * var(--scale));font-size:calc(20px * var(--scale));
 }
+/* Panel is the wide strip with a cover large enough to read, plus the visualiser. */
+.now-panel.panel-large .panel-info .art{
+  width:calc(168px * var(--scale));height:calc(168px * var(--scale));
+  border-radius:calc(16px * var(--scale));font-size:calc(56px * var(--scale));
+}
 .now-panel .panel-spectrum{
   width:100%;height:calc(72px * var(--scale));display:block;flex:0 0 auto;
   border-radius:calc(6px * var(--scale));
@@ -479,8 +484,10 @@ const layout = ['nowplaying','dual','minimal','setlist'].includes(params.get('la
 const corner = ['bl','br','tl','tr','center'].includes(params.get('corner'))
   ? params.get('corner') : 'bl';
 const styleParam = (params.get('style') || 'card').toLowerCase();
-// ``bar`` is the full-width panel. Treating it as a card hid the spectrum.
-const nowStyle = (styleParam === 'panel' || styleParam === 'bar') ? 'panel' : 'card';
+// Panel is the wide strip with a large cover. Bar is the same strip with small art.
+// ``style=bar`` used to alias to panel, so the two looked the same.
+const nowStyle = styleParam === 'panel' ? 'panel' : (styleParam === 'bar' ? 'bar' : 'card');
+const stripNow = nowStyle === 'panel' || nowStyle === 'bar';
 const spectrumParam = (params.get('spectrum') || '').toLowerCase();
 const spectrumLocked = spectrumParam === '1' || spectrumParam === '0';
 const floatWindow = params.get('float') === '1';
@@ -490,8 +497,8 @@ function normalizeCardPos(raw) {
   const p = alias[r] || r;
   return ['tl', 'tr', 'bl', 'br'].includes(p) ? p : 'bl';
 }
-const nowPosRaw = (params.get('pos') || (nowStyle === 'panel' ? 'bottom' : 'bl')).toLowerCase();
-const nowPos = nowStyle === 'panel'
+const nowPosRaw = (params.get('pos') || (stripNow ? 'bottom' : 'bl')).toLowerCase();
+const nowPos = stripNow
   ? (nowPosRaw === 'top' ? 'top' : 'bottom')
   : normalizeCardPos(nowPosRaw);
 const PLAYHEAD_LEFT_FRACTION = 0.25;
@@ -500,6 +507,7 @@ const ZOOM_BARS_OPTS = [1, 2, 4, 8, 16];
 let showPhrasesDisplay = true;
 let showVocalsDisplay = true;
 let showNextCueDisplay = true;
+// Panel shows the visualiser unless the URL says spectrum=0. Bar follows the same switch.
 let showSpectrum = spectrumParam === '0' ? false : true;
 let zoomBarsDisplay = 4;
 let playheadModeDisplay = 'auto';
@@ -529,7 +537,7 @@ if (floatWindow) document.body.classList.add('float-window');
 const root = document.getElementById('root');
 if (embed) root.classList.add('embed-mode');
 if (layout === 'nowplaying') {
-  if (nowStyle === 'panel') {
+  if (stripNow) {
     root.classList.add('now-panel-mode', nowPos === 'top' ? 'now-panel-top' : 'now-panel-bottom');
   } else {
     root.classList.add('now-card-mode', 'corner-' + nowPos, 'now-pos-' + nowPos);
@@ -740,15 +748,21 @@ function mockArtDataUri(size){
   return _mockArt[key];
 }
 
+function artFail(img){
+  img.onerror = null;
+  const box = img.parentNode;
+  if (box) box.textContent = '♪';
+}
+
 function artHtml(deck, pack, size){
   const trackId = deck && deck.track_id;
-  const meta = pack && pack.meta;
   const variant = size === 'large' ? 'large' : (size === 'small' ? 'small' : '');
   if (params.get('mock') === '1' && trackId)
     return `<div class="art"><img alt="" src="${mockArtDataUri(variant || 'small')}"></div>`;
-  if (trackId && meta && meta.has_artwork) {
-    const id = trackId;
-    return `<div class="art"><img alt="" src="/api/artwork/${id}${artQuery(deck, variant)}"></div>`;
+  // /api/artwork answers before waveform metadata. Request it for any track id.
+  if (trackId) {
+    const src = `/api/artwork/${trackId}${artQuery(deck, variant)}`;
+    return `<div class="art"><img alt="" src="${src}" onerror="artFail(this)"></div>`;
   }
   return `<div class="art">♪</div>`;
 }
@@ -1176,9 +1190,10 @@ function renderNowPanel(deck, pos) {
   const artist = (meta && keyOk) ? (meta.artist || '') : '';
   const key = (meta && keyOk) ? (meta.key || '') : '';
   const color = DECK_COLORS[deck.number] || '#22d3ee';
+  const artSize = nowStyle === 'panel' ? 'large' : 'small';
   const info = `
     <div class="panel-info">
-      ${artHtml(deck, pack, 'small')}
+      ${artHtml(deck, pack, artSize)}
       <div class="copy">
         ${tagsHtml(deck, pack, pos)}
         <div class="title">${escapeHtml(title)}</div>
@@ -1192,13 +1207,16 @@ function renderNowPanel(deck, pos) {
       </div>
     </div>`;
   const phrases = '<canvas class="panel-phrases"></canvas><canvas class="panel-vocals"></canvas>';
-  const spectrum = showSpectrum ? '<canvas class="panel-spectrum"></canvas>' : '';
+  // Panel keeps the visualiser unless spectrum=0. Bar follows the spectrum switch.
+  const spectrumOn = nowStyle === 'panel' ? spectrumParam !== '0' : showSpectrum;
+  const spectrum = spectrumOn ? '<canvas class="panel-spectrum"></canvas>' : '';
   const detail = '<canvas class="panel-detail"></canvas>';
-  // Spectrum sits in the gap the smaller artwork leaves next to the waveform.
+  // Spectrum sits between the track row and the scrolling wave.
   const blocks = nowPos === 'top'
     ? `${detail}${spectrum}${phrases}${info}`
     : `${info}${phrases}${spectrum}${detail}`;
-  return `<div class="now-panel" style="--deck:${color}">${blocks}</div>`;
+  const kind = nowStyle === 'panel' ? 'panel-large' : 'panel-bar';
+  return `<div class="now-panel ${kind}" style="--deck:${color}">${blocks}</div>`;
 }
 
 function renderNow(deck, pos, compact=false){
@@ -1517,7 +1535,7 @@ function paint(){
   if (layout === 'dual') html = renderDual(decks, positions);
   else if (layout === 'minimal') html = renderMinimal(decks[0], positions[0]);
   else if (layout === 'setlist') html = renderSetlist(decks[0], positions[0], last.setlist || []);
-  else if (nowStyle === 'panel') html = renderNowPanel(decks[0], positions[0]);
+  else if (stripNow) html = renderNowPanel(decks[0], positions[0]);
   else html = renderNow(decks[0], positions[0]);
 
   const aud = last.audience_deck;

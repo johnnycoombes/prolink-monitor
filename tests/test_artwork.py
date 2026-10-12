@@ -136,6 +136,56 @@ class FallbackOrderTests(unittest.TestCase):
         self.assertEqual(seen, [artmod.EMBEDDED_READ_LIMIT])
 
 
+class ArtworkReadyTests(unittest.TestCase):
+    def _monitor(self):
+        from app import Monitor
+
+        mon = Monitor.__new__(Monitor)
+        mon._lock = __import__("threading").RLock()
+        mon._meta = {}
+        mon._art_cache = {}
+        mon._art_source_by_deck = {}
+        mon._last_art_source = "none"
+        return mon
+
+    def test_dbserver_and_nfs_lookups_set_has_artwork_before_the_wave(self):
+        mon = self._monitor()
+        key = ("10.0.0.8", "", None, "usb", 77)
+        mon._meta[key] = {"id": 77, "title": "Night", "has_artwork": False, "artwork_id": 0}
+        jpeg = b"\xff\xd8\xff" + b"x" * 20
+        mon._store_art(key, "small", jpeg, "remotedb", 1)
+        self.assertTrue(mon._meta[key]["has_artwork"])
+        self.assertEqual(mon._last_art_source, "remotedb")
+
+        # A later title publish must keep the flag even with no artwork id.
+        mon._publish_basic(
+            key, 77, {"title": "Night", "artwork_id": 0},
+            slot="usb", track_type="rekordbox", fallback_source="nfs-cache",
+        )
+        self.assertTrue(mon._meta[key]["has_artwork"])
+
+        fresh = ("10.0.0.8", "", None, "usb", 88)
+        mon._store_art(fresh, "large", jpeg, "nfs-hires", None)
+        mon._publish_basic(
+            fresh, 88, {"title": "Day", "artwork_id": 0, "has_artwork": False},
+            slot="usb", track_type="rekordbox", fallback_source="nfs-cache",
+        )
+        self.assertTrue(mon._meta[fresh]["has_artwork"])
+        mon._store_art(fresh, "small", jpeg, "thumbnail", None)
+        self.assertTrue(mon._meta[fresh]["has_artwork"])
+
+    def test_pages_request_art_without_waiting_for_has_artwork(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        overlay = open(os.path.join(root, "web", "overlay.html"), encoding="utf-8").read()
+        panel = open(os.path.join(root, "web", "index.html"), encoding="utf-8").read()
+        self.assertIn('onerror="artFail(this)"', overlay)
+        self.assertNotIn("meta.has_artwork", overlay)
+        self.assertIn("/api/artwork/${trackId}", overlay)
+        self.assertIn("img.onerror", panel)
+        self.assertNotIn("m.has_artwork || m.mock_art", panel)
+        self.assertIn("/api/artwork/${s.track_id}", panel)
+
+
 class ArtCacheKeyTests(unittest.TestCase):
     def test_track_key_includes_slot(self):
         a = track_cache_key("10.0.0.1", "/e", (100, 200), "usb", 42)

@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QApplication, QHBoxLayout, QSizeGrip, QVBoxLayout,
 
 _log = logging.getLogger(__name__)
 
-from gui.overlay_now import normalize_now_style
+from gui.overlay_now import is_strip_style, normalize_now_style
 from prolink.audience_deck import merge_live_deck
 
 try:
@@ -188,6 +188,9 @@ class FloatingNowPlayingWindow(QWidget):
     CARD_DEFAULT_SIZE = (720, 980)
     # Info row + spectrum + detail wave, with the wave kept inside the window.
     PANEL_DEFAULT_SIZE = (1040, 360)
+    # Panel art is 168px, then the visualiser and the detail wave.
+    PANEL_LARGE_MIN = (640, 400)
+    PANEL_LARGE_DEFAULT = (1040, 460)
 
     def __init__(
         self,
@@ -327,7 +330,7 @@ class FloatingNowPlayingWindow(QWidget):
         return normalize_now_style(self._settings_getter().get("overlay_now_style"))
 
     def _geometry_keys(self) -> tuple[str, str, str, str]:
-        if self._style() == "panel":
+        if is_strip_style(self._style()):
             return (
                 "floating_now_panel_x",
                 "floating_now_panel_y",
@@ -390,8 +393,13 @@ class FloatingNowPlayingWindow(QWidget):
         self.setStyleSheet(f"#FloatingNowPlaying{{background:{bg};}}")
 
     def _apply_mode_visibility(self) -> None:
-        panel = self._style() == "panel"
-        min_w, min_h = self._PANEL_MIN if panel else self._CARD_MIN
+        style = self._style()
+        if style == "panel":
+            min_w, min_h = self.PANEL_LARGE_MIN
+        elif style == "bar":
+            min_w, min_h = self._PANEL_MIN
+        else:
+            min_w, min_h = self._CARD_MIN
         self.setMinimumSize(min_w, min_h)
 
     def _reload_overlay(self) -> None:
@@ -429,9 +437,13 @@ class FloatingNowPlayingWindow(QWidget):
 
     def restore_geometry(self, settings: dict[str, Any]) -> None:
         style = normalize_now_style(settings.get("overlay_now_style"))
-        if style == "panel":
-            min_w, min_h = self._PANEL_MIN
-            def_w, def_h = self._default_panel_size()
+        if is_strip_style(style):
+            if style == "panel":
+                min_w, min_h = self.PANEL_LARGE_MIN
+                def_w, def_h = self.PANEL_LARGE_DEFAULT
+            else:
+                min_w, min_h = self._PANEL_MIN
+                def_w, def_h = self._default_panel_size()
             keys = (
                 "floating_now_panel_x",
                 "floating_now_panel_y",

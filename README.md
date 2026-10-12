@@ -17,9 +17,9 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 
 ## Screenshots
 
-These pictures are already in the repo. They show the deck layouts, waveform colours, sidebar, library, overlay, and floating window. They were taken before the vocal lane and the NEXT countdown, so those two are not in the shots.
+These pictures are already in the repo.
 
-![4 decks, RGB waveforms](doc/desktop-4deck-rgb.png)
+![Monitor](doc/monitor.png)
 
 ![2 decks, RGB](doc/desktop-2deck-rgb.png)
 
@@ -31,25 +31,17 @@ These pictures are already in the repo. They show the deck layouts, waveform col
 
 ![Settings](doc/desktop-settings.png)
 
-![Library](doc/desktop-library.png)
+![Library](doc/library.png)
 
 ![Devices](doc/desktop-devices.png)
 
-![Now playing overlay](doc/overlay-nowplaying.png)
+Now Playing **card**, **bar** with the spectrum, and **bar** without it. Panel is the same full-width strip as the bar, with a larger cover and the visualiser on unless `spectrum=0`.
 
-![All decks overlay](doc/overlay-all-decks.png)
+![Overlay card](doc/overlay-card.png)
 
-![Web panel](doc/web-panel.png)
+![Overlay bar with spectrum](doc/overlay-bar.png)
 
-Now Playing **card** (tall, high-res cover) and **panel** (full-width bar):
-
-![Overlay card](docs/screenshots/overlay-now-card.png)
-
-![Overlay panel](docs/screenshots/overlay-now-panel.png)
-
-![Floating card](docs/screenshots/floating-now-card.png)
-
-![Floating panel](docs/screenshots/floating-now-panel.png)
+![Overlay bar without spectrum](doc/overlay-bar-plain.png)
 
 ## Supported hardware
 
@@ -162,6 +154,8 @@ The sidebar is **Monitor**, **Devices**, **Health**, **Library**, **Session**, *
 
 ### Monitor
 
+![Monitor](doc/monitor.png)
+
 Each deck card can show artwork, title, artist, album / genre / label, MASTER / SYNC / ON AIR, the waveform, BPM, tempo (±%), elapsed and remaining time, key, and play state. Hidden columns give the wave more room. Empty decks can be hidden. The page only lays out **2** or **4** decks.
 
 **Waveforms.** Three colour styles, the same ones a CDJ draws:
@@ -193,11 +187,13 @@ The window paints at 60 Hz by default. Metadata refreshes more slowly. See [doc/
 
 **NEXT countdown.** `NEXT: <name> in m:ss` for the next hot cue, memory cue, or phrase change after the playhead. A hot cue with no name is `CUE A` (and so on). A memory cue with no name is `MEMORY`. Loop cues are skipped. The text is amber at 10 seconds or less (`#ff9f45`) and red at 3 seconds or less (`#ff3b30`). On by default (`show_next_cue`). A seek picks a new target immediately.
 
-**Artwork.** The card uses a large image. The panel bar uses a small one. Large art is tried in this order, and stops at the first image: a cover embedded in a local music mirror, dbserver high-res, the NFS `_m` thumbnail, dbserver standard, the NFS thumbnail, then an embedded cover read from the audio header only (ID3, FLAC, or MP4). The audio file is not downloaded. The player and the USB stay read-only.
+**Artwork.** The card uses a large image. The panel uses a larger cover than the bar (and the spectrum visualiser unless `spectrum=0`). The bar uses a small image. The page requests `/api/artwork/<id>` as soon as a track id is known. If that request fails, the placeholder is shown. Large art is tried in this order, and stops at the first image: a cover embedded in a local music mirror, dbserver high-res, the NFS `_m` thumbnail, dbserver standard, the NFS thumbnail, then an embedded cover read from the audio header only (ID3, FLAC, or MP4). The audio file is not downloaded. The player and the USB stay read-only. A successful dbserver or NFS lookup sets `has_artwork` immediately, before the waveform metadata arrives.
 
 **Session.** **Record session** (also the Session page, and `Ctrl+R`) keeps a chronological list of on-air tracks. The set clock starts at `00:00:00` and pauses when nothing is on air. Export CSV, JSON, or M3U. Auto-save writes all three on Stop, under `~/.prolink-monitor/sessions` unless you set another folder.
 
 ### Library
+
+![Library](doc/library.png)
 
 Search the USB tracks, browse OneLibrary playlists and history when `pyrekordbox` can open `exportLibrary.db`, and see artwork for tracks that are on decks. Classic `export.pdb` search works without that package. The page says when OneLibrary is present but not readable yet. The Windows zip bundles `pyrekordbox`. A source checkout still uses the optional install below.
 
@@ -231,12 +227,19 @@ With the web server running, add a Browser source:
 http://127.0.0.1:8777/overlay
 ```
 
-The page background is transparent. Now Playing has two styles. There is no third layout named Bar.
+The page background is transparent. Now Playing has three styles.
+
+![Overlay card](doc/overlay-card.png)
+
+![Overlay bar with spectrum](doc/overlay-bar.png)
+
+![Overlay bar without spectrum](doc/overlay-bar-plain.png)
 
 - **Card** (`style=card`, the default): tall card, high-res cover, overview wave. Corners are `tl`, `tr`, `bl`, `br`.
-- **Panel** (`style=panel`): the full-width bar, small cover, scrolling wave. `pos=bottom` or `pos=top`.
+- **Panel** (`style=panel`): full-width strip, larger cover, scrolling wave, and the spectrum visualiser unless `spectrum=0`. `pos=bottom` or `pos=top`.
+- **Bar** (`style=bar`): the same full-width strip with a small cover. The spectrum follows `spectrum=1` or `spectrum=0` (the pictures above). `pos=bottom` or `pos=top`.
 
-**Spectrum visualiser.** On by default for the panel (`overlay_show_spectrum`). Pro DJ Link has no audio, so the bars follow the analysed low / mid / high wave at the playhead and decay while paused. **Bar visualiser: use system audio** (`overlay_spectrum_audio`) is off until you turn it on, and then needs the optional `soundcard` package (WASAPI loopback). That checkbox picks the input. It is not the on/off switch.
+**Spectrum visualiser.** On by default (`overlay_show_spectrum`). Panel keeps it unless the URL says `spectrum=0`. Bar shows it only when that switch is on: `doc/overlay-bar.png` is the bar with the spectrum, `doc/overlay-bar-plain.png` is the bar without it. Pro DJ Link has no audio, so the bars follow the analysed low / mid / high wave at the playhead and decay while paused. **Bar visualiser: use system audio** (`overlay_spectrum_audio`) is off until you turn it on, and then needs the optional `soundcard` package (WASAPI loopback). That checkbox picks the input. It is not the on/off switch.
 
 The **Overlay** page builds the URL. Copy it into OBS and size the source to the canvas (for example 1920×1080).
 
@@ -245,7 +248,7 @@ The **Overlay** page builds the URL. Copy it into OBS and size the source to the
 | Param | Values | Default | Meaning |
 |---|---|---|---|
 | `layout` | `nowplaying`, `dual`, `minimal`, `setlist` | `nowplaying` | `setlist` is now-playing plus a scrolling history |
-| `style` | `card`, `panel` | `card` | Now Playing only |
+| `style` | `card`, `panel`, `bar` | `card` | Now Playing only. Panel is the large-art strip with the visualiser on unless `spectrum=0`. Bar is the small-art strip. |
 | `pos` | card: `tl` `tr` `bl` `br`; panel: `bottom` `top` | `bl` or `bottom` | Where that style sits |
 | `corner` | `bl`, `br`, `tl`, `tr`, `center` | `bl` | Other layouts |
 | `decks` | `1`–`4` | `1` (`2` for dual) | How many decks |
@@ -265,6 +268,8 @@ With `mix=1`, now-playing, minimal, and setlist follow the audience track: playi
 
 ```
 http://127.0.0.1:8777/overlay?layout=nowplaying&style=panel&pos=bottom
+http://127.0.0.1:8777/overlay?layout=nowplaying&style=bar&pos=bottom&spectrum=1
+http://127.0.0.1:8777/overlay?layout=nowplaying&style=bar&pos=bottom&spectrum=0
 http://127.0.0.1:8777/overlay?layout=dual&corner=tl&decks=4&playing=0
 http://127.0.0.1:8777/overlay?layout=setlist&corner=bl
 ```
@@ -371,9 +376,9 @@ Default base is `http://127.0.0.1:8777`. State uses stable keys (`playing`, `cue
 
 ## Troubleshooting
 
-**Firewall.** Allow UDP **50000–50002** on the DJ network (and UDP 50004 if you care about the mixer clock). Allow TCP on the web port, **8777** by default. If 8777 is blocked, the app tries **8787**, then 8877, 9777, 18777, then a free port. The reason 8777 failed (for example WinError 10013, or the port already in use) is written to `~/.prolink-monitor/prolink-monitor.log` and shown on Health. Settings keep the port you chose; the next launch tries it again. NFS is not one port: allow UDP **111** (portmapper) and the mountd / nfs ports the player returns. On Windows, accept private-network access for Prolink Listener when the prompt appears.
+**Firewall.** Allow UDP **50000–50002** on the DJ network (and UDP 50004 if you care about the mixer clock). Allow TCP on the web port, **8777** by default. If 8777 is blocked, the app tries **8787**, then 8877, 9777, 18777, then a free port, skipping any of those that sit in a Windows excluded range. The reason 8777 failed (for example an excluded range, WinError 10013, or the port already in use) is written to `~/.prolink-monitor/prolink-monitor.log` and shown on Health, including the range when `netsh` lists one. Overlay, panel, and floating-window URLs use the port that actually listened. Settings keep the port you chose; the next launch tries it again. NFS is not one port: allow UDP **111** (portmapper) and the mountd / nfs ports the player returns. On Windows, accept private-network access for Prolink Listener when the prompt appears.
 
-**`PermissionError: [WinError 10013]` on the web port.** Hyper-V, WSL, or another listener has reserved it. The fallbacks above usually pick another port. To choose one: `python app.py --port 18777`, or set **Web server port** in Settings. See reserved ranges with `netsh interface ipv4 show excludedportrange protocol=tcp`.
+**`PermissionError: [WinError 10013]` on the web port.** Hyper-V, WSL, or another reservation often owns it. Check with `netsh interface ipv4 show excludedportrange protocol=tcp`. If 8777 is between a Start Port and an End Port, that is why it never listens: the port is excluded, not merely busy, and it will not show up in `netstat`. Health and the log name that range. The app then binds the next fallback outside the range. To choose one: `python app.py --port 18777`, or set **Web server port** in Settings.
 
 **Npcap, only when rekordbox is open.** Virtual device mode needs rekordbox closed, because it binds UDP 50000–50002 and Windows will not share them (`WSAEACCES`, “could not open UDP port 50000”). Close rekordbox, or switch to **Passive capture** and install [Npcap](https://www.wireshark.org) (the Wireshark installer). Point Settings at `tshark` if it is not on `PATH`. Passive mode goes quiet when nothing else is linked to the player.
 
@@ -473,7 +478,6 @@ probe.py                   protocol probe and capture replay
 web/index.html             web panel
 web/overlay.html           OBS overlay
 doc/                       screenshots used above
-docs/screenshots/          overlay and floating-window shots
 requirements.txt           PySide6, addons, Pillow
 updater/                   signed update check (tufup)
 packaging/                 PyInstaller spec, root.json, bundle check
