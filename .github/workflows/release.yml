@@ -37,6 +37,7 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements.txt
+            requirements-onelibrary.txt
             packaging/requirements-build.txt
 
       - name: Version matches the tag
@@ -56,6 +57,9 @@ jobs:
 
       - name: Check the bundle
         run: python packaging/verify_bundle.py dist/ProlinkListener
+
+      - name: Frozen exe can open OneLibrary
+        run: dist\ProlinkListener\ProlinkListener.exe --check-onelibrary
 
       - name: Zip
         shell: bash

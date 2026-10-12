@@ -316,12 +316,12 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     out["floating_now_topmost"] = bool(data.get("floating_now_topmost", True))
     out["floating_now_transparent"] = bool(data.get("floating_now_transparent", True))
     for key, lo, hi in (
-        ("floating_now_x", -1, 10000),
-        ("floating_now_y", -1, 10000),
+        ("floating_now_x", -32000, 32000),
+        ("floating_now_y", -32000, 32000),
         ("floating_now_width", 0, 4000),
         ("floating_now_height", 0, 4000),
-        ("floating_now_panel_x", -1, 10000),
-        ("floating_now_panel_y", -1, 10000),
+        ("floating_now_panel_x", -32000, 32000),
+        ("floating_now_panel_y", -32000, 32000),
         ("floating_now_panel_width", 0, 4000),
         ("floating_now_panel_height", 0, 4000),
     ):

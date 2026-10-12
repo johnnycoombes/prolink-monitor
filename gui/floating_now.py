@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from PySide6.QtCore import QObject, QPoint, Qt, QTimer, QUrl, Slot
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtCore import QObject, QPoint, QPointF, Qt, QTimer, QUrl, Slot
+from PySide6.QtGui import QColor, QMouseEvent, QPainter
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QSizeGrip, QVBoxLayout, QWidget
 
 _log = logging.getLogger(__name__)
@@ -57,27 +57,106 @@ def webengine_available() -> bool:
     return _HAS_WEBENGINE
 
 
+def saved_window_origin(x: int, y: int) -> tuple[int, int]:
+    """Restored top-left. ``(-1, -1)`` is the unset sentinel, not a coordinate."""
+    if int(x) == -1 and int(y) == -1:
+        return (80, 80)
+    return (int(x), int(y))
+
+
 class _FloatingDragHandle(QWidget):
-    """Native drag strip — uses OS window move (works when WebEngine swallows events)."""
+    """Drag strip above the web view.
+
+    QWebEngineView is its own window and paints over ordinary siblings. This
+    strip stays stacked above that window. The bar is the same dark glass as
+    the overlay, with a light grip, so it stays readable when the window is
+    transparent over a light or dark desktop. Hover brightens it. Alt+drag
+    on the page is handled in overlay.html.
+    """
 
     def __init__(self, window: "FloatingNowPlayingWindow", parent=None) -> None:
         super().__init__(parent)
         self._window = window
         self.setObjectName("FloatingDragHandle")
-        self.setFixedHeight(10)
+        self.setFixedHeight(22)
+        self.setMouseTracking(True)
         self.setCursor(Qt.SizeAllCursor)
-        self.setToolTip("Drag to move")
+        self.setToolTip("Drag to move  ·  Alt+drag anywhere")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        # Stay above the WebEngine child window. A native window of our own
+        # is what used to disappear under Chromium on Windows.
+        self.setAttribute(Qt.WA_AlwaysStackOnTop, True)
+        # Dark glass, not a white wash. A white bar at low alpha vanishes on
+        # a bright desktop once the floating window itself is transparent.
         self.setStyleSheet(
-            "#FloatingDragHandle{background:rgba(255,255,255,0.06);}"
-            "#FloatingDragHandle:hover{background:rgba(255,255,255,0.18);}"
+            "#FloatingDragHandle{"
+            "background:rgba(8,10,14,0.92);"
+            "border-bottom:1px solid rgba(255,255,255,0.42);"
+            "}"
+            "#FloatingDragHandle:hover{"
+            "background:rgba(46,54,66,0.98);"
+            "border-bottom:1px solid rgba(255,255,255,0.88);"
+            "}"
         )
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        self._paint_grip(painter, self.underMouse())
+        painter.end()
+
+    def _paint_grip(self, painter: QPainter, hot: bool) -> None:
+        """Two-by-three grip. A dark halo keeps the dots visible on light content."""
+        cols, rows = 2, 3
+        step = 6
+        radius = 2.15 if hot else 1.9
+        span_w = (cols - 1) * step
+        span_h = (rows - 1) * step
+        ox = (self.width() - span_w) / 2
+        oy = (self.height() - span_h) / 2 - 0.5
+        halo = QColor(0, 0, 0, 230)
+        fill = QColor(255, 255, 255, 255 if hot else 235)
+        painter.setPen(Qt.NoPen)
+        for row in range(rows):
+            for col in range(cols):
+                center = QPointF(ox + col * step, oy + row * step)
+                painter.setBrush(halo)
+                painter.drawEllipse(center, radius + 0.85, radius + 0.85)
+                painter.setBrush(fill)
+                painter.drawEllipse(center, radius, radius)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton:
-            self._window._begin_system_drag("handle")
+            if not self._window._begin_system_drag("handle"):
+                pos = event.globalPosition()
+                self._window._begin_drag(int(pos.x()), int(pos.y()), origin="handle")
             event.accept()
             return
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if self._window._dragging and self._window._drag_offset is not None:
+            pos = event.globalPosition()
+            self._window._drag_to(int(pos.x()), int(pos.y()))
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if self._window._dragging and self._window._drag_offset is not None:
+            self._window._end_drag()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
 
 class _FloatingDragBridge(QObject):
@@ -177,34 +256,47 @@ class FloatingNowPlayingWindow(QWidget):
         self._apply_transparency()
         self._apply_mode_visibility()
 
-    def _begin_system_drag(self, origin: str) -> None:
-        """Ask the window manager to move the frameless window (Qt 5.15+ / 6)."""
+    def _begin_system_drag(self, origin: str) -> bool:
+        """Ask the window manager to move the frameless window.
+
+        Returns False when the platform refuses (common for a translucent
+        frameless window on Windows). The caller then tracks the mouse itself.
+        """
         wh = self.windowHandle()
-        if wh is not None and hasattr(wh, "startSystemMove"):
-            _log.info("floating now playing: startSystemMove (%s)", origin)
-            wh.startSystemMove()
-            self._dragging = True
-            return
-        _log.warning("floating now playing: startSystemMove unavailable (%s)", origin)
+        start = getattr(wh, "startSystemMove", None) if wh is not None else None
+        if not callable(start):
+            _log.info("floating now playing: startSystemMove unavailable (%s)", origin)
+            return False
+        try:
+            ok = bool(start())
+        except Exception:
+            _log.info("floating now playing: startSystemMove raised (%s)", origin)
+            return False
+        if not ok:
+            _log.info("floating now playing: startSystemMove declined (%s)", origin)
+            return False
+        _log.info("floating now playing: startSystemMove (%s)", origin)
+        self._dragging = True
+        self._drag_offset = None
+        return True
 
     def _begin_drag(self, global_x: int, global_y: int, *, origin: str = "bridge") -> None:
-        wh = self.windowHandle()
-        if wh is not None and hasattr(wh, "startSystemMove"):
-            _log.info("floating now playing: startSystemMove (%s)", origin)
-            wh.startSystemMove()
-            self._dragging = True
-            return
-        _log.info("floating now playing: manual grabMouse drag (%s)", origin)
-        self._drag_offset = QPoint(global_x, global_y) - self.frameGeometry().topLeft()
+        """Track a drag by moving the widget.
+
+        The page calls this from the web channel after the mouse press has
+        already left Qt, so startSystemMove cannot see the button and must
+        not swallow the later dragMove calls.
+        """
+        _log.info("floating now playing: manual drag (%s)", origin)
+        self._drag_offset = QPoint(int(global_x), int(global_y)) - self.frameGeometry().topLeft()
         self._dragging = True
-        self.grabMouse()
+        if origin != "bridge":
+            self.grabMouse()
 
     def _drag_to(self, global_x: int, global_y: int) -> None:
         if self._drag_offset is None:
             return
-        if self._drag_offset is None:
-            return
-        self.move(QPoint(global_x, global_y) - self._drag_offset)
+        self.move(QPoint(int(global_x), int(global_y)) - self._drag_offset)
         self._save_timer.start()
 
     def _end_drag(self) -> None:
@@ -286,12 +378,16 @@ class FloatingNowPlayingWindow(QWidget):
         settings = self._settings_getter()
         transparent = bool(settings.get("floating_now_transparent", True))
         self.setAttribute(Qt.WA_TranslucentBackground, transparent)
+        self.setObjectName("FloatingNowPlaying")
         if transparent:
-            self.setStyleSheet("background:transparent;")
+            bg = "transparent"
         else:
             from gui.theme import COLORS
 
-            self.setStyleSheet(f"background:{COLORS['bg']};")
+            bg = COLORS["bg"]
+        # An unscoped background rule also paints child widgets, which clears
+        # the drag strip when this window is transparent.
+        self.setStyleSheet(f"#FloatingNowPlaying{{background:{bg};}}")
 
     def _apply_mode_visibility(self) -> None:
         panel = self._style() == "panel"
@@ -358,10 +454,8 @@ class FloatingNowPlayingWindow(QWidget):
             self.resize(w, h)
         else:
             self.resize(def_w, def_h)
-        if x >= 0 and y >= 0:
-            self.move(x, y)
-        else:
-            self.move(80, 80)
+        origin_x, origin_y = saved_window_origin(x, y)
+        self.move(origin_x, origin_y)
 
     def _persist_geometry(self) -> None:
         from gui.settings import load_settings, save_settings
@@ -377,6 +471,12 @@ class FloatingNowPlayingWindow(QWidget):
             save_settings(data)
         except OSError:
             pass
+
+    def showEvent(self, event):  # noqa: N802
+        super().showEvent(event)
+        handle = getattr(self, "_drag_handle", None)
+        if handle is not None:
+            handle.raise_()
 
     def resizeEvent(self, event):  # noqa: N802
         super().resizeEvent(event)

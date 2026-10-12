@@ -599,13 +599,7 @@ class MainWindow(QMainWindow):
         self._apply_display_settings()
 
     def _on_port_changed(self, port: int) -> None:
-        """HTTP bind fell back to another port — keep UI / saved settings in sync."""
-        self.settings["port"] = int(port)
-        try:
-            save_settings(self.settings)
-        except OSError:
-            pass
-        self.page_settings.load_settings(self.settings)
+        """The listen port differed from Settings. Do not overwrite that choice."""
         self.page_overlay.set_port(int(port))
         self.page_overlay.set_web_ready(True)
         self._reload_floating()

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 from typing import Any
+import errno
 import json
 import os
 import struct
@@ -39,6 +40,7 @@ from prolink.track_key import keys_match, track_cache_key, track_key_token  # no
 from prolink.wnp import WnpPublisher  # noqa: E402
 from prolink.loopback_audio import LoopbackCapturer  # noqa: E402
 from prolink.db_recovery import STATS as _DB_STATS  # noqa: E402
+from prolink import applog  # noqa: E402
 from prolink.web_server import PanelServer, serve_sse  # noqa: E402
 
 
@@ -142,6 +144,7 @@ class Monitor:
                  local_ip: str | None = None):
         self.host = host
         self.local_ip = local_ip      # to ignore our own announcement
+        applog.configure()
         self.engine = link.ProLink(source)
         self.library = Library(cache_dir)
         self.engine.on_track_change = self._on_track_change
@@ -162,6 +165,8 @@ class Monitor:
         self._library_cache_key: tuple | None = None
         self._library_cache: tuple[dict | None, str | None, dict | None] = (None, None, None)
         self._remotedb_fail: dict[str, str] = {}
+        self._live_detail: dict[str, tuple[str, str]] = {}
+        self._stop = threading.Event()
         self._art_cache: dict[tuple, dict[str, tuple[bytes, str]] | tuple[bytes, str]] = {}
         self._art_source_by_deck: dict[int, str] = {}
         self._last_art_source: str = "none"
@@ -172,16 +177,113 @@ class Monitor:
         self.wnp = WnpPublisher()
 
     def _device_number_for_host(self, host: str) -> int | None:
+        """Player to query. The mixer that shares an XDJ-AZ address is not one."""
+        with self.engine.lock:
+            numbers = [
+                int(ann.device_number)
+                for ann in self.engine.devices.values()
+                if ann.ip == host and getattr(ann, "kind", "") == "player"
+            ]
+        if not numbers:
+            return None
+        loaded: list[int] = []
+        for deck in self.engine.active_decks():
+            status = getattr(deck, "status", None)
+            slot = self._db_slot_for_status(status)
+            number = int(getattr(deck, "number", 0) or 0)
+            if slot in remotedb_wire.LIBRARY_SLOTS and number in numbers:
+                loaded.append(number)
+        if loaded:
+            return min(loaded)
+        return min(numbers)
+
+    def _requesting_player_for_db(self, target: int | None = None) -> int:
+        src = self.engine.source
+        raw = getattr(src, "device_number", None)
+        try:
+            announced = int(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            announced = None
+        taken: set[int] = set()
+        local = getattr(self, "local_ip", None)
         with self.engine.lock:
             for ann in self.engine.devices.values():
-                if ann.ip == host:
-                    return int(ann.device_number)
-        return None
+                number = int(ann.device_number)
+                if announced is not None and number == announced:
+                    continue
+                if local and ann.ip == local:
+                    continue
+                taken.add(number)
+        return choose_requesting_player(
+            announced, target_player=target, taken=taken)
 
-    def _requesting_player_for_db(self) -> int:
-        src = self.engine.source
-        vn = getattr(src, "device_number", None)
-        return choose_requesting_player(vn)
+    def _db_unavailable_reason(self, host: str) -> str:
+        with self.engine.lock:
+            same = [ann for ann in self.engine.devices.values() if ann.ip == host]
+        if not same:
+            return f"dbserver not attempted: no device announced at {host}"
+        kinds = ", ".join(
+            f"{int(ann.device_number)} ({getattr(ann, 'kind', '?')})" for ann in same
+        )
+        players = [ann for ann in same if getattr(ann, "kind", "") == "player"]
+        if not players:
+            return (
+                f"dbserver not attempted: {host} has no player device, only {kinds}. "
+                "The XDJ-AZ mixer (33) is not the library server."
+            )
+        return f"dbserver not attempted at {host} ({kinds})"
+
+    def _remember_db_failure(self, host: str, media, reason: str) -> None:
+        text = str(reason or "dbserver failed")
+        self._remotedb_fail[host] = text
+        _DB_STATS.fail(text)
+        applog.log_note(f"dbserver {host} failed: {text}")
+        if getattr(media, "db", None) is not None:
+            self._note_live(
+                host, "nfs-cache",
+                f"NFS export.pdb cache; live dbserver failed: {text}",
+            )
+        else:
+            self._note_live(host, "none", text)
+        if media is None:
+            return
+        if getattr(media, "library_source", "") == "remotedb":
+            return
+        cache_dir = getattr(media, "cache_dir", "") or ""
+        if getattr(media, "db", None) is not None:
+            media.set_library_source(
+                "nfs-cache",
+                f"NFS export.pdb cache ({cache_dir}); live dbserver failed: {text}",
+            )
+        else:
+            media.set_library_source("none", text)
+
+    def _probe_live_library(self, host: str) -> None:
+        """Open dbserver once so Health shows live-or-the-exact-error before Library is opened."""
+        if not host:
+            return
+        with self.library.lock:
+            media = self.library.media.get(host)
+        browser = self._open_remotedb(host)
+        if browser is None:
+            self._remember_db_failure(host, media, self._db_unavailable_reason(host))
+            return
+        try:
+            with browser:
+                port = int(getattr(getattr(browser, "last_status", None), "port", 0) or 0)
+                detail = (
+                    f"TCP dbserver · port discovery {remotedb_wire.REMOTE_DB_DISCOVERY_PORT}"
+                    f" → {port} · player {browser.target_player}"
+                    f" as client #{browser.requesting_player} slot {browser.slot}"
+                )
+                self._remotedb_fail.pop(host, None)
+                _DB_STATS.clear_error()
+                self._note_live(host, "remotedb", detail)
+                applog.log_note(f"dbserver {host} live: {detail}")
+                if media is not None:
+                    media.set_library_source("remotedb", detail)
+        except Exception as exc:
+            self._remember_db_failure(host, media, str(exc))
 
     def _db_slot_for_status(self, status) -> int:
         """Sr byte for this deck's loaded track, not for some other deck."""
@@ -202,15 +304,27 @@ class Monitor:
         return found or [remotedb_wire.SLOT_USB]
 
     def _open_remotedb(self, host: str, slot: int | None = None) -> RemoteDbBrowser | None:
+        """Open a dbserver session for ``host``.
+
+        A missing announce must not skip the TCP connection. The library host
+        is already known from NFS. Deck 1 is the stand-in until a player
+        number shows up (on an XDJ-AZ that is deck 1, not the mixer).
+        """
+        if not host:
+            return None
         target = self._device_number_for_host(host)
         if target is None:
-            return None
+            target = 1
+            applog.log_note(
+                f"dbserver {host}: no player announce yet; "
+                f"querying port discovery with target deck {target}"
+            )
         if slot is None:
             slot = self._library_db_slots()[0]
         return RemoteDbBrowser(
             host=host,
-            target_player=target,
-            requesting_player=self._requesting_player_for_db(),
+            target_player=int(target),
+            requesting_player=self._requesting_player_for_db(target),
             slot=int(slot),
         )
 
@@ -246,6 +360,7 @@ class Monitor:
         threading.Thread(target=self._preload, daemon=True).start()
 
     def stop(self) -> None:
+        self._stop.set()
         self.loopback.stop()
         self.engine.stop()
         self.library.close()
@@ -284,13 +399,66 @@ class Monitor:
                 break
             time.sleep(0.5)
         if not self.host:
+            applog.log_note("dbserver not attempted: no player host")
             return
-        # USB may not be mounted yet — retry rather than stick on the first miss.
-        for _ in range(12):
-            if self.library.get(self.host) is not None:
+        self._load_player_library(self.host)
+
+    def _keep_probing(self, host: str) -> None:
+        """Keep opening dbserver until it is the library source, or we stop."""
+        for _ in range(20):
+            if self._stop.is_set():
                 return
-            self.library.retry(self.host)
-            time.sleep(2.0)
+            self._probe_live_library(host)
+            with self.library.lock:
+                media = self.library.media.get(host)
+            if media is not None and getattr(media, "library_source", "") == "remotedb":
+                return
+            if self._stop.wait(1.0):
+                return
+
+    def _load_player_library(self, host: str) -> None:
+        """dbserver first. export.pdb loads beside it and must not delay the TCP session."""
+        applog.log_note(f"dbserver {host}: starting live read before export.pdb finishes")
+        threading.Thread(
+            target=self._keep_probing, args=(host,), daemon=True, name="prolink-dbserver",
+        ).start()
+        for _ in range(12):
+            if self._stop.is_set():
+                return
+            if self.library.get(host) is not None:
+                break
+            self.library.retry(host)
+            if self._stop.wait(2.0):
+                return
+        self._apply_live_source()
+
+    def _note_live(self, host: str, source: str, detail: str) -> None:
+        pending = getattr(self, "_live_detail", None)
+        if pending is None:
+            pending = {}
+            self._live_detail = pending
+        pending[host] = (source, detail)
+
+    def _apply_live_source(self) -> None:
+        """Write a dbserver result onto a medium that appeared after the attempt."""
+        pending = getattr(self, "_live_detail", None) or {}
+        if not pending:
+            return
+        with self.library.lock:
+            for host, media in self.library.media.items():
+                saved = pending.get(host)
+                if not saved:
+                    continue
+                source, detail = saved
+                current = getattr(media, "library_source", "") or "none"
+                if current == "remotedb":
+                    continue
+                if source == "remotedb" or current in ("", "none"):
+                    media.set_library_source(source, detail)
+                elif source != "remotedb" and "dbserver" not in (
+                    getattr(media, "library_source_detail", "") or ""
+                ):
+                    media.set_library_source(source, detail)
 
     # -- tracks -------------------------------------------------------------
     def _host_for(self, status) -> str | None:
@@ -982,6 +1150,8 @@ class Monitor:
             for slot in self._library_db_slots():
                 browser = self._open_remotedb(host, slot=slot)
                 if browser is None:
+                    self._remember_db_failure(
+                        host, media, self._db_unavailable_reason(host))
                     continue
                 try:
                     with browser:
@@ -1105,6 +1275,8 @@ class Monitor:
             for slot in self._library_db_slots():
                 browser = self._open_remotedb(host, slot=slot)
                 if browser is None:
+                    self._remember_db_failure(
+                        host, media, self._db_unavailable_reason(host))
                     continue
                 try:
                     with browser:
@@ -1204,6 +1376,8 @@ class Monitor:
             for slot in self._library_db_slots():
                 browser = self._open_remotedb(h, slot=slot)
                 if browser is None:
+                    self._remember_db_failure(
+                        h, media, self._db_unavailable_reason(h))
                     continue
                 try:
                     with browser:
@@ -1291,11 +1465,14 @@ class Monitor:
             return self._library_cache
         totals: dict[str, int | str] = {}
         onelibrary_info = None
+        pdb_error = ""
         for m in media_list:
-            if m.db is None:
-                continue
-            for k, v in m.db.counts().items():
-                totals[k] = totals.get(k, 0) + v
+            err = str(getattr(m, "pdb_error", "") or "").strip()
+            if err and not pdb_error:
+                pdb_error = err
+            if m.db is not None:
+                for k, v in m.db.counts().items():
+                    totals[k] = totals.get(k, 0) + v
             ol = getattr(m, "onelibrary", None)
             if ol is not None and ol.present:
                 ol_error = onelibrary.library_failure_text(ol.error)
@@ -1316,7 +1493,12 @@ class Monitor:
                         int(totals.get("onelibrary_playlists", 0)) + ol.playlists)
                     totals["onelibrary_history"] = (
                         int(totals.get("onelibrary_history", 0)) + ol.history)
-        snap = (totals or None, None if totals else first_error, onelibrary_info)
+        library_error = first_error or pdb_error or None
+        if totals and not pdb_error:
+            library_error = None
+        elif pdb_error and not first_error:
+            library_error = pdb_error
+        snap = (totals or None, library_error, onelibrary_info)
         self._library_cache_key = key
         self._library_cache = snap
         return snap
@@ -1501,6 +1683,7 @@ class Monitor:
                        for a in sorted(self.engine.devices.values(),
                                        key=lambda x: x.device_number)]
         totals, library_error, onelibrary_info = self._library_snapshot()
+        self._apply_live_source()
         library_source = {"source": "none", "detail": ""}
         with self.library.lock:
             for _h, m in self.library.media.items():
@@ -1931,6 +2114,31 @@ class QuietServer(PanelServer):
 # Fallback ports when the requested one is blocked (common on Windows when Hyper-V
 # or another service has reserved the default range — WinError 10013).
 _HTTP_PORT_FALLBACKS = (8787, 8877, 9777, 18777, 0)
+# A reconnect can still see the old socket for a moment. Retry that before giving up.
+_HTTP_BIND_RETRIES = 5
+_HTTP_BIND_RETRY_S = 0.1
+
+
+def _format_bind_error(port: int, exc: OSError) -> str:
+    """Exact reason a listen socket was refused, including the Windows code."""
+    win = getattr(exc, "winerror", None)
+    err = getattr(exc, "errno", None)
+    text = f"HTTP bind {port} failed: {exc}"
+    if win:
+        text += f" (WinError {win})"
+    elif err:
+        text += f" (errno {err})"
+    if win == 10013 or err in (errno.EACCES, errno.EPERM):
+        text += " — port blocked or reserved"
+    elif win == 10048 or err == errno.EADDRINUSE:
+        text += " — port in use"
+    return text
+
+
+def _bind_in_use(exc: OSError) -> bool:
+    win = getattr(exc, "winerror", None)
+    err = getattr(exc, "errno", None)
+    return win == 10048 or err == errno.EADDRINUSE
 
 
 def open_http_server(port: int, handler=None, host: str = "0.0.0.0"):
@@ -1939,34 +2147,56 @@ def open_http_server(port: int, handler=None, host: str = "0.0.0.0"):
     Default ``host`` is ``0.0.0.0`` so phones on the same LAN can open the panel.
     Pass ``127.0.0.1`` to keep it local-only. Returns ``(server, actual_port)``.
     Port ``0`` asks the OS for any free port.
+
+    The requested port is tried first, and a few more times when it is only
+    momentarily in use. A reserved port (WinError 10013) falls through to the
+    next candidate. Each failure is written to the app log. The saved setting
+    stays the port the user asked for; Health shows the port that actually listened.
     """
     handler = handler or Handler
     wanted = int(port)
     tried: list[int] = []
-    errors: list[tuple[int, OSError]] = []
+    errors: list[str] = []
 
     candidates = [wanted]
     for alt in _HTTP_PORT_FALLBACKS:
         if alt not in candidates:
             candidates.append(alt)
 
-    for candidate in candidates:
-        tried.append(candidate)
-        try:
-            server = QuietServer((host, candidate), handler)
-        except OSError as exc:
-            errors.append((candidate, exc))
-            continue
-        actual = int(server.server_address[1])
-        return server, actual
+    for index, candidate in enumerate(candidates):
+        retries = _HTTP_BIND_RETRIES if index == 0 else 1
+        for attempt in range(retries):
+            tried.append(candidate)
+            try:
+                server = QuietServer((host, candidate), handler)
+            except OSError as exc:
+                note = _format_bind_error(candidate, exc)
+                if note not in errors:
+                    errors.append(note)
+                applog.log_note(note)
+                if index == 0 and _bind_in_use(exc) and attempt + 1 < retries:
+                    time.sleep(_HTTP_BIND_RETRY_S)
+                    continue
+                break
+            else:
+                actual = int(server.server_address[1])
+                if errors:
+                    summary = (
+                        f"HTTP listening on {actual}; requested {wanted} failed: "
+                        + "; ".join(errors)
+                    )
+                    server.last_error = summary
+                    applog.log_note(summary)
+                else:
+                    applog.log_note(f"HTTP listening on {host}:{actual}")
+                return server, actual
 
-    # Prefer the error from the port the user asked for.
-    primary = next((e for p, e in errors if p == wanted), errors[-1][1])
-    detail = "; ".join(f"{p}: {e}" for p, e in errors[:3])
+    detail = "; ".join(errors[:4])
+    applog.log_note(f"HTTP bind gave up (tried {tried}): {detail}")
     raise OSError(
         f"could not bind HTTP port (tried {tried}). "
         f"Pass --port with a free number. Last errors: {detail}"
-    ) from primary
+    )
 
 
 def lan_urls(port: int, local_ip: str | None = None) -> list[str]:

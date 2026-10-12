@@ -12,6 +12,12 @@ def main() -> int:
     if root not in sys.path:
         sys.path.insert(0, root)
 
+    if "--check-onelibrary" in sys.argv:
+        from prolink.onelibrary_check import main as check_main
+
+        args = [a for a in sys.argv[1:] if a != "--check-onelibrary"]
+        return check_main(args)
+
     from prolink.single_instance import claim_or_handoff, launch_command
 
     # A second launch hands off before Qt starts, including when the first

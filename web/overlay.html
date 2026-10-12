@@ -1739,38 +1739,90 @@ function loop(){
   paint();
 }
 
+function connectFloatingDrag(done) {
+  // A small WebChannel client. The frozen build does not always serve
+  // qrc:///qtwebchannel/qwebchannel.js, so the page talks to floatingDrag
+  // itself. Method ids match Qt: init = 3, invoke = 6, idle = 4, response = 10.
+  if (typeof qt === 'undefined' || !qt.webChannelTransport) return false;
+  const transport = qt.webChannelTransport;
+  let execId = 0;
+  const callbacks = {};
+  transport.onmessage = (message) => {
+    let data = message.data;
+    if (typeof data === 'string') {
+      try { data = JSON.parse(data); } catch (_) { return; }
+    }
+    if (!data || data.type !== 10 || !callbacks[data.id]) return;
+    const fn = callbacks[data.id];
+    delete callbacks[data.id];
+    fn(data.data);
+  };
+  function exec(payload, cb) {
+    payload.id = execId++;
+    if (cb) callbacks[payload.id] = cb;
+    const body = JSON.stringify(payload);
+    transport.send(body);
+  }
+  exec({type: 3}, (data) => {
+    if (!data || !data.floatingDrag) return;
+    exec({type: 4});
+    done({
+      dragStart: (x, y) => exec({
+        type: 6, object: 'floatingDrag', method: 'dragStart', args: [x | 0, y | 0],
+      }),
+      dragMove: (x, y) => exec({
+        type: 6, object: 'floatingDrag', method: 'dragMove', args: [x | 0, y | 0],
+      }),
+      dragEnd: () => exec({
+        type: 6, object: 'floatingDrag', method: 'dragEnd', args: [],
+      }),
+    });
+  });
+  return true;
+}
+
 function installFloatingDrag() {
-  if (!floatWindow || window.__floatingDragInstalled) return;
-  if (typeof QWebChannel === 'undefined' || typeof qt === 'undefined') return;
-  window.__floatingDragInstalled = true;
-  new QWebChannel(qt.webChannelTransport, function(channel) {
-    const bridge = channel.objects.floatingDrag;
-    if (!bridge) return;
-    const block = (el) => el && el.closest && (
-      el.closest('canvas') || el.closest('a') || el.closest('button')
+  if (!floatWindow || window.__floatingDragInstalled || window.__floatingDragArming) return;
+  window.__floatingDragArming = true;
+  if (!connectFloatingDrag((bridge) => {
+    window.__floatingDragInstalled = true;
+    let dragging = false;
+    const onLink = (el) => el && el.closest && (el.closest('a') || el.closest('button'));
+    const onCanvas = (el) => el && el.closest && el.closest('canvas');
+    const onCard = (el) => el && el.closest && (
+      el.closest('#card') || el.closest('.now-card') || el.closest('.now-panel') || el.closest('.card')
     );
     const onDown = (e) => {
-      if (e.button !== 0 || block(e.target)) return;
-      if (!e.target.closest('#card')) return;
+      if (e.button !== 0) return;
+      const alt = !!(e.altKey || e.metaKey);
+      // Alt+drag moves the window from anywhere, including the waveform.
+      if (!alt && (onLink(e.target) || onCanvas(e.target))) return;
+      if (!alt && !onCard(e.target)) return;
+      dragging = true;
       e.preventDefault();
       bridge.dragStart(e.screenX, e.screenY);
     };
     const onMove = (e) => {
-      if (e.buttons & 1) bridge.dragMove(e.screenX, e.screenY);
+      if (!dragging || !(e.buttons & 1)) return;
+      bridge.dragMove(e.screenX, e.screenY);
     };
-    const onUp = () => bridge.dragEnd();
+    const onUp = () => {
+      if (!dragging) return;
+      dragging = false;
+      bridge.dragEnd();
+    };
     document.addEventListener('mousedown', onDown, true);
     document.addEventListener('mousemove', onMove, true);
     document.addEventListener('mouseup', onUp, true);
-  });
+  })) {
+    window.__floatingDragArming = false;
+    // qt.webChannelTransport appears after the view finishes loading.
+    if (!window.__floatingDragWait) window.__floatingDragWait = 0;
+    if (window.__floatingDragWait++ < 30) setTimeout(installFloatingDrag, 100);
+  }
 }
 
-if (floatWindow) {
-  const s = document.createElement('script');
-  s.src = 'qrc:///qtwebchannel/qwebchannel.js';
-  s.onload = installFloatingDrag;
-  document.head.appendChild(s);
-}
+if (floatWindow) installFloatingDrag();
 
 connect();
 loop();

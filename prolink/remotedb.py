@@ -104,14 +104,27 @@ TAG_BLOB = 0x03
 
 
 def discover_db_port(host: str, *, timeout: float = 3.0) -> int:
-    """Query TCP 12523 for the player's dbserver port (usually 1051)."""
-    with socket.create_connection((host, REMOTE_DB_DISCOVERY_PORT), timeout=timeout) as sock:
-        sock.settimeout(timeout)
-        sock.sendall(REMOTE_DB_QUERY)
-        reply = _read_exact(sock, 2)
+    """Ask the port-discovery service on TCP 12523 which port dbserver is on.
+
+    The reply is two bytes, high byte then low byte. Do not assume 1051.
+    The next connection is to the port this service returns.
+    """
+    try:
+        with socket.create_connection((host, REMOTE_DB_DISCOVERY_PORT), timeout=timeout) as sock:
+            sock.settimeout(timeout)
+            sock.sendall(REMOTE_DB_QUERY)
+            reply = _read_exact(sock, 2)
+    except OSError as exc:
+        raise DbServerError(
+            f"dbserver port discovery on TCP {host}:{REMOTE_DB_DISCOVERY_PORT} "
+            f"failed: {exc}"
+        ) from exc
     port = (reply[0] << 8) | reply[1]
     if port <= 0 or port >= 65535:
-        raise DbServerError(f"invalid dbserver port {port:#x} from {host}")
+        raise DbServerError(
+            f"invalid dbserver port {port:#x} from port discovery on "
+            f"TCP {host}:{REMOTE_DB_DISCOVERY_PORT}"
+        )
     return port
 
 

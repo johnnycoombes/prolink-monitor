@@ -7,11 +7,14 @@ handlers also never noticed a closed client, so each one kept a thread.
 
 from __future__ import annotations
 
+import os
 import socket
+import tempfile
 import time
 import unittest
 import urllib.request
 from types import SimpleNamespace
+from unittest import mock
 
 from app import Handler
 from prolink.single_instance import (
@@ -283,3 +286,47 @@ class FloatingReloadTests(unittest.TestCase):
         self.assertEqual(len(loads), 2)
         self.assertIn("/overlay", loads[0])
         self.assertEqual(loads[0], loads[1])
+
+
+class HttpBindFallbackTests(unittest.TestCase):
+    def test_busy_port_is_logged_and_the_next_port_is_used(self):
+        from prolink import applog
+
+        # PanelServer sets SO_REUSEADDR so a reconnect can rebind. On Windows
+        # that also lets a second socket share a listening port, so the holder
+        # has to be exclusive or the fallback never runs.
+        holder = socket.socket()
+        exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+        if exclusive is not None:
+            holder.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+        holder.bind(("127.0.0.1", 0))
+        busy = holder.getsockname()[1]
+        holder.listen(1)
+        path = applog.reset_for_tests(
+            os.path.join(tempfile.mkdtemp(), "prolink-monitor.log"))
+        server = None
+        try:
+            with mock.patch("app._HTTP_PORT_FALLBACKS", (0,)):
+                server, bound = open_http_server(busy, host="127.0.0.1")
+            self.assertNotEqual(bound, busy)
+            self.assertIn(str(busy), server.last_error)
+            # Linux reports the holder as "port in use". Windows reports an
+            # exclusive holder as WinError 10013, "port blocked or reserved".
+            self.assertTrue(
+                "port in use" in server.last_error
+                or "port blocked or reserved" in server.last_error,
+                server.last_error,
+            )
+            self.assertIn(f"listening on {bound}", server.last_error)
+            with open(path, encoding="utf-8") as handle:
+                body = handle.read()
+            self.assertIn(str(busy), body)
+            self.assertTrue(
+                "port in use" in body or "port blocked or reserved" in body,
+                body,
+            )
+        finally:
+            holder.close()
+            if server is not None:
+                server.server_close()
+            applog.reset_for_tests(path)

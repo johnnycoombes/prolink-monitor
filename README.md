@@ -60,7 +60,7 @@ Field offsets, NFS, and waveform decoding were checked against an **AlphaTheta X
 - The AZ uses player numbers 1–4 and 33 (the mixer section). Rekordbox uses 17. This app announces as device **5** by default.
 - **2-deck and 4-deck.** While Utility → PRO DJ LINK is on, the AZ sends a Channels On-Air packet (type `0x03` on UDP 50001). Health calls that **Pro DJ Link**. When that packet goes quiet for more than a second, Health calls it **4-deck**. With no AZ on the network the line stays blank. The Monitor page only has those two layouts: decks **1–2**, or **3–1–2–4**.
 - **Source slots** in the status packet: 0 empty, 1 CD, 2 SD, 3 USB, 4 rekordbox, 6 Streaming Direct Play, 7 USB 2 (AZ 4-deck), 9 Beatport LINK. Bytes 5 and 8 are only documented as a streaming service. They are not labelled Apple Music, TIDAL, or SoundCloud.
-- **OneLibrary.** The status track id is the rekordbox id. `export.pdb` is read first because that row holds the ANLZ path. `exportLibrary.db` is used when it has the same id. A readable OneLibrary file with no content rows must not hide the `export.pdb` row (that used to blank every waveform on the AZ). A title match can choose between the two when they disagree. Live library menus prefer the player's dbserver; the NFS cache is the fallback. Nothing is written back.
+- **OneLibrary.** The status track id is the rekordbox id. `export.pdb` is read first because that row holds the ANLZ path. `exportLibrary.db` is used when it has the same id. A readable OneLibrary file with no content rows must not hide the `export.pdb` row (that used to blank every waveform on the AZ). A title match can choose between the two when they disagree. The Library reads the player’s dbserver first, as soon as the player address is known, including while `export.pdb` is still loading. That session asks the port-discovery service on TCP **12523** for the dbserver port, then connects to the port the player returns (it is often not 1051). The client number is the virtual device this app announced (default **5**), so it does not take deck 3 on an AZ that already uses 1–4. If the decks have not announced yet, the app still opens that TCP session and targets deck 1 until a player number arrives. The NFS cache is the fallback. A bad `export.pdb` does not drop the mount or skip OneLibrary. Nothing is written back. The Windows zip includes `pyrekordbox`, `sqlcipher3`, and `sqlite3` as real files under `_internal`. A source checkout still installs OneLibrary from `requirements-onelibrary.txt`.
 - **Unverified on the AZ:** Absolute Position packets (type `0x0b`). Health shows `absolute_packets` and whether the playhead is using Absolute Position or the beat grid, so a capture answers it. Some AZ builds put track length in milliseconds in that packet; CDJ-3000 uses seconds. Also unverified: the settings block at `0xD0` (waveform colour at `0xDA`, playhead at `0xDD`). Auto playhead still falls back to **Left** for an AZ (and for Opus Quad) when that byte is missing.
 
 **CDJ-3000 family**
@@ -84,7 +84,7 @@ You do not need Python for this path.
 2. Extract the zip to a folder you will keep, for example `C:\Users\User\Prolink Listener`. Do not run the program from inside the zip.
 3. Double-click `ProlinkListener.exe`.
 4. If Windows asks whether the app may use private networks, allow it. A phone on the booth Wi-Fi needs that to open the panel.
-5. Settings stay in `C:\Users\<you>\.prolink-monitor\settings.json`. The USB library cache stays in `C:\Users\<you>\.prolink-cache`. The first launch does not copy or reset either folder.
+5. Settings stay in `C:\Users\<you>\.prolink-monitor\settings.json`. The USB library cache stays in `C:\Users\<you>\.prolink-cache`. A rotating log of the library source, counts, and errors is `C:\Users\<you>\.prolink-monitor\prolink-monitor.log`. The first launch does not copy or reset either folder. The zip includes `pyrekordbox`, so OneLibrary opens without a separate install.
 
 Npcap is only needed when rekordbox is open. See [Troubleshooting](#troubleshooting).
 
@@ -199,9 +199,9 @@ The window paints at 60 Hz by default. Metadata refreshes more slowly. See [doc/
 
 ### Library
 
-Search the USB tracks, browse OneLibrary playlists and history when `pyrekordbox` can open `exportLibrary.db`, and see artwork for tracks that are on decks. Classic `export.pdb` search works without that package. The page says when OneLibrary is present but not readable yet.
+Search the USB tracks, browse OneLibrary playlists and history when `pyrekordbox` can open `exportLibrary.db`, and see artwork for tracks that are on decks. Classic `export.pdb` search works without that package. The page says when OneLibrary is present but not readable yet. The Windows zip bundles `pyrekordbox`. A source checkout still uses the optional install below.
 
-Live menus prefer the player’s dbserver. The NFS copy is the fallback. A bad date on one OneLibrary row is left blank; the rest of the table still loads. A `pyrekordbox` deprecation warning (the old `db6` name) is not a library error. `db6` is imported only when `masterdb` is missing.
+Live menus read the player’s dbserver first. The NFS copy is the fallback. Health’s library line includes the exact reason when that session does not open (port discovery, client number, or a rejected setup). A setup that never connects is not counted as a reconnect. A bad date on one OneLibrary row is left blank; the rest of the table still loads. A `pyrekordbox` deprecation warning (the old `db6` name) is not a library error. `db6` is imported only when `masterdb` is missing. A bad `export.pdb` is reported and the rest of the load continues.
 
 ### Health
 
@@ -209,7 +209,9 @@ Live menus prefer the player’s dbserver. The NFS copy is the fallback. A bad d
 - **XDJ-AZ** mode: Pro DJ Link or 4-deck, as above.
 - **Link timing** over the last 30 seconds. A gap longer than 400 ms counts as late. Sequence holes stay blank on CDJ-3000-class players that leave the counter at zero.
 - **ANLZ path** for the track on each deck, and which library row it came from.
-- **dbserver reconnects** and the last error. A dropped remotedb socket is retried with a short backoff and a fresh handshake. That retry does not restart the web server. Nothing is written to the player.
+- **Library source** and the exact dbserver failure when the live session is down. The source is live dbserver, the NFS cache, or not connected.
+- **dbserver reconnects** and the last error. A dropped remotedb socket is retried with a short backoff and a fresh handshake. A session that never opens stays at 0 reconnects and still shows the error. That retry does not restart the web server. Nothing is written to the player.
+- The same library line is appended to `~/.prolink-monitor/prolink-monitor.log` (or `%USERPROFILE%\.prolink-monitor\prolink-monitor.log` on Windows). The file rotates at about 1 MB and keeps three backups.
 - NFS round-trip for mounted media.
 - **What’s Now Playing** status.
 - **Web server:** listening or not, client count, thread count, and the last error. **Restart web server** binds the same port again. Use it if the panel goes quiet after a reconnect. See [Troubleshooting](#troubleshooting).
@@ -237,6 +239,8 @@ The page background is transparent. Now Playing has two styles. There is no thir
 **Spectrum visualiser.** On by default for the panel (`overlay_show_spectrum`). Pro DJ Link has no audio, so the bars follow the analysed low / mid / high wave at the playhead and decay while paused. **Bar visualiser: use system audio** (`overlay_spectrum_audio`) is off until you turn it on, and then needs the optional `soundcard` package (WASAPI loopback). That checkbox picks the input. It is not the on/off switch.
 
 The **Overlay** page builds the URL. Copy it into OBS and size the source to the canvas (for example 1920×1080).
+
+**Floating window.** The same page also opens in a frameless always-on-top window. Drag the strip along the top. It is a dark bar with a grip, brightens when the pointer is on it, and stays visible when the window is transparent. **Alt+drag** moves the window from anywhere on the page, including the waveform. Card and panel each remember their own position.
 
 | Param | Values | Default | Meaning |
 |---|---|---|---|
@@ -367,7 +371,7 @@ Default base is `http://127.0.0.1:8777`. State uses stable keys (`playing`, `cue
 
 ## Troubleshooting
 
-**Firewall.** Allow UDP **50000–50002** on the DJ network (and UDP 50004 if you care about the mixer clock). Allow TCP on the web port, **8777** by default. If 8777 is blocked, the app tries **8787**, then 8877, 9777, 18777, then a free port. NFS is not one port: allow UDP **111** (portmapper) and the mountd / nfs ports the player returns. On Windows, accept private-network access for Prolink Listener when the prompt appears.
+**Firewall.** Allow UDP **50000–50002** on the DJ network (and UDP 50004 if you care about the mixer clock). Allow TCP on the web port, **8777** by default. If 8777 is blocked, the app tries **8787**, then 8877, 9777, 18777, then a free port. The reason 8777 failed (for example WinError 10013, or the port already in use) is written to `~/.prolink-monitor/prolink-monitor.log` and shown on Health. Settings keep the port you chose; the next launch tries it again. NFS is not one port: allow UDP **111** (portmapper) and the mountd / nfs ports the player returns. On Windows, accept private-network access for Prolink Listener when the prompt appears.
 
 **`PermissionError: [WinError 10013]` on the web port.** Hyper-V, WSL, or another listener has reserved it. The fallbacks above usually pick another port. To choose one: `python app.py --port 18777`, or set **Web server port** in Settings. See reserved ranges with `netsh interface ipv4 show excludedportrange protocol=tcp`.
 
@@ -379,7 +383,7 @@ Default base is `http://127.0.0.1:8777`. State uses stable keys (`playing`, `cue
 
 **No decks.** The player has to be on and on the same subnet. In virtual device mode the device number must be free (default 5). In passive mode, rekordbox (or another linked program) has to be open. Several virtual adapters (VMware, Hyper-V) can make auto-detect pick the wrong address: set the player address, or `--host`. “could not find interface” means pass `--iface` with a number from `tshark -D`.
 
-**Library errors.** A warning about `pyrekordbox.db6` is not a failed library; the supported import is `masterdb`. One bad date does not blank the track list. If the page is empty, check that a USB stick analysed in rekordbox is mounted on the player, and Health’s library line. OneLibrary playlists need the optional `pyrekordbox` install. Waveforms need the ANLZ files on that stick; Health shows the path it resolved for each deck.
+**Library errors.** A warning about `pyrekordbox.db6` is not a failed library; the supported import is `masterdb`. One bad date does not blank the track list. If the page is empty, check that a USB stick analysed in rekordbox is mounted on the player, and Health’s library line. That line names the dbserver failure (port discovery on TCP 12523, the client number, or a rejected setup). The same text is in `~/.prolink-monitor/prolink-monitor.log`. The Windows zip includes `pyrekordbox`. A source checkout installs it from `requirements-onelibrary.txt`. Waveforms need the ANLZ files on that stick; Health shows the path it resolved for each deck. A bad `export.pdb` is shown there and does not drop the rest of the library.
 
 **Track title, no waveform.** The stick has to be inserted and carry rekordbox analysis. An empty OneLibrary content table must not be the only row the app trusts; 1.0.x falls back to `export.pdb` for the ANLZ path.
 
@@ -447,7 +451,7 @@ Ideas and small pieces adapted under their own licences:
 - [evanpurkhiser/prolink-connect](https://github.com/evanpurkhiser/prolink-connect) (MIT). SmartTiming now-playing and setlist rules in `prolink/mixstatus.py`.
 - [dennisvang/tufup](https://github.com/dennisvang/tufup) (MIT) and [The Update Framework](https://theupdateframework.io/). Signed auto-update.
 - [soundcard](https://github.com/bastibe/SoundCard) (MIT), optional, for WASAPI loopback on the overlay visualiser.
-- [pyrekordbox](https://github.com/dylanljones/pyrekordbox) (MIT), optional, for OneLibrary.
+- [pyrekordbox](https://github.com/dylanljones/pyrekordbox) (MIT), for OneLibrary. The Windows zip includes it. A source checkout installs it from `requirements-onelibrary.txt`. SQLAlchemy 2 no longer ships `sqlite+pysqlcipher`, so `prolink/pysqlcipher_dialect.py` is a small adaptation of SQLAlchemy 1.4’s dialect (MIT) that sends `PRAGMA key` before any other statement.
 
 Reference only. No GPL or EPL source is included in this tree:
 
