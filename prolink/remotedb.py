@@ -7,6 +7,7 @@ or to a rekordbox database.
 
 from __future__ import annotations
 
+import re
 import socket
 import struct
 from dataclasses import dataclass
@@ -358,6 +359,70 @@ def _decode_from_stream(reader: BinaryIO) -> DbMessage:
         args.append(val)
         last_num = int(val) if ftag == TAG_NUM else 0
     return DbMessage(int(tx_id), int(msg_type), args)
+
+
+# Track-menu second line on an XDJ/CDJ is often the key and tempo, not the artist.
+_KEY_BPM_LINE = re.compile(
+    r"^(\d{1,2}[A-Ga-g])\s*[-–—]\s*(\d+(?:\.\d+)?)\s*bpm$",
+    re.IGNORECASE,
+)
+
+
+def menu_track_fields(name: str, subtitle: str) -> dict[str, object]:
+    """Map a track-menu row onto the Library columns.
+
+    ``name`` is the title. ``subtitle`` is the artist, except when the player
+    sends ``3A - 124.0 bpm`` — that belongs in Key and BPM, not Artist.
+    """
+    title = str(name or "").strip()
+    second = str(subtitle or "").strip()
+    match = _KEY_BPM_LINE.match(second)
+    if match:
+        return {
+            "title": title,
+            "artist": "",
+            "album": "",
+            "key": match.group(1).upper(),
+            "bpm": float(match.group(2)),
+        }
+    return {
+        "title": title,
+        "artist": second,
+        "album": "",
+        "key": "",
+        "bpm": 0.0,
+    }
+
+
+def columns_for_menu_track(name: str, subtitle: str, cached=None) -> dict[str, object]:
+    """Menu columns, filled from a read-only export.pdb row when the menu omits them.
+
+    The track list itself still comes from dbserver. The cache only supplies
+    artist, album, and a key or tempo the menu did not already carry.
+    """
+    fields = menu_track_fields(name, subtitle)
+    if cached is None:
+        return fields
+    artist = getattr(cached, "artist", None)
+    if isinstance(artist, str) and artist and not fields["artist"]:
+        fields["artist"] = artist
+    album = getattr(cached, "album", None)
+    if isinstance(album, str) and album:
+        fields["album"] = album
+    key = getattr(cached, "key", None)
+    if isinstance(key, str) and key and not fields["key"]:
+        fields["key"] = key
+    if not fields["bpm"]:
+        try:
+            bpm = float(getattr(cached, "tempo", 0) or 0)
+        except (TypeError, ValueError):
+            bpm = 0.0
+        if bpm:
+            fields["bpm"] = bpm
+    title = getattr(cached, "title", None)
+    if isinstance(title, str) and title and not fields["title"]:
+        fields["title"] = title
+    return fields
 
 
 def menu_item_row(msg: DbMessage) -> dict[str, object]:

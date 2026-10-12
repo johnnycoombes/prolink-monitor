@@ -355,6 +355,79 @@ class LibraryBrowseTests(unittest.TestCase):
         self.assertIn("dbserver timed out", page.error_label.text())
         self.assertIn("dbserver timed out", page.empty.text())
 
+    def test_library_header_uses_the_same_live_source_as_health(self):
+        from PySide6.QtWidgets import QApplication, QHeaderView
+
+        from gui.i18n import I18n
+        from gui.pages import LibraryPage, format_library_source, library_view_signature
+        from gui.theme import STYLESHEET
+
+        nfs = {
+            "library": {"tracks": 12087, "artists": 1, "albums": 1},
+            "host": "192.168.1.212",
+            "onelibrary": {
+                "present": True,
+                "readable": True,
+                "tracks": 12087,
+                "detail": "12087 tracks · get_content failed: Invalid isoformat string",
+                "error": "get_content failed: Invalid isoformat string",
+            },
+            "library_source": {
+                "source": "nfs-cache",
+                "detail": r"NFS export.pdb cache (C:\Users\User\.prolink-cache\192.168.1.212\C)",
+            },
+            "library_error": "",
+        }
+        live = {
+            **nfs,
+            "library_source": {
+                "source": "remotedb",
+                "detail": "TCP dbserver · player 1 as client #5",
+            },
+        }
+        self.assertNotEqual(library_view_signature(nfs), library_view_signature(live))
+
+        _ = QApplication.instance() or QApplication([])
+        backend = mock.Mock()
+        backend.browse_tracks.return_value = {
+            "tracks": [{
+                "id": 1,
+                "title": "Night Drive (extended mix)",
+                "artist": "AZ",
+                "album": "LP",
+                "bpm": 124.0,
+                "key": "3A",
+            }],
+            "total": 1,
+        }
+        backend.browse_playlists.return_value = {"playlists": [], "history": []}
+        page = LibraryPage(I18n(), backend)
+        page.update_state(live)
+        self.assertIn("Live (dbserver", page.source_label.text())
+        self.assertNotIn("Fallback", page.source_label.text())
+        self.assertNotIn("NFS", page.source_label.text())
+        self.assertNotIn("get_content failed", page.onelibrary_label.text())
+        self.assertNotIn(".prolink-cache", page.source_label.text())
+        health = format_library_source(live["library_source"], I18n())
+        self.assertEqual(page.source_label.text(), health)
+        header = page.table.horizontalHeader()
+        self.assertEqual(header.sectionResizeMode(0), QHeaderView.Stretch)
+        self.assertEqual(header.sectionResizeMode(3), QHeaderView.ResizeToContents)
+        self.assertFalse(header.stretchLastSection())
+        for _i in range(40):
+            QApplication.processEvents()
+            if page.table.rowCount():
+                break
+            time.sleep(0.05)
+        self.assertEqual(page.table.item(0, 0).text(), "Night Drive (extended mix)")
+        self.assertEqual(page.table.item(0, 1).text(), "AZ")
+        self.assertEqual(page.table.item(0, 2).text(), "LP")
+        self.assertEqual(page.table.item(0, 3).text(), "124.0")
+        self.assertEqual(page.table.item(0, 4).text(), "3A")
+        self.assertIn("alternate-background-color: #161a22", STYLESHEET)
+        self.assertIn("QTableWidget::item:alternate", STYLESHEET)
+        self.assertNotIn("ff3b30", STYLESHEET.split("QTableWidget")[1].split("QHeaderView")[0])
+
 
 if __name__ == "__main__":
     unittest.main()

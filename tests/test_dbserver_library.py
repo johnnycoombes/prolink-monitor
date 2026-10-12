@@ -319,6 +319,110 @@ class LiveLoadTests(unittest.TestCase):
         self.assertEqual(mon._live_detail["127.0.0.1"][0], "remotedb")
 
 
+class LibrarySourceBrowseTests(unittest.TestCase):
+    def _monitor(self, media, browser):
+        from app import Monitor
+
+        mon = Monitor.__new__(Monitor)
+        mon._remotedb_fail = {}
+        mon.library = mock.Mock()
+        mon.library.lock = threading.RLock()
+        mon.library.media = {"192.168.1.212": media}
+        mon._library_db_slots = lambda: [wire.SLOT_USB]
+        mon._open_remotedb = lambda host, slot=None: browser
+        mon._db_unavailable_reason = lambda host: "dbserver not attempted"
+        return mon
+
+    def _browser(self):
+        browser = mock.Mock()
+        browser.target_player = 1
+        browser.requesting_player = 5
+        browser.slot = wire.SLOT_USB
+        browser.__enter__ = lambda *_a: browser
+        browser.__exit__ = lambda *_a: None
+        return browser
+
+    def test_live_menu_puts_key_and_bpm_in_their_columns(self):
+        media = mock.Mock()
+        media.library_source = "remotedb"
+        media.db = None
+        browser = self._browser()
+        browser.track_search_page.return_value = [
+            {"id": 7, "name": "Night Drive", "subtitle": "3A - 124.0 bpm"},
+        ]
+        out = self._monitor(media, browser).browse_tracks("", limit=10)
+        row = out["tracks"][0]
+        self.assertEqual(out["library_source"], "remotedb")
+        self.assertEqual(row["title"], "Night Drive")
+        self.assertEqual(row["artist"], "")
+        self.assertEqual(row["key"], "3A")
+        self.assertEqual(row["bpm"], 124.0)
+        self.assertNotIn("3A - 124.0", row["artist"])
+
+    def test_cache_fills_artist_without_leaving_dbserver(self):
+        media = mock.Mock()
+        media.library_source = "remotedb"
+        media.db = mock.Mock()
+        media.db.get.return_value = mock.Mock(
+            title="Night Drive",
+            artist="AZ",
+            album="LP",
+            key="8A",
+            tempo=124.0,
+        )
+        # MagicMock answers every attribute with another mock. Use a real object.
+        media.db.get.return_value = type("Track", (), {
+            "title": "Night Drive", "artist": "AZ", "album": "LP",
+            "key": "8A", "tempo": 124.0,
+        })()
+        browser = self._browser()
+        browser.track_search_page.return_value = [
+            {"id": 7, "name": "Night Drive", "subtitle": "3A - 124.0 bpm"},
+        ]
+        out = self._monitor(media, browser).browse_tracks("", limit=10)
+        row = out["tracks"][0]
+        self.assertEqual(row["artist"], "AZ")
+        self.assertEqual(row["album"], "LP")
+        self.assertEqual(row["key"], "3A")
+        self.assertEqual(out["library_source"], "remotedb")
+
+    def test_a_live_menu_failure_does_not_relabel_as_nfs(self):
+        media = mock.Mock()
+        media.library_source = "remotedb"
+        media.db = mock.Mock()
+        media.db.search.return_value = ([{
+            "id": 9, "title": "From NFS", "artist": "AZ", "album": "", "bpm": 1, "key": "",
+        }], 1)
+        media.cache_dir = r"C:\Users\User\.prolink-cache\192.168.1.212\C"
+        browser = self._browser()
+        browser.track_search_page.side_effect = RuntimeError("menu failed")
+        out = self._monitor(media, browser).browse_tracks("", limit=10)
+        self.assertEqual(out["library_source"], "remotedb")
+        self.assertEqual(out["tracks"], [])
+        self.assertIn("menu failed", out["error"])
+        media.set_library_source.assert_not_called()
+
+    def test_nfs_fallback_states_why_dbserver_was_not_used(self):
+        media = mock.Mock()
+        media.library_source = "none"
+        media.cache_dir = r"C:\Users\User\.prolink-cache\192.168.1.212\C"
+        media.db = mock.Mock()
+        media.db.search.return_value = ([{
+            "id": 9, "title": "Cached", "artist": "AZ", "album": "LP", "bpm": 120, "key": "8A",
+        }], 1)
+        media.onelibrary_db = None
+        browser = self._browser()
+        browser.track_search_page.side_effect = RuntimeError("port discovery failed")
+        out = self._monitor(media, browser).browse_tracks("", limit=10)
+        self.assertEqual(out["library_source"], "nfs-cache")
+        self.assertEqual(out["tracks"][0]["title"], "Cached")
+        source, detail = media.set_library_source.call_args[0]
+        self.assertEqual(source, "nfs-cache")
+        self.assertIn("NFS export.pdb cache", detail)
+        self.assertIn("live dbserver failed", detail)
+        self.assertIn("port discovery failed", detail)
+
+
 class HealthLabelTests(unittest.TestCase):
     def test_source_line_includes_the_failure(self):
         from gui.pages import format_library_source

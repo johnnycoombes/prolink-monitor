@@ -8,10 +8,11 @@ import time
 from typing import Any
 
 from PySide6.QtCore import Qt, QTimer, Signal, QEvent
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QGridLayout,
-    QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton,
-    QScrollArea, QSizePolicy, QSpinBox, QSplitter, QTableWidget,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -1216,6 +1217,52 @@ class HealthPage(Page):
         self.link_panel.update_state(state)
 
 
+def library_view_signature(state: dict) -> tuple:
+    """What must change before the Library page repaints.
+
+    Includes ``library_source``, the same field Health reads every tick.
+    Totals alone staying put used to leave the header on the NFS fallback
+    after dbserver had already connected.
+    """
+    lib = state.get("library")
+    ol = state.get("onelibrary")
+    src = state.get("library_source") or {}
+    if not isinstance(src, dict):
+        src = {}
+    return (
+        None if not isinstance(lib, dict) else tuple(
+            sorted((str(k), str(v)) for k, v in lib.items())),
+        None if not isinstance(ol, dict) else (
+            ol.get("present"), ol.get("readable"), ol.get("tracks"),
+            ol.get("playlists"), ol.get("history"), ol.get("detail"), ol.get("error"),
+        ),
+        state.get("library_error"),
+        state.get("host") or "",
+        str(src.get("source") or ""),
+        str(src.get("detail") or ""),
+        str(src.get("remotedb_error") or ""),
+    )
+
+
+def library_header_onelibrary(src: dict | None, ol: dict | None) -> str:
+    """OneLibrary line on the Library page.
+
+    A get_content failure is not the source once dbserver is live. Health
+    keeps its own OneLibrary row.
+    """
+    if not isinstance(ol, dict) or not ol.get("present"):
+        return ""
+    name = str((src or {}).get("source") or "")
+    detail = str(ol.get("detail") or "").strip()
+    error = str(ol.get("error") or "").strip()
+    failed = bool(error) or "failed" in detail.lower()
+    if name == "remotedb" and failed:
+        return ""
+    if ol.get("readable"):
+        return f"OneLibrary · {detail or 'readable'}"
+    return f"OneLibrary · {detail or error or 'present'}"
+
+
 def format_library_source(src: dict | None, i18n) -> str:
     """Health and Library label, including the exact dbserver failure."""
     src = src or {}
@@ -1278,9 +1325,15 @@ def load_library_view(backend, query: str, source: str):
                 pid = 0
             data = backend.browse_playlist_tracks(pid, host or None) or {}
             tracks = list(data.get("tracks") or [])
+            browse_error = str(data.get("error") or "").strip()
+            if browse_error:
+                errors.append(browse_error)
         else:
             data = backend.browse_tracks(query, limit=200, offset=0) or {}
             tracks = list(data.get("tracks") or [])
+            browse_error = str(data.get("error") or "").strip()
+            if browse_error:
+                errors.append(browse_error)
             if data.get("multi_player"):
                 multi = "library_multi"
     except Exception as exc:
@@ -1399,10 +1452,24 @@ class LibraryPage(Page):
             i18n.t("library_col_bpm"),
             i18n.t("library_col_key"),
         ])
-        self.table.horizontalHeader().setStretchLastSection(True)
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.Interactive)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.table.setColumnWidth(2, 180)
+        self.table.setTextElideMode(Qt.ElideRight)
+        self.table.setWordWrap(False)
+        self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
+        pal = self.table.palette()
+        pal.setColor(QPalette.Base, QColor(COLORS["panel"]))
+        pal.setColor(QPalette.AlternateBase, QColor("#161a22"))
+        self.table.setPalette(pal)
         right_l.addWidget(self.table, 1)
         self.empty = QLabel(i18n.t("library_empty"))
         self.empty.setAlignment(Qt.AlignCenter)
@@ -1543,7 +1610,9 @@ class LibraryPage(Page):
                 t.get("key") or "",
             ]
             for col, val in enumerate(vals):
-                self.table.setItem(row, col, QTableWidgetItem(str(val)))
+                item = QTableWidgetItem(str(val))
+                item.setToolTip(str(val))
+                self.table.setItem(row, col, item)
 
     def _refresh_art_grid(self, tracks: list[dict]) -> None:
         while self.art_row.count():
@@ -1586,23 +1655,18 @@ class LibraryPage(Page):
         host = state.get("host") or ""
         self.host_label.setText(host)
         src = state.get("library_source") or {}
+        if not isinstance(src, dict):
+            src = {}
         self.source_label.setText(format_library_source(src, self._i18n))
         ol = state.get("onelibrary")
-        if ol and ol.get("present"):
-            if ol.get("readable"):
-                self.onelibrary_label.setText(
-                    f"OneLibrary · {ol.get('detail') or 'readable'}")
-            else:
-                detail = ol.get("detail") or ol.get("error") or "present"
-                self.onelibrary_label.setText(f"OneLibrary · {detail}")
-        else:
-            self.onelibrary_label.setText("")
+        self.onelibrary_label.setText(library_header_onelibrary(src, ol))
         err = state.get("library_error")
         self._library_error = err or ""
         self.error_label.setText(self._library_error)
 
-        # Refresh browse data when media appears / changes (throttled).
-        host_key = f"{host}|{bool(lib)}|{bool(ol and ol.get('readable'))}"
+        # Re-read when the host appears, or when Health's source flips to live.
+        src_name = str(src.get("source") or "")
+        host_key = f"{host}|{bool(lib)}|{bool(ol and ol.get('readable'))}|{src_name}"
         self._status_timer_n += 1
         if host_key != self._last_host_key or self._status_timer_n % 40 == 1:
             self._last_host_key = host_key
@@ -1679,6 +1743,10 @@ class SessionPage(Page):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
+        pal = self.table.palette()
+        pal.setColor(QPalette.Base, QColor(COLORS["panel"]))
+        pal.setColor(QPalette.AlternateBase, QColor("#161a22"))
+        self.table.setPalette(pal)
         self.layout_root.addWidget(self.table, 1)
 
         self.empty = QLabel(i18n.t("session_empty"))
@@ -2081,6 +2149,7 @@ class OverlayPage(Page):
             qs.append("bpm=0")
         if not self.show_next.isChecked():
             qs.append("next=0")
+        qs.append("spectrum=1" if self.show_spectrum.isChecked() else "spectrum=0")
         use_preview = self.preview.isChecked() if preview is None else preview
         if use_preview:
             qs.append("preview=1")

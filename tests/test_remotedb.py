@@ -43,6 +43,30 @@ class RemoteDbWireTests(unittest.TestCase):
         self.assertEqual(row["name"], "Title")
         self.assertTrue(row["playlist"])
 
+    def test_key_bpm_line_is_not_the_artist(self):
+        fields = wire.menu_track_fields("Night Drive", "3A - 124.0 bpm")
+        self.assertEqual(fields["title"], "Night Drive")
+        self.assertEqual(fields["artist"], "")
+        self.assertEqual(fields["key"], "3A")
+        self.assertEqual(fields["bpm"], 124.0)
+        artist = wire.menu_track_fields("Night Drive", "AZ")
+        self.assertEqual(artist["artist"], "AZ")
+        self.assertEqual(artist["key"], "")
+
+    def test_cache_fills_artist_and_album_the_menu_left_out(self):
+        cached = type("Track", (), {
+            "title": "Night Drive",
+            "artist": "AZ",
+            "album": "LP",
+            "key": "3A",
+            "tempo": 124.0,
+        })()
+        fields = wire.columns_for_menu_track("Night Drive", "3A - 124.0 bpm", cached)
+        self.assertEqual(fields["artist"], "AZ")
+        self.assertEqual(fields["album"], "LP")
+        self.assertEqual(fields["key"], "3A")
+        self.assertEqual(fields["bpm"], 124.0)
+
 
 if __name__ == "__main__":
     unittest.main()

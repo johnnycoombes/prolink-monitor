@@ -67,11 +67,20 @@ jobs:
           # -e, so a crash would stop the step before we could retry.
           # A real assertion exits 1 and is not retried.
           set +e
-          python -m pytest -q
-          code=$?
-          if [ "$code" -eq 139 ] || [ "$code" -eq 135 ] || [ "$code" -eq 134 ] || [ "$code" -eq 127 ] || [ "$code" -eq 3 ]; then
-            echo "pytest crashed (exit $code); retrying once"
+          code=0
+          attempt=1
+          while [ "$attempt" -le 3 ]; do
             python -m pytest -q
             code=$?
-          fi
+            if [ "$code" -eq 0 ]; then
+              break
+            fi
+            # A real assertion exits 1 and is not retried.
+            if [ "$code" -eq 139 ] || [ "$code" -eq 135 ] || [ "$code" -eq 134 ] || [ "$code" -eq 127 ] || [ "$code" -eq 3 ]; then
+              echo "pytest crashed (exit $code); attempt $attempt of 3"
+              attempt=$((attempt + 1))
+              continue
+            fi
+            break
+          done
           exit "$code"

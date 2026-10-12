@@ -10,8 +10,11 @@ _CARD_ALIASES = {"left": "bl", "right": "br"}
 
 
 def normalize_now_style(value: str | None) -> str:
+    """``bar`` is the full-width panel. Anything else unknown stays a card."""
     s = str(value or "card").lower()
-    return "panel" if s == "panel" else "card"
+    if s in ("panel", "bar"):
+        return "panel"
+    return "card"
 
 
 def normalize_card_corner(value: str | None) -> str:

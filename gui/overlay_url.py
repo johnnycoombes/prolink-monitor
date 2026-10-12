@@ -56,6 +56,7 @@ def _now_playing_query(
         qs.append(("tags", "0"))
     if not settings.get("overlay_show_bpm", True):
         qs.append(("bpm", "0"))
+    qs.append(("spectrum", "1" if settings.get("overlay_show_spectrum", True) else "0"))
     return qs
 
 

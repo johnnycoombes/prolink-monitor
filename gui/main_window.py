@@ -13,7 +13,7 @@ from gui.backend import Backend
 from gui.i18n import I18n
 from gui.pages import (
     AboutPage, DevicesPage, HealthPage, LibraryPage, MonitorPage, OverlayPage,
-    SessionPage, SettingsPage,
+    SessionPage, SettingsPage, library_view_signature,
 )
 from gui.settings import load_settings, save_settings
 from gui.theme import COLORS
@@ -491,17 +491,7 @@ class MainWindow(QMainWindow):
             self._devices_sig = devices_sig
             self.page_devices.update_state(state)
 
-        lib = state.get("library")
-        ol = state.get("onelibrary")
-        library_sig = (
-            None if lib is None else tuple(sorted((str(k), str(v)) for k, v in lib.items())),
-            None if ol is None else (
-                ol.get("present"), ol.get("readable"), ol.get("tracks"),
-                ol.get("playlists"), ol.get("history"), ol.get("detail"), ol.get("error"),
-            ),
-            state.get("library_error"),
-            state.get("host") or "",
-        )
+        library_sig = library_view_signature(state)
         if library_sig != self._library_sig:
             try:
                 self.page_library.update_state(state)
