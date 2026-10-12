@@ -448,7 +448,8 @@ class MonitorPage(Page):
         spacing = self.decks_layout.spacing() * (n - 1)
         # Always divide the visible panel so cards fill it (no dead space below).
         # Soft floor keeps a usable waveform when the window is very short.
-        floor = 140 if self._elements.get("deck_show_waveform", True) else 80
+        # 96px is low enough that four decks on a laptop stay near 120px and pack.
+        floor = 96 if self._elements.get("deck_show_waveform", True) else 72
         natural = ((vh - spacing) // n) if vh else floor
         per = max(floor, natural)
         for card in cards:
