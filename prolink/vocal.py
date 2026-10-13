@@ -3,7 +3,7 @@
 Parsing and the mid-dominant test follow chrisle/alphatheta-connect (MIT),
 adapted here. PWVC stores three thresholds. A column is vocal when the mid
 band is above its threshold and the low and high bands stay under theirs.
-Our ANLZ files store each column as mid, high, low (see ``decode_3band``).
+Column byte order follows the PWV6/PWV7 order setting (see ``anlz.BAND_ORDERS``).
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ def vocal_regions(
     band3: bytes,
     thresholds: VocalThresholds | None,
     duration_ms: float,
+    order: tuple[int, int, int] = (2, 0, 1),
 ) -> list[dict]:
     """Contiguous vocal spans as ``{t, end}`` milliseconds across the track."""
     if not band3 or thresholds is None or duration_ms <= 0 or len(band3) < 3:
@@ -43,9 +44,9 @@ def vocal_regions(
     spans: list[tuple[int, int]] = []
     start: int | None = None
     for i in range(n):
-        mid = band3[i * 3]
-        high = band3[i * 3 + 1]
-        low = band3[i * 3 + 2]
+        low = band3[i * 3 + order[0]]
+        mid = band3[i * 3 + order[1]]
+        high = band3[i * 3 + order[2]]
         vocal = (
             mid > thresholds.mid
             and low < thresholds.low

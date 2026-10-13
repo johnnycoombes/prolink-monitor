@@ -1,0 +1,28 @@
+{
+  "_comment": "The one definition of the 3-band waveform palettes. Read by gui/widgets.py (via prolink/wavestyle.py), injected into web/index.html and web/overlay.html, and loaded by web/wavepack.js under Node tests. Mask order for 'mask' mode: low, mid, high, low_mid, low_high, mid_high, all.",
+  "default": "cdj3000",
+  "palettes": {
+    "beatlink": {
+      "label": "Beat Link",
+      "mode": "overlap",
+      "low": "#2053d9",
+      "mid": "#f2aa3c",
+      "high": "#ffffff",
+      "low_mid": "#a96b27",
+      "low_high": "#ffffff",
+      "mid_high": "#ffffff",
+      "all": "#ffffff"
+    },
+    "cdj3000": {
+      "label": "CDJ-3000",
+      "mode": "mask",
+      "low": "#0055e1",
+      "mid": "#ffa600",
+      "high": "#ffffff",
+      "low_mid": "#b4690a",
+      "low_high": "#d2dcfa",
+      "mid_high": "#fff0d7",
+      "all": "#f5ebd7"
+    }
+  }
+}

@@ -10,6 +10,8 @@ from typing import Any
 from gui.overlay_now import normalize_now_pos, normalize_now_style
 from prolink.playhead_smooth import normalize_mode as _smoothing_mode
 from prolink.proto import normalize_playhead_mode
+from prolink.wavestyle import normalize_palette, normalize_style
+from prolink.wavezoom import clean_zoom_seconds
 from prolink.wnp import normalize_target
 
 
@@ -27,7 +29,12 @@ DEFAULTS: dict[str, Any] = {
     "max_decks": 4,
     "zoom_bars": 4,                # 4/4 bars shown in the detail waveform
     "zoom_bars_by_deck": {},        # optional per-deck overrides { "1": 8, ... }
-    "waveform_style": "rgb",       # rgb | 3band | blue
+    "waveform_style": "rgb",       # auto | rgb | 3band | blue
+    "waveform_style_fallback": "rgb",  # what Auto draws when the player reports nothing
+    "waveform_palette": "cdj3000",     # cdj3000 (rekordbox colours) | beatlink
+    "pwv7_order": "low_mid_high",      # low_mid_high (rbxport/OLC) | mid_high_low (Beat Link)
+    "pwv6_order": "low_mid_high",      # same choices, for the PWV6 overview
+    "wave_zoom_seconds_by_deck": {},   # deck -> seconds (2-30) set with the wheel
     "show_phrases": True,          # Rekordbox-style phrase strip under overview
     "show_vocals": True,           # vocal lane under the phrase strip
     "show_next_cue": True,         # NEXT cue / phrase countdown
@@ -70,7 +77,7 @@ DEFAULTS: dict[str, Any] = {
     "overlay_playing_only": True,
     "overlay_mix": True,
     "overlay_decks": 1,
-    "overlay_waveform_style": "rgb",  # rgb | 3band | blue — overlay mini-wave only
+    "overlay_waveform_style": "rgb",  # auto | rgb | 3band | blue — overlay mini-wave only
     "overlay_scale": "1",
     "overlay_accent": "",
     "overlay_show_tags": True,
@@ -138,9 +145,7 @@ def display_prefs_from(data: dict[str, Any] | None = None) -> dict[str, Any]:
         max_decks = 4 if int(src.get("max_decks", 4)) >= 4 else 2
     except (TypeError, ValueError):
         max_decks = 4
-    style = str(src.get("waveform_style") or "rgb").lower()
-    if style not in ("rgb", "3band", "blue"):
-        style = "rgb"
+    style = normalize_style(src.get("waveform_style"))
     audio = bool(src.get("overlay_spectrum_audio", False))
     if str(src.get("spectrum_source") or "") == "loopback":
         audio = True
@@ -155,6 +160,9 @@ def display_prefs_from(data: dict[str, Any] | None = None) -> dict[str, Any]:
         "playhead_position": normalize_playhead_mode(src.get("playhead_position")),
         "max_decks": max_decks,
         "waveform_style": style,
+        "waveform_style_fallback": normalize_style(src.get("waveform_style_fallback"), allow_auto=False),
+        "waveform_palette": normalize_palette(src.get("waveform_palette")),
+        "wave_zoom_seconds_by_deck": clean_zoom_seconds(src.get("wave_zoom_seconds_by_deck")),
         "show_empty_decks": bool(src.get("show_empty_decks", True)),
         "elements": deck_elements_from(src),
         "spectrum_source": "loopback" if audio else "waveform",
@@ -255,8 +263,13 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
             if bars in (1, 2, 4, 8, 16):
                 clean_deck[str(int(k))] = bars
     out["zoom_bars_by_deck"] = clean_deck
-    style = str(data.get("waveform_style") or "rgb").lower()
-    out["waveform_style"] = style if style in ("rgb", "3band", "blue") else "rgb"
+    out["waveform_style"] = normalize_style(data.get("waveform_style"))
+    out["waveform_style_fallback"] = normalize_style(data.get("waveform_style_fallback"), allow_auto=False)
+    out["waveform_palette"] = normalize_palette(data.get("waveform_palette"))
+    from prolink.anlz import normalize_band_order
+    out["pwv7_order"] = normalize_band_order(data.get("pwv7_order"))
+    out["pwv6_order"] = normalize_band_order(data.get("pwv6_order"))
+    out["wave_zoom_seconds_by_deck"] = clean_zoom_seconds(data.get("wave_zoom_seconds_by_deck"))
     out["show_phrases"] = bool(data.get("show_phrases", True))
     out["show_vocals"] = bool(data.get("show_vocals", True))
     out["show_next_cue"] = bool(data.get("show_next_cue", True))
@@ -296,8 +309,7 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
         out["overlay_decks"] = max(1, min(4, int(data.get("overlay_decks", 1))))
     except (TypeError, ValueError):
         out["overlay_decks"] = 1
-    owave = str(data.get("overlay_waveform_style") or "rgb").lower()
-    out["overlay_waveform_style"] = owave if owave in ("rgb", "3band", "blue") else "rgb"
+    out["overlay_waveform_style"] = normalize_style(data.get("overlay_waveform_style"))
     scale = str(data.get("overlay_scale") or "1").strip()
     try:
         s = float(scale)

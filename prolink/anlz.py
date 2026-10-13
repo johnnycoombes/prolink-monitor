@@ -14,6 +14,7 @@ Every integer is big-endian.
 
 from __future__ import annotations
 
+import logging
 import struct
 from dataclasses import dataclass, field
 
@@ -415,61 +416,174 @@ def vocal_spans(analysis: Analysis, duration_ms: float | None = None) -> list[di
 
     The detection rule is adapted from chrisle/alphatheta-connect (MIT):
     a column is vocal when mid is above its threshold and low and high stay
-    under theirs. Byte order is ours (mid, high, low).
+    under theirs. Byte order follows the pwv6_order / pwv7_order setting.
     """
     from .vocal import VocalThresholds, vocal_regions
 
     if not analysis.has_vocals:
         return []
     band = analysis.band3_preview or analysis.band3_detail
+    order = BAND_ORDERS[_pwv6_order if analysis.band3_preview else _pwv7_order]
     dur = analysis.duration_ms if duration_ms is None else duration_ms
     return vocal_regions(
         band,
         VocalThresholds(analysis.vocal_low, analysis.vocal_mid, analysis.vocal_high),
         float(dur or 0),
+        order,
     )
 
 
-def decode_3band_heights(data: bytes) -> tuple[bytearray, bytearray, bytearray]:
-    """PWV7 column heights, as ``WaveformDetail.segmentHeight`` for each band.
+log = logging.getLogger("prolink.anlz")
 
-    Byte order in the file is mid, high, low. Beat Link scales them
-    independently (these are pixel heights, not 0-31):
+# ---------------------------------------------------------------- 3-band order
+# Byte order of one 3-byte PWV7 / PWV6 entry, as (low, mid, high) indices.
+# Default low, mid, high for both tags: rbxport reads and writes that order
+# and measured it against rekordbox's own files (PWV4's bass channel tracks
+# PWV6 byte 0 at r = 0.83-0.96; the last byte is the quiet high band), and
+# OneLibraryCompanion reads PWV7 the same way. The Deep Symmetry spec and
+# Beat Link say mid, high, low; that stays an option. Kick drums should draw
+# blue: flip ``pwv7_order`` / ``pwv6_order`` in Settings if they do not.
+BAND_ORDERS = {
+    "low_mid_high": (0, 1, 2),   # rbxport / OneLibraryCompanion (default)
+    "mid_high_low": (2, 0, 1),   # Deep Symmetry spec / Beat Link
+}
+DEFAULT_PWV7_ORDER = "low_mid_high"
+DEFAULT_PWV6_ORDER = "low_mid_high"
+_pwv7_order = DEFAULT_PWV7_ORDER
+_pwv6_order = DEFAULT_PWV6_ORDER
 
-        low  = round(byte2 * 0.4)
-        mid  = round(byte0 * 0.3)
-        high = round(byte1 * 0.06)
+
+def normalize_band_order(name) -> str:
+    name = str(name or "").lower()
+    return name if name in BAND_ORDERS else DEFAULT_PWV7_ORDER
+
+
+def pwv7_order() -> str:
+    return _pwv7_order
+
+
+def set_pwv7_order(name) -> str:
+    """Select the PWV7 byte order. Returns the order now in use (and logs it)."""
+    global _pwv7_order
+    order = normalize_band_order(name)
+    if order != _pwv7_order:
+        _pwv7_order = order
+        log.info("PWV7 3-band byte order: %s", order)
+    return order
+
+
+def pwv6_order() -> str:
+    return _pwv6_order
+
+
+def set_pwv6_order(name) -> str:
+    """Select the PWV6 (overview) byte order. Returns the order in use (and logs it)."""
+    global _pwv6_order
+    order = normalize_band_order(name)
+    if order != _pwv6_order:
+        _pwv6_order = order
+        log.info("PWV6 3-band byte order: %s", order)
+    return order
+
+
+def _band_index(order: str | None) -> tuple[int, int, int]:
+    return BAND_ORDERS[normalize_band_order(order or _pwv7_order)]
+
+
+def split_bands(data: bytes, order: str | None = None):
+    """Raw (low, mid, high) byte lanes of 3-byte entries in ``order``."""
+    li, mi, hi = _band_index(order)
+    return data[li::3][: len(data) // 3], data[mi::3][: len(data) // 3], data[hi::3][: len(data) // 3]
+
+
+# Per-band detail scales, tied to the byte order they were derived for.
+# Beat Link's (low x0.4, mid x0.3, high x0.06) only make sense with its
+# mid, high, low reading. rbxport draws every band as value / 127 of the
+# half height, so the low, mid, high order keeps the bytes as they are.
+PWV7_SCALES = {
+    "low_mid_high": (1.0, 1.0, 1.0),
+    "mid_high_low": (0.4, 0.3, 0.06),
+}
+
+
+def decode_3band_heights(data: bytes, order: str | None = None) -> tuple[bytearray, bytearray, bytearray]:
+    """PWV7 column heights per band, in the detail display scale.
+
+    Bytes are split with the configured ``pwv7_order`` and scaled with that
+    order's ``PWV7_SCALES``. The painters normalise to the track's peak.
     """
-    n = len(data) // 3
+    order = normalize_band_order(order or _pwv7_order)
+    low_b, mid_b, high_b = split_bands(data, order)
+    sl, sm, sh = PWV7_SCALES[order]
+    n = len(low_b)
     lows, mids, highs = bytearray(n), bytearray(n), bytearray(n)
     for i in range(n):
-        mid_b = data[i * 3]
-        high_b = data[i * 3 + 1]
-        low_b = data[i * 3 + 2]
-        lows[i] = min(255, _jround(low_b * 0.4))
-        mids[i] = min(255, _jround(mid_b * 0.3))
-        highs[i] = min(255, _jround(high_b * 0.06))
+        lows[i] = min(255, _jround(low_b[i] * sl))
+        mids[i] = min(255, _jround(mid_b[i] * sm))
+        highs[i] = min(255, _jround(high_b[i] * sh))
     return lows, mids, highs
 
 
-def decode_3band(data: bytes) -> tuple[bytearray, bytearray]:
+def decode_3band(data: bytes, order: str | None = None) -> tuple[bytearray, bytearray]:
     """RGB fallback when a track has PWV7 but no PWV5.
 
-    Uses the same mid/high/low byte order. The column colour is mixed from
-    those amplitudes and the height is their peak, scaled to 0-31.
+    The column colour is mixed from the band amplitudes and the height is
+    their peak, scaled to 0-31.
     """
-    n = len(data) // 3
+    low_b, mid_b, high_b = split_bands(data, order)
+    n = len(low_b)
     heights = bytearray(n)
     rgb = bytearray(n * 3)
     for i in range(n):
-        mid_b, high_b, low_b = data[i * 3], data[i * 3 + 1], data[i * 3 + 2]
-        peak = max(low_b, mid_b, high_b)
+        lo, md, hi = low_b[i], mid_b[i], high_b[i]
+        peak = max(lo, md, hi)
         heights[i] = min(31, peak * 31 // 255)
         if peak:
-            rgb[i * 3] = high_b * 255 // peak
-            rgb[i * 3 + 1] = mid_b * 255 // peak
-            rgb[i * 3 + 2] = low_b * 255 // peak
+            rgb[i * 3] = hi * 255 // peak
+            rgb[i * 3 + 1] = md * 255 // peak
+            rgb[i * 3 + 2] = lo * 255 // peak
     return heights, rgb
+
+
+# PWV6 stack scales (rbxport's fit against rekordbox captures): a band's
+# height is value / scale of the full stack, low and high over 128, mid over
+# 256. Values are 7-bit.
+PWV6_STACK_SCALE = (128.0, 256.0, 128.0)
+
+
+def stacked_overview(data: bytes, width: int, order: str | None = None):
+    """3-band overview from PWV6, stacked bottom-up.
+
+    Returns (low, mid, high) contribution lanes of ``width`` columns in
+    0-255 of the full stack height: low/128, mid/256, high/128, clipped at
+    the top like rekordbox. Each output column is the source column with the
+    largest stacked total in its range (max pooling), so transients survive.
+    Upsampling repeats the nearest column.
+    """
+    low_b, mid_b, high_b = split_bands(data, order or _pwv6_order)
+    n = len(low_b)
+    out = bytearray(width), bytearray(width), bytearray(width)
+    if n == 0 or width <= 0:
+        return out
+    sl, sm, sh = PWV6_STACK_SCALE
+    lo_c = [b / sl for b in low_b]
+    md_c = [b / sm for b in mid_b]
+    hi_c = [b / sh for b in high_b]
+    totals = [lo_c[i] + md_c[i] + hi_c[i] for i in range(n)]
+    scale = 255.0
+    for x in range(width):
+        a = (x * n) // width
+        b = max(a + 1, ((x + 1) * n) // width)
+        best = max(range(a, min(n, b)), key=totals.__getitem__)
+        l = int(lo_c[best] * scale + 0.5)
+        m = int(md_c[best] * scale + 0.5)
+        h = int(hi_c[best] * scale + 0.5)
+        # Clip at the top of the strip, taking from the top layer first.
+        l = min(l, 255)
+        m = min(m, 255 - l)
+        h = min(h, 255 - l - m)
+        out[0][x], out[1][x], out[2][x] = l, m, h
+    return out
 
 
 def waveform_levels(a: Analysis):

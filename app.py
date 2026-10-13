@@ -386,11 +386,28 @@ class Monitor:
             if thread.is_alive() and thread is not threading.current_thread():
                 thread.join(max(0.0, deadline - time.monotonic()))
 
+    def _apply_pwv7_order(self, name, name6=None) -> None:
+        """Switch the PWV7 byte order; rebuild cached waves when it changes."""
+        before = anlz.pwv7_order()
+        order = anlz.set_pwv7_order(name)
+        if order != before:
+            with self._lock:
+                self._waveforms.clear()
+        before6 = anlz.pwv6_order()
+        order6 = anlz.set_pwv6_order(name6)
+        if order6 != before6:
+            with self._lock:
+                self._waveforms.clear()
+        if not getattr(self, "_pwv7_logged", False):
+            self._pwv7_logged = True
+            print(f"[listener] 3-band byte order: PWV7 {order}, PWV6 {order6}", flush=True)
+
     def configure_display(self, prefs: dict | None) -> None:
         """Live Monitor-view prefs for the web panel and overlay."""
         from gui.settings import display_prefs_from
 
         self._display = display_prefs_from(prefs)
+        self._apply_pwv7_order((prefs or {}).get("pwv7_order"), (prefs or {}).get("pwv6_order"))
         self.show_phrases = bool(self._display.get("show_phrases", True))
         self.show_vocals = bool(self._display.get("show_vocals", True))
         self.show_next_cue = bool(self._display.get("show_next_cue", True))
@@ -839,10 +856,16 @@ class Monitor:
                 return
 
         heights, rgb, lows, mids, highs, blue_h, blue_rgb = anlz.waveform_levels(a)
+        ov_band_flags = 0
 
         if heights:
             ov_h, ov_rgb = anlz.downsample(heights, rgb, OVERVIEW_COLUMNS)
-            ov_l, ov_m, ov_hi = anlz.downsample_bands(lows, mids, highs, OVERVIEW_COLUMNS)
+            if a.band3_preview:
+                # PWV6: additive contributions, stacked bottom-up (flag bit 0).
+                ov_l, ov_m, ov_hi = anlz.stacked_overview(a.band3_preview, OVERVIEW_COLUMNS)
+                ov_band_flags = BANDS_STACKED
+            else:
+                ov_l, ov_m, ov_hi = anlz.downsample_bands(lows, mids, highs, OVERVIEW_COLUMNS)
         else:
             ov_h, ov_rgb = bytearray(), bytearray()
             ov_l, ov_m, ov_hi = bytearray(), bytearray(), bytearray()
@@ -858,7 +881,7 @@ class Monitor:
         payload = (_pack_wave(heights, rgb, cps, length)
                    + _pack_wave(ov_h, ov_rgb, 0.0, length)
                    + _pack_bands(lows, mids, highs, cps, length)
-                   + _pack_bands(ov_l, ov_m, ov_hi, 0.0, length)
+                   + _pack_bands(ov_l, ov_m, ov_hi, 0.0, length, ov_band_flags)
                    + _pack_blue(blue_h, blue_rgb, cps, length)
                    + _pack_blue(ov_blue_h, ov_blue_rgb, 0.0, length))
 
@@ -2030,10 +2053,18 @@ def _pack_wave(heights, rgb, columns_per_second: float, duration_ms: int) -> byt
     return header + bytes(heights) + bytes(rgb)
 
 
-def _pack_bands(lows, mids, highs, columns_per_second: float, duration_ms: int) -> bytes:
-    """Pack low/mid/high lanes. Same 24-byte header as PLWF, magic PLWB."""
+BANDS_STACKED = 1   # PLWB flag: lanes are PWV6 contributions to stack bottom-up
+
+
+def _pack_bands(lows, mids, highs, columns_per_second: float, duration_ms: int,
+                flags: int = 0) -> bytes:
+    """Pack low/mid/high lanes. Same 24-byte header as PLWF, magic PLWB.
+
+    ``flags`` bit 0 (``BANDS_STACKED``) marks a PWV6 overview: the lanes are
+    contributions normalised so the loudest stacked column is 255.
+    """
     n = len(lows)
-    header = struct.pack("<4sIIfII", b"PLWB", 1, n, columns_per_second, duration_ms, 0)
+    header = struct.pack("<4sIIfII", b"PLWB", 1, n, columns_per_second, duration_ms, flags)
     return header + bytes(lows) + bytes(mids) + bytes(highs)
 
 
@@ -2046,6 +2077,8 @@ def _pack_blue(heights, rgb, columns_per_second: float, duration_ms: int) -> byt
 
 # ---------------------------------------------------------------------- server
 
+_PALETTE_MARK = b"<!--WAVE_PALETTES-->"
+
 class Handler(BaseHTTPRequestHandler):
     monitor: Monitor = None            # injected at start-up
     protocol_version = "HTTP/1.1"
@@ -2053,7 +2086,8 @@ class Handler(BaseHTTPRequestHandler):
     TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
              ".js": "text/javascript; charset=utf-8", ".png": "image/png",
              ".jpg": "image/jpeg", ".svg": "image/svg+xml", ".woff2": "font/woff2",
-             ".webmanifest": "application/manifest+json"}
+             ".webmanifest": "application/manifest+json",
+             ".json": "application/json; charset=utf-8"}
 
     def log_message(self, fmt, *args):    # keep the console quiet
         pass
@@ -2201,6 +2235,14 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             return self._json({"error": "not_found"}, 404)
         extra: dict[str, str] = {}
+        if name.endswith(".html") and _PALETTE_MARK in body:
+            # One palette definition (web/wavepalette.json) for Qt and web.
+            from prolink.wavestyle import palette_json
+            body = body.replace(
+                _PALETTE_MARK,
+                b"<script>window.PROLINK_WAVE_PALETTES=" + palette_json().encode("utf-8") + b";</script>",
+                1,
+            )
         if name.endswith(".html"):
             extra["Pragma"] = "no-cache"
             try:

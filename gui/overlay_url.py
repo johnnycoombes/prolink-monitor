@@ -40,6 +40,9 @@ def _now_playing_query(
         ("next", "0"),
         ("v", overlay_asset_version()),
     ]
+    palette = str(settings.get("waveform_palette") or "cdj3000").lower()
+    if palette == "beatlink":
+        qs.append(("palette", palette))
     if embed:
         qs.append(("embed", "1"))
     if mock:
