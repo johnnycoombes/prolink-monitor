@@ -19,7 +19,10 @@ import os
 spec_dir = os.path.dirname(os.path.abspath(SPEC))
 root = os.path.dirname(spec_dir)
 
-datas = [(os.path.join(root, "web"), "web")]
+datas = [
+    (os.path.join(root, "web"), "web"),
+    (os.path.join(root, "assets", "icons"), os.path.join("assets", "icons")),
+]
 root_json = os.path.join(root, "packaging", "tuf", "root.json")
 if os.path.isfile(root_json):
     # Public trust anchor only. Private keys are not in the repository.

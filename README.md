@@ -2,7 +2,7 @@
 
 A live Pro DJ Link monitor. It joins the booth network as a virtual player, reads the library and analysis from the player while the set is running, and draws decks, waveforms, and artwork on this computer. It is read-only toward the player and the USB stick: it never writes a Rekordbox database, never sends library edits, and a packet capture only records what already arrived.
 
-This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.8**. This tree is **1.0.8**.
+This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.8**. This tree is **1.0.9**.
 
 ## Contents
 
@@ -17,6 +17,8 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 - [Credits](#credits)
 
 ## What's new
+
+**1.0.9.** Icons are [Phosphor](https://phosphoricons.com/) SVGs instead of text symbols. The artwork placeholder is a music note, the loop badge uses Repeat, the sidebar button uses List, and ratings are filled and outlined stars. The floating overlay's drag strip uses the Dots Six Vertical grip. The Qt app recolours them to the theme, and the web panel and overlays draw them inline in `currentColor`. ON AIR, MASTER, SYNC, deck numbers, status dots, and the key stay as text.
 
 **1.0.8.** Monitor deck rows measure their text before they draw it, so a short row no longer squashes the title over the artist or stacks the readout on itself. The title stays on one line unless the row is tall enough for two. The artist stays. Album, label, genre, and the other detail lines appear only when they fit. Artwork shrinks with the row. BPM, pitch, and the clock stay readable; tags, the beat line, and the next cue drop from the bottom when the height runs out. An empty deck is a deck number and a small “no track”. The web panel already packed its rows and is unchanged.
 
@@ -473,6 +475,7 @@ Ideas and small pieces adapted under their own licences:
 - [evanpurkhiser/prolink-connect](https://github.com/evanpurkhiser/prolink-connect) (MIT). SmartTiming now-playing and setlist rules in `prolink/mixstatus.py`.
 - [dennisvang/tufup](https://github.com/dennisvang/tufup) (MIT) and [The Update Framework](https://theupdateframework.io/). Signed auto-update.
 - [soundcard](https://github.com/bastibe/SoundCard) (MIT), optional, for WASAPI loopback on the overlay visualiser.
+- [Phosphor Icons](https://github.com/phosphor-icons/core) (MIT). The icons in `assets/icons/`; licence text in [`LICENSES/THIRD_PARTY.md`](LICENSES/THIRD_PARTY.md).
 - [pyrekordbox](https://github.com/dylanljones/pyrekordbox) (MIT), for OneLibrary. The Windows zip includes it. A source checkout installs it from `requirements-onelibrary.txt`. SQLAlchemy 2 no longer ships `sqlite+pysqlcipher`, so `prolink/pysqlcipher_dialect.py` is a small adaptation of SQLAlchemy 1.4’s dialect (MIT) that sends `PRAGMA key` before any other statement.
 
 Reference only. No GPL or EPL source is included in this tree:
@@ -494,6 +497,7 @@ monitor.py                 console monitor
 probe.py                   protocol probe and capture replay
 web/index.html             web panel
 web/overlay.html           OBS overlay
+assets/icons/              Phosphor SVG icons (MIT)
 doc/                       screenshots used above
 requirements.txt           PySide6, addons, Pillow
 updater/                   signed update check (tufup)

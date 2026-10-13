@@ -278,7 +278,7 @@ def probe_deck_rows() -> dict:
         errors.append(f"genre was elided away: {tall.genre.text()!r}")
     if tall.key.text() != "3A" or tall.key.isHidden():
         errors.append("key missing on a tall row")
-    if "★" not in tall.rating.text():
+    if "star-fill" not in tall.rating.text():
         errors.append("rating missing on a tall row")
     if tall.year.text() != "2017":
         errors.append("year missing on a tall row")

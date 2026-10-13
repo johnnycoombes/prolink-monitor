@@ -189,6 +189,8 @@ class BundleLayoutTests(unittest.TestCase):
             (internal / "web" / "index.html").write_text("ok", encoding="utf-8")
             (internal / "web" / "overlay.html").write_text("ok", encoding="utf-8")
             (internal / "QtWebEngineProcess.exe").write_text("proc", encoding="utf-8")
+            (internal / "assets" / "icons").mkdir(parents=True)
+            (internal / "assets" / "icons" / "music-note.svg").write_text("<svg/>", encoding="utf-8")
             missing = verify(dist)
             self.assertTrue(any("pyrekordbox" in item for item in missing))
             (internal / "pyrekordbox").mkdir()

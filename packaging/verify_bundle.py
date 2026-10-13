@@ -27,6 +27,8 @@ def verify(dist: Path) -> list[str]:
         errors.append("web/index.html is missing")
     if not _find("web/overlay.html"):
         errors.append("web/overlay.html is missing")
+    if not _find("assets/icons/music-note.svg"):
+        errors.append("assets/icons (Phosphor icons) is missing")
     if not list(dist.rglob("QtWebEngineProcess.exe")) and not list(dist.rglob("QtWebEngineProcess")):
         errors.append("QtWebEngineProcess is missing")
 

@@ -297,8 +297,7 @@ body.float-window canvas{-webkit-app-region:no-drag}
 .tag.sync{color:var(--dim)}
 .tag.onair{color:#ff6b61;background:rgba(255,107,97,.12)}
 .tag.loop{color:#2ee89a;background:rgba(46,232,154,.12);display:inline-flex;align-items:center;gap:4px}
-.tag.loop svg{width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:2;
-  stroke-linecap:round;stroke-linejoin:round}
+.tag.loop svg{width:11px;height:11px;fill:currentColor}
 .hide-tags .tags{display:none}
 .hide-bpm .bpm{display:none}
 .title{
@@ -466,6 +465,12 @@ body.float-window canvas{-webkit-app-region:no-drag}
   .now{grid-template-columns:84px 1fr}
   .now .art{width:84px;height:84px}
 }
+
+/* Phosphor icons (MIT), coloured with currentColor */
+.ph{display:inline-block;width:1em;height:1em;flex:none;vertical-align:-0.125em;fill:currentColor}
+.art > .ph-note{width:42%;height:42%;opacity:.8}
+.ph-loop{stroke:none !important}
+.rating .ph-star{width:1.05em;height:1.05em;margin-right:1px}
 </style>
 </head>
 <body>
@@ -755,7 +760,7 @@ function mockArtDataUri(size){
 function artFail(img){
   img.onerror = null;
   const box = img.parentNode;
-  if (box) box.textContent = '♪';
+  if (box) box.innerHTML = PH_NOTE;
 }
 
 function artHtml(deck, pack, size){
@@ -768,7 +773,7 @@ function artHtml(deck, pack, size){
     const src = `/api/artwork/${trackId}${artQuery(deck, variant)}`;
     return `<div class="art"><img alt="" src="${src}" onerror="artFail(this)"></div>`;
   }
-  return `<div class="art">♪</div>`;
+  return `<div class="art">${PH_NOTE}</div>`;
 }
 
 function loopBeats(loop, bpm) {
@@ -789,10 +794,12 @@ function activeLoop(meta, pos, looping, deck) {
   return looping ? loops[0] : null;
 }
 
-const LOOP_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true">
-  <path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
-  <path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
-</svg>`;
+const LOOP_ICON = `<svg class="ph ph-loop" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor"><path d="M24,128A72.08,72.08,0,0,1,96,56H204.69L194.34,45.66a8,8,0,0,1,11.32-11.32l24,24a8,8,0,0,1,0,11.32l-24,24a8,8,0,0,1-11.32-11.32L204.69,72H96a56.06,56.06,0,0,0-56,56,8,8,0,0,1-16,0Zm200-8a8,8,0,0,0-8,8,56.06,56.06,0,0,1-56,56H51.31l10.35-10.34a8,8,0,0,0-11.32-11.32l-24,24a8,8,0,0,0,0,11.32l24,24a8,8,0,0,0,11.32-11.32L51.31,200H160a72.08,72.08,0,0,0,72-72A8,8,0,0,0,224,120Z"/></svg>`;
+const PH_NOTE = `<svg class="ph ph-note" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor"><path d="M210.3,56.34l-80-24A8,8,0,0,0,120,40V148.26A48,48,0,1,0,136,184V98.75l69.7,20.91A8,8,0,0,0,216,112V64A8,8,0,0,0,210.3,56.34ZM88,216a32,32,0,1,1,32-32A32,32,0,0,1,88,216ZM200,101.25l-64-19.2V50.75L200,70Z"/></svg>`;
+const PH_STAR = `<svg class="ph ph-star" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor"><path d="M239.18,97.26A16.38,16.38,0,0,0,224.92,86l-59-4.76L143.14,26.15a16.36,16.36,0,0,0-30.27,0L90.11,81.23,31.08,86a16.46,16.46,0,0,0-9.37,28.86l45,38.83L53,211.75a16.38,16.38,0,0,0,24.5,17.82L128,198.49l50.53,31.08A16.4,16.4,0,0,0,203,211.75l-13.76-58.07,45-38.83A16.43,16.43,0,0,0,239.18,97.26Zm-15.34,5.47-48.7,42a8,8,0,0,0-2.56,7.91l14.88,62.8a.37.37,0,0,1-.17.48c-.18.14-.23.11-.38,0l-54.72-33.65a8,8,0,0,0-8.38,0L69.09,215.94c-.15.09-.19.12-.38,0a.37.37,0,0,1-.17-.48l14.88-62.8a8,8,0,0,0-2.56-7.91l-48.7-42c-.12-.1-.23-.19-.13-.5s.18-.27.33-.29l63.92-5.16A8,8,0,0,0,103,91.86l24.62-59.61c.08-.17.11-.25.35-.25s.27.08.35.25L153,91.86a8,8,0,0,0,6.75,4.92l63.92,5.16c.15,0,.24,0,.33.29S224,102.63,223.84,102.73Z"/></svg>`;
+const PH_STAR_FILL = `<svg class="ph ph-star" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor"><path d="M234.29,114.85l-45,38.83L203,211.75a16.4,16.4,0,0,1-24.5,17.82L128,198.49,77.47,229.57A16.4,16.4,0,0,1,53,211.75l13.76-58.07-45-38.83A16.46,16.46,0,0,1,31.08,86l59-4.76,22.76-55.08a16.36,16.36,0,0,1,30.27,0l22.75,55.08,59,4.76a16.46,16.46,0,0,1,9.37,28.86Z"/></svg>`;
+const PH_STAR_HALF = `<svg class="ph ph-star" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor"><path d="M239.18,97.26A16.38,16.38,0,0,0,224.92,86l-59-4.76L143.14,26.15a16.36,16.36,0,0,0-30.27,0L90.11,81.23,31.08,86a16.46,16.46,0,0,0-9.37,28.86l45,38.83L53,211.75a16.4,16.4,0,0,0,24.5,17.82L128,198.49l50.53,31.08A16.4,16.4,0,0,0,203,211.75l-13.76-58.07,45-38.83A16.43,16.43,0,0,0,239.18,97.26Zm-15.34,5.47-48.7,42a8,8,0,0,0-2.56,7.91l14.88,62.8a.37.37,0,0,1-.17.48c-.18.14-.23.11-.38,0l-54.72-33.65A8,8,0,0,0,128,181.1V32c.24,0,.27.08.35.26L153,91.86a8,8,0,0,0,6.75,4.92l63.91,5.16c.16,0,.25,0,.34.29S224,102.63,223.84,102.73Z"/></svg>`;
+
 
 function tagsHtml(deck, pack, pos){
   const bits = [`<span class="tag deck">DECK ${deck.number}</span>`];
