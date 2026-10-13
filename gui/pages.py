@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from gui.deck_layout import CARD_GAP, PAGE_MARGINS, DECK_ORDER as DECK_LAYOUT
 from gui.health_timing import LinkHealthPanel
 from gui.overlay_now import migrate_now_pos_for_style, normalize_now_pos, normalize_now_style
+from gui import icons
 from gui.theme import COLORS
 from gui.widgets import DeckCard, parse_waveform
 from gui.settings import deck_elements_from
@@ -1627,7 +1628,8 @@ class LibraryPage(Page):
             if not tid or not t.get("has_artwork"):
                 continue
             self._art_ids.append(tid)
-            cell = QLabel("♪")
+            cell = QLabel()
+            cell.setPixmap(icons.icon_pixmap(icons.NOTE, COLORS["dimmest"], 28, self.devicePixelRatioF()))
             cell.setFixedSize(72, 72)
             cell.setAlignment(Qt.AlignCenter)
             cell.setStyleSheet(

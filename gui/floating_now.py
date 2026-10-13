@@ -5,12 +5,13 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from PySide6.QtCore import QObject, QPoint, QPointF, Qt, QTimer, QUrl, Slot
+from PySide6.QtCore import QObject, QPoint, QRectF, Qt, QTimer, QUrl, Slot
 from PySide6.QtGui import QColor, QMouseEvent, QPainter
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QSizeGrip, QVBoxLayout, QWidget
 
 _log = logging.getLogger(__name__)
 
+from gui import icons
 from gui.overlay_now import is_strip_style, normalize_now_style
 from prolink.audience_deck import merge_live_deck
 
@@ -115,24 +116,15 @@ class _FloatingDragHandle(QWidget):
         painter.end()
 
     def _paint_grip(self, painter: QPainter, hot: bool) -> None:
-        """Two-by-three grip. A dark halo keeps the dots visible on light content."""
-        cols, rows = 2, 3
-        step = 6
-        radius = 2.15 if hot else 1.9
-        span_w = (cols - 1) * step
-        span_h = (rows - 1) * step
-        ox = (self.width() - span_w) / 2
-        oy = (self.height() - span_h) / 2 - 0.5
-        halo = QColor(0, 0, 0, 230)
+        """Phosphor Dots Six Vertical grip. A dark halo keeps it visible on light content."""
+        size = 30.0 if hot else 28.0
+        x = (self.width() - size) / 2
+        y = (self.height() - size) / 2
+        halo = QColor(0, 0, 0, 200)
+        for dx, dy in ((-1.0, 0), (1.0, 0), (0, -1.0), (0, 1.0)):
+            icons.paint_icon(painter, icons.GRIP, QRectF(x + dx, y + dy, size, size), halo)
         fill = QColor(255, 255, 255, 255 if hot else 235)
-        painter.setPen(Qt.NoPen)
-        for row in range(rows):
-            for col in range(cols):
-                center = QPointF(ox + col * step, oy + row * step)
-                painter.setBrush(halo)
-                painter.drawEllipse(center, radius + 0.85, radius + 0.85)
-                painter.setBrush(fill)
-                painter.drawEllipse(center, radius, radius)
+        icons.paint_icon(painter, icons.GRIP, QRectF(x, y, size, size), fill)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton:

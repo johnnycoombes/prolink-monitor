@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QEvent, QTimer
+from PySide6.QtCore import Qt, QEvent, QSize, QTimer
 from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox,
@@ -16,6 +16,7 @@ from gui.pages import (
     SessionPage, SettingsPage, library_view_signature,
 )
 from gui.settings import load_settings, save_settings
+from gui import icons
 from gui.theme import COLORS
 from gui.floating_now import FloatingNowPlayingWindow
 from gui.widgets import Sidebar
@@ -82,7 +83,9 @@ class MainWindow(QMainWindow):
         top_l = QHBoxLayout(top)
         top_l.setContentsMargins(12, 0, 16, 0)
 
-        self.btn_sidebar = QPushButton("☰")
+        self.btn_sidebar = QPushButton()
+        self.btn_sidebar.setIcon(icons.icon(icons.LIST, COLORS["text"], 18))
+        self.btn_sidebar.setIconSize(QSize(18, 18))
         self.btn_sidebar.setObjectName("Chip")
         self.btn_sidebar.setFixedWidth(36)
         self.btn_sidebar.setCursor(Qt.PointingHandCursor)

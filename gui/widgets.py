@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
 
 from prolink.countdown import current_phrase, format_countdown, next_mark, urgency_color
 from prolink.fields import beat_phrase_text, color_label, display_text, display_year, rating_stars
+
+from gui import icons
 from prolink.vocal import VOCAL_STRIP_H
 from gui.deck_fit import (
     ARTIST_MIN, BPM_MIN, DETAIL_MIN, META_MIN, NUM_MIN, PITCH_MIN, READOUT_DROP,
@@ -1000,8 +1002,9 @@ class DeckCard(QFrame):
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
         top.setSpacing(8)
-        self.art = QLabel("♪")
+        self.art = QLabel()
         self.art.setFixedSize(ART_PX, ART_PX)
+        self._set_art_placeholder()
         self.art.setAlignment(Qt.AlignCenter)
         self.art.setStyleSheet(
             f"background:{COLORS['panel_high']}; border:1px solid {COLORS['line']};"
@@ -1033,6 +1036,7 @@ class DeckCard(QFrame):
         self.year.setObjectName("DeckMeta")
         self.key = QLabel("")
         self.rating = QLabel("")
+        self.rating.setTextFormat(Qt.RichText)
         self.rating.setObjectName("DeckMeta")
         self.color_line = QLabel("")
         self.color_line.setObjectName("DeckExtra")
@@ -1125,6 +1129,7 @@ class DeckCard(QFrame):
         self.state = QLabel("")
         self.loop_badge = QLabel("")
         self.loop_badge.setObjectName("LoopBadge")
+        self.loop_badge.setTextFormat(Qt.RichText)
         self.loop_badge.setStyleSheet(
             "font-family:monospace; font-size:10px; font-weight:700; "
             "letter-spacing:1px; color:#2ee89a; "
@@ -1344,6 +1349,21 @@ class DeckCard(QFrame):
             f"font-family:'{family}'; font-size:{font.pixelSize()}px;"
             f"font-weight:{weight}; color:{color};"
         )
+
+    def _set_art_placeholder(self) -> None:
+        """Phosphor music note in place of artwork."""
+        self.art.setText("")
+        size = max(16, int(self.art.width() * 0.42))
+        self.art.setPixmap(icons.icon_pixmap(icons.NOTE, COLORS["dimmest"], size, self.devicePixelRatioF()))
+
+    def _rating_html(self, font_px: int) -> str:
+        if not self._rating_raw:
+            return ""
+        return icons.stars_html(self._rating_raw.count("★"), "#ffd45e", max(9, int(font_px or 12)))
+
+    @staticmethod
+    def _loop_text(label: str) -> str:
+        return f"{icons.icon_html(icons.LOOP, '#2ee89a', 11)}&nbsp;{label}"
 
     def _put(self, widget: QLabel, text: str) -> None:
         widget.setText(text or "")
@@ -1622,7 +1642,7 @@ class DeckCard(QFrame):
         self.key.setText(self._key_raw)
         self.key.setFixedHeight(self._line_box(key_font))
         self._paint_font(self.rating, detail_font, "#ffd45e")
-        self.rating.setText(self._rating_raw)
+        self.rating.setText(self._rating_html(detail_font.pixelSize()))
         self.rating.setFixedHeight(detail_h)
         self._paint_font(self.color_line, detail_font, COLORS["dim"])
         self.color_line.setText(self._color_html)
@@ -1980,6 +2000,8 @@ class DeckCard(QFrame):
         self._put(self.year, self._year_raw)
         self._put(self.key, self._key_raw)
         self._put(self.rating, self._rating_raw)
+        if self._rating_raw:
+            self.rating.setText(self._rating_html(self.rating.font().pixelSize()))
         self._put(self.color_line, self._color_html)
         self._put(self.comment, self._comment_raw)
         self.title.setText(self._title_raw)
@@ -2151,10 +2173,10 @@ class DeckCard(QFrame):
             beats = 0
             if bpm > 0 and end is not None and start is not None:
                 beats = max(0, round((end - start) / (60000.0 / bpm)))
-            self.loop_badge.setText(f"↻ {beats}" if beats else "↻ LOOP")
+            self.loop_badge.setText(self._loop_text(str(beats) if beats else "LOOP"))
             self.loop_badge.show()
         elif looping:
-            self.loop_badge.setText("↻ LOOP")
+            self.loop_badge.setText(self._loop_text("LOOP"))
             self.loop_badge.show()
         else:
             self.loop_badge.hide()
@@ -2191,8 +2213,7 @@ class DeckCard(QFrame):
             if not tid:
                 self._empty = True
                 self._title_raw = ""
-                self.art.setPixmap(QPixmap())
-                self.art.setText("♪")
+                self._set_art_placeholder()
                 self.wave.set_track(None, None, None)
 
         empty = not tid
