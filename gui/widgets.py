@@ -81,12 +81,34 @@ def sane_duration_ms(deck_ms: float, meta_ms: float = 0) -> float:
     return meta or deck or 0.0
 
 
-# Beat Link WaveformFinder.WaveformStyle / ThreeBandLayer.
-WAVE_STYLES = ("rgb", "3band", "blue")
-BAND_LOW = (32, 83, 217)          # low frequencies
-BAND_MID = (242, 170, 60)         # mids, when they stick out past the lows
-BAND_OVERLAP = (169, 107, 39)     # where low and mid overlap
-BAND_HIGH = (255, 255, 255)       # highs, drawn last
+# 3-band palettes come from web/wavepalette.json (one definition for Qt and
+# web). "beatlink" uses the reference overlap method; "cdj3000" fills each
+# band combination (mask) in its own colour, as OneLibraryCompanion does.
+from prolink import wavestyle as _ws
+from prolink.wavezoom import clamp_seconds, wheel_zoom, x_for_ms
+
+WAVE_STYLES = _ws.WAVE_STYLES
+_PALETTE_CACHE: dict[str, dict] = {}
+
+
+def wave_palette(name: str | None) -> dict:
+    """QColor palette for ``name``: keys low, mid, high, low_mid, ..., plus mode."""
+    key = _ws.normalize_palette(name)
+    pal = _PALETTE_CACHE.get(key)
+    if pal is None:
+        raw = _ws.palette(key)
+        pal = {"mode": raw["mode"]}
+        for k in _ws.MASK_KEYS:
+            pal[k] = QColor(*_ws.hex_rgb(raw[k]))
+        _PALETTE_CACHE[key] = pal
+    return pal
+
+
+_BL = _ws.palette("beatlink")
+BAND_LOW = _ws.hex_rgb(_BL["low"])          # low frequencies
+BAND_MID = _ws.hex_rgb(_BL["mid"])          # mids, when they stick out past the lows
+BAND_OVERLAP = _ws.hex_rgb(_BL["low_mid"])  # where low and mid overlap
+BAND_HIGH = _ws.hex_rgb(_BL["high"])        # highs, drawn last
 BLUE_SHADE = (0, 168, 232)        # COLOR_MAP[2], used when PWV3 is absent
 
 
@@ -240,6 +262,7 @@ def parse_waveform(data: bytes) -> tuple[dict | None, dict | None]:
             return None, offset
         return {
             "n": n,
+            "flags": _flags,
             "low": data[start:start + n],
             "mid": data[start + n:start + 2 * n],
             "high": data[start + 2 * n:end],
@@ -286,6 +309,10 @@ def _attach_bands(wave: dict | None, bands: dict | None) -> None:
     wave["mid"] = bands["mid"]
     wave["high"] = bands["high"]
     wave["band_peak"] = peak
+    # PWV6 overview: contributions stacked bottom-up, already peak-normalised.
+    wave["band_stacked"] = bool(int(bands.get("flags") or 0) & 1)
+    if wave["band_stacked"]:
+        wave["band_peak"] = 255
 
 
 def _attach_blue(wave: dict | None, blue_block: dict | None) -> None:
@@ -323,8 +350,54 @@ def _band_heights_at(wave: dict, src: int) -> tuple[int, int, int, int] | None:
     return None
 
 
+def paint_band_column(p: QPainter, x: int, mid: float, low_px: float, mid_px: float,
+                      high_px: float, pal: dict) -> None:
+    """Mirrored 3-band column in palette ``pal``.
+
+    ``overlap`` mode (Beat Link reference): the taller of low and mid in its
+    colour, the overlap in brown, then the highs. ``mask`` mode
+    (OneLibraryCompanion): each band combination is filled to the height all
+    its members reach, in the order low, mid, high, low+mid, low+high,
+    mid+high, all, so every overlap gets its own colour.
+    """
+    if pal["mode"] == "mask":
+        hs = (low_px, mid_px, high_px)
+        for key, bits in zip(_ws.MASK_KEYS, _ws.MASK_BITS):
+            px = min(hs[i] for i in range(3) if bits & (1 << i))
+            _fill_mirrored(p, x, mid, px, pal[key])
+        return
+    if low_px > mid_px:
+        _fill_mirrored(p, x, mid, low_px, pal["low"])
+        _fill_mirrored(p, x, mid, mid_px, pal["low_mid"])
+    else:
+        if abs(low_px - mid_px) >= 0.4:
+            _fill_mirrored(p, x, mid, mid_px, pal["mid"])
+        _fill_mirrored(p, x, mid, low_px, pal["low_mid"])
+    _fill_mirrored(p, x, mid, high_px, pal["high"])
+
+
+def paint_stacked_column(p: QPainter, x: int, bottom: float, height: float,
+                         low: int, md: int, hi: int, pal: dict) -> None:
+    """PWV6 overview column, stacked bottom-up: total in high, low+mid in mid, low."""
+    for value, key in ((low + md + hi, "high"), (low + md, "mid"), (low, "low")):
+        px = value / 255.0 * height
+        if px >= 0.4:
+            p.fillRect(x, int(bottom - px), 1, max(1, int(round(px))), pal[key])
+
+
+def stacked_pick(wave: dict, a: int, b: int) -> int:
+    """Max-pool source index in [a, b) by stacked total."""
+    low, md, hi = wave["low"], wave["mid"], wave["high"]
+    best, top = a, -1
+    for i in range(a, max(a + 1, b)):
+        t = low[i] + md[i] + hi[i]
+        if t > top:
+            best, top = i, t
+    return best
+
+
 def _paint_column(p: QPainter, x: int, mid: float, amp: float, style: str,
-                  src: int, wave: dict, span: float) -> None:
+                  src: int, wave: dict, span: float, palette: str | None = None) -> None:
     """One waveform column, mirrored around the centre line.
 
     3-Band follows ``WaveformDetailComponent``: the taller of low and mid is
@@ -336,17 +409,8 @@ def _paint_column(p: QPainter, x: int, mid: float, amp: float, style: str,
         bands = _band_heights_at(wave, src)
         if bands is not None:
             low, md, hi, peak = bands
-            low_px = low / peak * span
-            mid_px = md / peak * span
-            high_px = hi / peak * span
-            if low_px > mid_px:
-                _fill_mirrored(p, x, mid, low_px, QColor(*BAND_LOW))
-                _fill_mirrored(p, x, mid, mid_px, QColor(*BAND_OVERLAP))
-            else:
-                if abs(low_px - mid_px) >= 0.4:
-                    _fill_mirrored(p, x, mid, mid_px, QColor(*BAND_MID))
-                _fill_mirrored(p, x, mid, low_px, QColor(*BAND_OVERLAP))
-            _fill_mirrored(p, x, mid, high_px, QColor(*BAND_HIGH))
+            paint_band_column(p, x, mid, low / peak * span, md / peak * span,
+                              hi / peak * span, wave_palette(palette))
             return
     if amp < 0.5:
         return
@@ -443,6 +507,7 @@ class WaveformView(QWidget):
 
     hover_ms_changed = Signal(float)   # ms under cursor (-1 when left)
     cue_ms_clicked = Signal(float)     # ms at click (display cue / readout)
+    zoom_seconds_changed = Signal(float)  # wheel zoom in seconds, -1 = reset
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -459,6 +524,8 @@ class WaveformView(QWidget):
         self._bpm = 120.0
         self._offair = False
         self._style = "rgb"
+        self._palette = "beatlink"
+        self._zoom_seconds: float | None = None   # wheel zoom; None = bars setting
         self._playhead_frac = 0.5
         self._loop_start_ms: float | None = None
         self._loop_end_ms: float | None = None
@@ -494,7 +561,44 @@ class WaveformView(QWidget):
         self.update()
 
     def _visible_seconds(self) -> float:
+        if self._zoom_seconds is not None:
+            return self._zoom_seconds
         return bars_to_seconds(self._zoom_bars, self._bpm)
+
+    def detail_x(self, t_ms: float, width: int | None = None) -> float:
+        """X of track time on the scrolling strip (loops, cues, beats share it)."""
+        return x_for_ms(t_ms, self._pos_ms, self._visible_seconds(),
+                        width if width is not None else max(1, self.width()),
+                        self._playhead_frac)
+
+    def set_zoom_seconds(self, seconds: float | None) -> None:
+        value = None if seconds is None or seconds < 0 else clamp_seconds(seconds)
+        if value == self._zoom_seconds:
+            return
+        self._zoom_seconds = value
+        self._invalidate_detail()
+        self.update()
+
+    def _over_detail(self, y: float) -> bool:
+        return y > self._overview_h + self._phrase_h + self._vocal_h
+
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        """Wheel over the scrolling strip zooms ~2-30 s, playhead stays put."""
+        delta = event.angleDelta().y()
+        if not delta or not self._over_detail(event.position().y()):
+            return super().wheelEvent(event)
+        seconds = wheel_zoom(self._visible_seconds(), delta)
+        self.set_zoom_seconds(seconds)
+        self.zoom_seconds_changed.emit(seconds)
+        event.accept()
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        if self._over_detail(event.position().y()):
+            self.set_zoom_seconds(None)
+            self.zoom_seconds_changed.emit(-1.0)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def _duration_ms(self) -> float:
         ov = self._overview
@@ -570,6 +674,14 @@ class WaveformView(QWidget):
         if style == self._style:
             return
         self._style = style
+        self._invalidate_all()
+        self.update()
+
+    def set_palette(self, name: str) -> None:
+        name = _ws.normalize_palette(name)
+        if name == self._palette:
+            return
+        self._palette = name
         self._invalidate_all()
         self.update()
 
@@ -724,7 +836,7 @@ class WaveformView(QWidget):
 
     def _ensure_overview(self, w, h) -> None:
         ov = self._overview
-        key = (id(ov) if ov else 0, self._style, w, h, self._offair)
+        key = (id(ov) if ov else 0, self._style, self._palette, w, h, self._offair)
         if self._overview_pm is not None and self._overview_key == key:
             return
         pm = QPixmap(w, h)
@@ -753,10 +865,21 @@ class WaveformView(QWidget):
         heights = ov["h"]
         mid = y0 + h / 2
         span = (h / 2) * 0.94
+        if self._style == "3band" and ov.get("band_stacked"):
+            pal = wave_palette(self._palette)
+            bottom = y0 + h - 1
+            for x in range(w):
+                i = stacked_pick(ov, min(n - 1, (x * n) // w), min(n, ((x + 1) * n) // w))
+                paint_stacked_column(p, x0 + x, bottom, h - 2, ov["low"][i],
+                                     ov["mid"][i], ov["high"][i], pal)
+            return
         for x in range(w):
-            i = min(n - 1, (x * n) // w)
+            # Max-pool every source column under this pixel.
+            a = min(n - 1, (x * n) // w)
+            b = max(a + 1, min(n, ((x + 1) * n) // w))
+            i = max(range(a, b), key=heights.__getitem__)
             tall = (heights[i] / 31.0) * span
-            _paint_column(p, x0 + x, mid, tall, self._style, i, ov, span)
+            _paint_column(p, x0 + x, mid, tall, self._style, i, ov, span, self._palette)
 
     def _blit_detail(self, p: QPainter, x0, y0, w, h) -> None:
         self._ensure_detail(w, h)
@@ -816,7 +939,8 @@ class WaveformView(QWidget):
         px_per_col = w / visible
         current = (self._pos_ms / 1000.0) * cps
         start = self._window_start(current, visible)
-        key = (id(d), self._style, self._zoom_bars, round(self._bpm, 1),
+        key = (id(d), self._style, self._palette, self._zoom_bars,
+               self._zoom_seconds, round(self._bpm, 1),
                w, h, self._offair, self._playhead_frac)
 
         if (self._detail_pm is None or self._detail_key != key
@@ -917,7 +1041,7 @@ class WaveformView(QWidget):
                     tall = heights[i]
                     src = i
             amp = (tall / 31.0) * span
-            _paint_column(p, x0 + px, mid, amp, self._style, src, d, span)
+            _paint_column(p, x0 + px, mid, amp, self._style, src, d, span, self._palette)
 
         # Cues are drawn live in _blit_detail so they stay sharp while scrolling.
 
@@ -950,6 +1074,7 @@ class PlayedBar(QWidget):
 
 class DeckCard(QFrame):
     zoom_override_changed = Signal(int, int)  # deck number, bars
+    zoom_seconds_changed = Signal(int, float)  # deck number, seconds (-1 = reset)
     focused = Signal(int)                     # deck number
 
     def __init__(self, number: int, i18n, parent=None):
@@ -1092,6 +1217,8 @@ class DeckCard(QFrame):
         self.wave.set_deck_color(self._color)
         self.wave.hover_ms_changed.connect(self._on_hover_ms)
         self.wave.cue_ms_clicked.connect(self._on_cue_ms)
+        self.wave.zoom_seconds_changed.connect(
+            lambda sec: self.zoom_seconds_changed.emit(self.number, float(sec)))
         wave_col.addWidget(self.wave, 1)
         body.addLayout(wave_col, 1)
 
@@ -1905,8 +2032,24 @@ class DeckCard(QFrame):
             f"font-family:monospace; font-size:11px; color:{self._color};"
         )
 
-    def set_wave_style(self, style: str) -> None:
-        self.wave.set_style(style)
+    def set_wave_style(self, style: str, fallback: str | None = None) -> None:
+        """User choice (may be ``auto``); auto follows the player's 0xDA report."""
+        self._wave_choice = _ws.normalize_style(style)
+        if fallback is not None:
+            self._wave_fallback = _ws.normalize_style(fallback, allow_auto=False)
+        self._apply_wave_style()
+
+    def _apply_wave_style(self) -> None:
+        deck = getattr(self, "_last_deck", None) or {}
+        self.wave.set_style(_ws.resolve_style(
+            getattr(self, "_wave_choice", "rgb"), deck.get("waveform_color"),
+            getattr(self, "_wave_fallback", "rgb")))
+
+    def set_wave_palette(self, name: str) -> None:
+        self.wave.set_palette(name)
+
+    def set_zoom_seconds(self, seconds: float | None) -> None:
+        self.wave.set_zoom_seconds(seconds)
 
     def set_show_phrases(self, enabled: bool) -> None:
         self.wave.set_show_phrases(enabled)
@@ -2095,6 +2238,8 @@ class DeckCard(QFrame):
             deck["loop_start_ms"] = loop_start_ms
             deck["loop_end_ms"] = loop_end_ms
             self._last_deck = deck
+        if getattr(self, "_wave_choice", "rgb") == "auto":
+            self._apply_wave_style()
         meta_dur = float((self._meta or {}).get("duration_ms") or 0)
         dur = sane_duration_ms(duration_ms, meta_dur)
         if dur:
@@ -2261,6 +2406,8 @@ class DeckCard(QFrame):
             state = ""
         self._put(self.state, state)
         self._last_deck = deck
+        if getattr(self, "_wave_choice", "rgb") == "auto":
+            self._apply_wave_style()
         self._paint_next(pos_ms)
         self._apply_playhead()
         if empty and not self._meta:

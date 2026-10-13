@@ -188,6 +188,7 @@ class BundleLayoutTests(unittest.TestCase):
             (internal / "web").mkdir(parents=True)
             (internal / "web" / "index.html").write_text("ok", encoding="utf-8")
             (internal / "web" / "overlay.html").write_text("ok", encoding="utf-8")
+            (internal / "web" / "wavepalette.json").write_text("{}", encoding="utf-8")
             (internal / "QtWebEngineProcess.exe").write_text("proc", encoding="utf-8")
             (internal / "assets" / "icons").mkdir(parents=True)
             (internal / "assets" / "icons" / "music-note.svg").write_text("<svg/>", encoding="utf-8")

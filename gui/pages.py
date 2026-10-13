@@ -7,6 +7,8 @@ import threading
 import time
 from typing import Any
 
+from prolink.wavestyle import normalize_palette, normalize_style
+from prolink.wavezoom import clean_zoom_seconds
 from PySide6.QtCore import Qt, QTimer, Signal, QEvent
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
@@ -182,7 +184,7 @@ class MonitorPage(Page):
         wave_lbl.setObjectName("SectionTitle")
         tools.addWidget(wave_lbl)
         self._style_btns: dict[str, QPushButton] = {}
-        for key, label in (("rgb", "RGB"), ("3band", "3BAND"), ("blue", "BLUE")):
+        for key, label in (("auto", "AUTO"), ("rgb", "RGB"), ("3band", "3BAND"), ("blue", "BLUE")):
             b = QPushButton(label)
             b.setObjectName("Chip")
             b.setCursor(Qt.PointingHandCursor)
@@ -263,6 +265,14 @@ class MonitorPage(Page):
                 }
             self._apply_card_zooms()
             self.set_max_decks(int(settings.get("max_decks", 4)))
+            self._wave_fallback = normalize_style(settings.get("waveform_style_fallback"), allow_auto=False)
+            self.set_wave_palette(str(settings.get("waveform_palette") or "beatlink"))
+            self._zoom_seconds = {
+                int(k): float(v)
+                for k, v in clean_zoom_seconds(settings.get("wave_zoom_seconds_by_deck")).items()
+            }
+            for n, card in self._cards.items():
+                card.set_zoom_seconds(self._zoom_seconds.get(n))
             self.set_wave_style(str(settings.get("waveform_style") or "rgb"))
             self.set_playhead_mode(str(settings.get("playhead_position") or "auto"))
             self._show_empty = bool(settings.get("show_empty_decks", True))
@@ -340,13 +350,27 @@ class MonitorPage(Page):
         self._notify_prefs()
 
     def set_wave_style(self, style: str) -> None:
-        self._wave_style = style if style in ("rgb", "3band", "blue") else "rgb"
+        self._wave_style = normalize_style(style)
         for key, b in self._style_btns.items():
             b.setProperty("active", "true" if key == self._wave_style else "false")
             b.style().unpolish(b)
             b.style().polish(b)
         for card in self._cards.values():
-            card.set_wave_style(self._wave_style)
+            card.set_wave_style(self._wave_style, getattr(self, "_wave_fallback", "rgb"))
+        self._notify_prefs()
+
+    def set_wave_palette(self, name: str) -> None:
+        self._wave_palette = normalize_palette(name)
+        for card in self._cards.values():
+            card.set_wave_palette(self._wave_palette)
+
+    def _on_deck_zoom_seconds(self, number: int, seconds: float) -> None:
+        """Wheel zoom on one deck (seconds), or reset (-1). Saved per deck."""
+        zooms = self._zoom_seconds = getattr(self, "_zoom_seconds", {})
+        if seconds < 0:
+            zooms.pop(int(number), None)
+        else:
+            zooms[int(number)] = round(float(seconds), 3)
         self._notify_prefs()
 
     def set_show_phrases(self, enabled: bool) -> None:
@@ -402,6 +426,8 @@ class MonitorPage(Page):
             "zoom_bars_by_deck": {str(k): v for k, v in self._zoom_overrides.items()},
             "max_decks": self._max_decks,
             "waveform_style": self._wave_style,
+            "wave_zoom_seconds_by_deck": {
+                str(k): v for k, v in getattr(self, "_zoom_seconds", {}).items()},
             "playhead_position": self._playhead_mode,
             "show_phrases": bool(getattr(self, "_show_phrases", True)),
             "show_vocals": bool(getattr(self, "_show_vocals", True)),
@@ -503,7 +529,10 @@ class MonitorPage(Page):
                     card.set_zoom(self._zoom_overrides[n], override=True)
                 else:
                     card.set_zoom(self._zoom, override=False)
-                card.set_wave_style(self._wave_style)
+                card.set_wave_style(self._wave_style, getattr(self, "_wave_fallback", "rgb"))
+                card.set_wave_palette(getattr(self, "_wave_palette", "beatlink"))
+                card.set_zoom_seconds(getattr(self, "_zoom_seconds", {}).get(n))
+                card.zoom_seconds_changed.connect(self._on_deck_zoom_seconds)
                 card.set_playhead_mode(self._playhead_mode)
                 card.set_show_phrases(bool(getattr(self, "_show_phrases", True)))
                 card.set_show_vocals(bool(getattr(self, "_show_vocals", True)))
@@ -1956,6 +1985,7 @@ class OverlayPage(Page):
         self.show_spectrum.setToolTip(i18n.t("overlay_show_spectrum_tip"))
         self.show_spectrum.setChecked(True)
         self.wave_box = QComboBox()
+        self.wave_box.addItem(i18n.t("wave_auto"), "auto")
         self.wave_box.addItem(i18n.t("wave_rgb"), "rgb")
         self.wave_box.addItem(i18n.t("wave_3band"), "3band")
         self.wave_box.addItem(i18n.t("wave_blue"), "blue")
@@ -2128,6 +2158,13 @@ class OverlayPage(Page):
             f"decks={self.decks_box.currentData()}",
             f"wave={self.wave_box.currentData()}",
         ]
+        try:
+            from gui.settings import load_settings as _load
+            palette = normalize_palette(_load().get("waveform_palette"))
+        except Exception:
+            palette = "beatlink"
+        if palette != "beatlink":
+            qs.append(f"palette={palette}")
         if layout == "nowplaying":
             style = normalize_now_style(self.now_style_box.currentData())
             if style in ("panel", "bar"):
@@ -2255,9 +2292,24 @@ class SettingsPage(Page):
                 bars,
             )
         self.wave_style = QComboBox()
+        self.wave_style.addItem(i18n.t("wave_auto"), "auto")
         self.wave_style.addItem(i18n.t("wave_rgb"), "rgb")
         self.wave_style.addItem(i18n.t("wave_3band"), "3band")
         self.wave_style.addItem(i18n.t("wave_blue"), "blue")
+        self.wave_style.setToolTip(i18n.t("wave_auto_tip"))
+        self.wave_fallback = QComboBox()
+        self.wave_fallback.addItem(i18n.t("wave_rgb"), "rgb")
+        self.wave_fallback.addItem(i18n.t("wave_3band"), "3band")
+        self.wave_fallback.addItem(i18n.t("wave_blue"), "blue")
+        self.wave_fallback.setToolTip(i18n.t("wave_fallback_tip"))
+        self.wave_palette = QComboBox()
+        self.wave_palette.addItem(i18n.t("palette_beatlink"), "beatlink")
+        self.wave_palette.addItem(i18n.t("palette_cdj3000"), "cdj3000")
+        self.wave_palette.setToolTip(i18n.t("palette_tip"))
+        self.pwv7_order = QComboBox()
+        self.pwv7_order.addItem(i18n.t("pwv7_mid_high_low"), "mid_high_low")
+        self.pwv7_order.addItem(i18n.t("pwv7_low_mid_high"), "low_mid_high")
+        self.pwv7_order.setToolTip(i18n.t("pwv7_order_tip"))
         self.playhead = QComboBox()
         self.playhead.addItem(i18n.t("playhead_auto"), "auto")
         self.playhead.addItem(i18n.t("playhead_centre"), "centre")
@@ -2280,6 +2332,9 @@ class SettingsPage(Page):
         disp.addRow(i18n.t("max_decks"), self.max_decks)
         disp.addRow(i18n.t("zoom"), self.zoom)
         disp.addRow(i18n.t("wave"), self.wave_style)
+        disp.addRow(i18n.t("wave_fallback"), self.wave_fallback)
+        disp.addRow(i18n.t("palette"), self.wave_palette)
+        disp.addRow(i18n.t("pwv7_order"), self.pwv7_order)
         disp.addRow(i18n.t("playhead"), self.playhead)
         disp.addRow("", self.show_phrases)
         disp.addRow("", self.show_vocals)
@@ -2333,6 +2388,7 @@ class SettingsPage(Page):
         self.overlay_playing = QCheckBox(i18n.t("overlay_playing"))
         self.overlay_mix = QCheckBox(i18n.t("overlay_mix"))
         self.overlay_wave = QComboBox()
+        self.overlay_wave.addItem(i18n.t("wave_auto"), "auto")
         self.overlay_wave.addItem(i18n.t("wave_rgb"), "rgb")
         self.overlay_wave.addItem(i18n.t("wave_3band"), "3band")
         self.overlay_wave.addItem(i18n.t("wave_blue"), "blue")
@@ -2509,6 +2565,10 @@ class SettingsPage(Page):
         self.zoom.setCurrentIndex(max(0, idx))
         idx = self.wave_style.findData(data.get("waveform_style", "rgb"))
         self.wave_style.setCurrentIndex(max(0, idx))
+        for box, key, default in ((self.wave_fallback, "waveform_style_fallback", "rgb"),
+                                  (self.wave_palette, "waveform_palette", "beatlink"),
+                                  (self.pwv7_order, "pwv7_order", "mid_high_low")):
+            box.setCurrentIndex(max(0, box.findData(data.get(key, default))))
         idx = self.playhead.findData(normalize_playhead_mode(data.get("playhead_position")))
         self.playhead.setCurrentIndex(max(0, idx))
         self.show_phrases.blockSignals(True)
@@ -2583,6 +2643,9 @@ class SettingsPage(Page):
             "max_decks": self.max_decks.currentData(),
             "zoom_bars": self.zoom.currentData(),
             "waveform_style": self.wave_style.currentData(),
+            "waveform_style_fallback": self.wave_fallback.currentData(),
+            "waveform_palette": self.wave_palette.currentData(),
+            "pwv7_order": self.pwv7_order.currentData(),
             "playhead_position": self.playhead.currentData(),
             "show_phrases": self.show_phrases.isChecked(),
             "show_vocals": self.show_vocals.isChecked(),

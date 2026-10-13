@@ -2,7 +2,7 @@
 
 A live Pro DJ Link monitor. It joins the booth network as a virtual player, reads the library and analysis from the player while the set is running, and draws decks, waveforms, and artwork on this computer. It is read-only toward the player and the USB stick: it never writes a Rekordbox database, never sends library edits, and a packet capture only records what already arrived.
 
-This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.8**. This tree is **1.0.9**.
+This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.9**. This tree is **1.0.10**.
 
 ## Contents
 
@@ -17,6 +17,14 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 - [Credits](#credits)
 
 ## What's new
+
+**1.0.10.** 3-band waveforms and a zoomable scrolling wave.
+
+- **Byte order switch.** PWV7 (the scrolling 3-band wave in `.2EX`) is read as mid, high, low by default, the Beat Link order. OneLibraryCompanion reads it as low, mid, high. The order is one setting, `pwv7_order`, and the log prints which one is in use. **If kick drums are not blue on 3-Band**, open **Settings > Display > 3-Band byte order**, pick *Low, mid, high (OneLibraryCompanion)*, save, and reload the track (or set `"pwv7_order": "low_mid_high"` in `settings.json`). PWV6 (the overview) stays mid, high, low; both references agree on it.
+- **PWV6 overview.** The 3-band overview comes from PWV6 when the track has it: low, mid and high are stacked from the bottom with weights 0.49, 0.32 and 0.25, and scaled to the loudest column of the track. Tracks without PWV6 keep the PWV7 downsample. Every overview pixel max-pools the columns under it, so short hits do not drop out.
+- **Two palettes.** *Beat Link* is the current look: blue lows, amber mids, brown where they overlap, white highs. *CDJ-3000* gives every band overlap its own colour (`#0055e1`, `#ffa600`, `#ffffff`, `#b4690a`, `#d2dcfa`, `#fff0d7`, `#f5ebd7`). Both are defined once, in `web/wavepalette.json`, which the desktop app, the web panel and the overlays all read. Overlays take `palette=cdj3000`.
+- **Auto waveform style.** *Auto* follows the colour each player is set to (status byte 0xDA: 01 blue, 03 RGB, 04 3-band). When a player does not report it, Auto draws the *Auto fallback* you pick (RGB by default). Overlays take `wave=auto` and `wavefb=`.
+- **Zoom.** On the Monitor, the mouse wheel over a deck's scrolling wave zooms it from 2 s to 30 s in smooth steps (×1.15 per notch). The playhead stays where it is (centre or left). Double-click resets the deck to the bar zoom. Each deck keeps its own zoom in `settings.json` (`wave_zoom_seconds_by_deck`). The web panel does the same with the wheel and a two-finger pinch, and remembers it in the browser. Overlays take a fixed `zoom=<seconds>` and have no zoom controls. Loops, cues and beat lines are placed from the same window at every zoom, the phrase strip is unaffected, and zoomed-out views max-pool so they stay sharp.
 
 **1.0.9.** Icons are [Phosphor](https://phosphoricons.com/) SVGs instead of text symbols. The artwork placeholder is a music note, the loop badge uses Repeat, the sidebar button uses List, and ratings are filled and outlined stars. The floating overlay's drag strip uses the Dots Six Vertical grip. The Qt app recolours them to the theme, and the web panel and overlays draw them inline in `currentColor`. ON AIR, MASTER, SYNC, deck numbers, status dots, and the key stay as text.
 
@@ -269,7 +277,10 @@ The **Overlay** page builds the URL. Copy it into OBS and size the source to the
 | `pos` | card: `tl` `tr` `bl` `br`; panel and bar: `bottom` `top` | `bl` or `bottom` | Where that style sits |
 | `corner` | `bl`, `br`, `tl`, `tr`, `center` | `bl` | Other layouts |
 | `decks` | `1`–`4` | `1` (`2` for dual) | How many decks |
-| `wave` | `rgb`, `3band`, `blue` | `rgb` | Overlay wave colour |
+| `wave` | `auto`, `rgb`, `3band`, `blue` | `rgb` | Overlay wave colour. `auto` follows the player |
+| `wavefb` | `rgb`, `3band`, `blue` | `rgb` | What `wave=auto` draws when the player does not say |
+| `palette` | `beatlink`, `cdj3000` | `beatlink` | 3-band colours |
+| `zoom` | `2`–`30` (seconds) | bar zoom | Fixed scrolling-wave window |
 | `scale` or `font` | `0.5`–`2.5` | `1` | Size |
 | `accent` | 6-digit hex | — | Accent colour, for example `ff6b61` |
 | `tags` | `1` / `0` | on | MASTER / SYNC / ON AIR |
@@ -319,7 +330,11 @@ Saved at `~/.prolink-monitor/settings.json`. On Windows that is `C:\Users\<you>\
 | `start_web_server` | on | Start the panel with the app |
 | `auto_connect` | on | Connect when the window opens |
 | `max_decks` | `4` | 2 or 4 |
-| `waveform_style` | `rgb` | `rgb`, `3band`, or `blue` |
+| `waveform_style` | `rgb` | `auto`, `rgb`, `3band`, or `blue` |
+| `waveform_style_fallback` | `rgb` | What `auto` draws when the player does not report its colour |
+| `waveform_palette` | `beatlink` | `beatlink` or `cdj3000` |
+| `pwv7_order` | `mid_high_low` | `mid_high_low` (Beat Link) or `low_mid_high` (OneLibraryCompanion) |
+| `wave_zoom_seconds_by_deck` | `{}` | Wheel zoom per deck, 2–30 s |
 | `zoom_bars` | `4` | Bars in the detail wave |
 | `show_phrases` | on | Phrase strip |
 | `show_vocals` | on | Vocal lane |
@@ -482,6 +497,7 @@ Reference only. No GPL or EPL source is included in this tree:
 
 - [Deep Symmetry](https://github.com/Deep-Symmetry)’s [DJ Link Ecosystem Analysis](https://djl-analysis.deepsymmetry.org/) (from [dysentery](https://github.com/Deep-Symmetry/dysentery) and [crate-digger](https://github.com/Deep-Symmetry/crate-digger)). That write-up is the field reference for the packets, `export.pdb`, and the analysis files, and it should be credited when the research is reused. The code repositories are Eclipse Public License. None of that source is copied here.
 - [Beat Link](https://github.com/Deep-Symmetry/beat-link) `WaveformDetail` / `WaveformFinder`, used as the reference for RGB, 3-band, and blue column layout. Beat Link is EPL. This project does not include that source.
+- [hdelplan/OneLibraryCompanion](https://github.com/hdelplan/OneLibraryCompanion) (GPL-3.0). Its 3-band renderer was the reference for the CDJ-3000 palette colours, the mask fill (one colour per band overlap), the PWV7 low, mid, high reading behind the `pwv7_order` switch, and stacking PWV6 bottom-up. The code here is written from scratch; see [`LICENSES/THIRD_PARTY.md`](LICENSES/THIRD_PARTY.md).
 - Reverse engineering by [@henrybetts](https://github.com/henrybetts) and [@flesniak](https://github.com/flesniak), which the Deep Symmetry work builds on.
 - Other GPL and EPL Pro DJ Link projects were read the same way: to check a field offset or a behaviour, not to vendor the code.
 

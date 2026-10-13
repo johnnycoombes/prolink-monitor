@@ -14,6 +14,7 @@ Every integer is big-endian.
 
 from __future__ import annotations
 
+import logging
 import struct
 from dataclasses import dataclass, field
 
@@ -430,46 +431,128 @@ def vocal_spans(analysis: Analysis, duration_ms: float | None = None) -> list[di
     )
 
 
-def decode_3band_heights(data: bytes) -> tuple[bytearray, bytearray, bytearray]:
-    """PWV7 column heights, as ``WaveformDetail.segmentHeight`` for each band.
+log = logging.getLogger("prolink.anlz")
 
-    Byte order in the file is mid, high, low. Beat Link scales them
-    independently (these are pixel heights, not 0-31):
+# ---------------------------------------------------------------- 3-band order
+# Byte order of one 3-byte PWV7 / PWV6 entry, as (low, mid, high) indices.
+# Beat Link reads PWV7 as mid, high, low. OneLibraryCompanion reads PWV7 as
+# low, mid, high (checked against its reference captures) and PWV6 as mid,
+# high, low. Which one the XDJ-AZ writes is settled on hardware: kick drums
+# should draw blue. Flip ``pwv7_order`` in Settings if they do not.
+BAND_ORDERS = {
+    "mid_high_low": (2, 0, 1),   # Beat Link (default)
+    "low_mid_high": (0, 1, 2),   # OneLibraryCompanion
+}
+DEFAULT_PWV7_ORDER = "mid_high_low"
+PWV6_ORDER = "mid_high_low"      # both references agree on the preview
+_pwv7_order = DEFAULT_PWV7_ORDER
 
-        low  = round(byte2 * 0.4)
-        mid  = round(byte0 * 0.3)
-        high = round(byte1 * 0.06)
+
+def normalize_band_order(name) -> str:
+    name = str(name or "").lower()
+    return name if name in BAND_ORDERS else DEFAULT_PWV7_ORDER
+
+
+def pwv7_order() -> str:
+    return _pwv7_order
+
+
+def set_pwv7_order(name) -> str:
+    """Select the PWV7 byte order. Returns the order now in use (and logs it)."""
+    global _pwv7_order
+    order = normalize_band_order(name)
+    if order != _pwv7_order:
+        _pwv7_order = order
+        log.info("PWV7 3-band byte order: %s", order)
+    return order
+
+
+def _band_index(order: str | None) -> tuple[int, int, int]:
+    return BAND_ORDERS[normalize_band_order(order or _pwv7_order)]
+
+
+def split_bands(data: bytes, order: str | None = None):
+    """Raw (low, mid, high) byte lanes of 3-byte entries in ``order``."""
+    li, mi, hi = _band_index(order)
+    return data[li::3][: len(data) // 3], data[mi::3][: len(data) // 3], data[hi::3][: len(data) // 3]
+
+
+def decode_3band_heights(data: bytes, order: str | None = None) -> tuple[bytearray, bytearray, bytearray]:
+    """PWV7 column heights per band, in the detail display scale.
+
+    Bytes are split with the configured ``pwv7_order``. Bands are scaled
+    independently (low x0.4, mid x0.3, high x0.06), the reference scale
+    Beat Link documents for PWV7; these are pixel heights, not 0-31.
     """
-    n = len(data) // 3
+    low_b, mid_b, high_b = split_bands(data, order)
+    n = len(low_b)
     lows, mids, highs = bytearray(n), bytearray(n), bytearray(n)
     for i in range(n):
-        mid_b = data[i * 3]
-        high_b = data[i * 3 + 1]
-        low_b = data[i * 3 + 2]
-        lows[i] = min(255, _jround(low_b * 0.4))
-        mids[i] = min(255, _jround(mid_b * 0.3))
-        highs[i] = min(255, _jround(high_b * 0.06))
+        lows[i] = min(255, _jround(low_b[i] * 0.4))
+        mids[i] = min(255, _jround(mid_b[i] * 0.3))
+        highs[i] = min(255, _jround(high_b[i] * 0.06))
     return lows, mids, highs
 
 
-def decode_3band(data: bytes) -> tuple[bytearray, bytearray]:
+def decode_3band(data: bytes, order: str | None = None) -> tuple[bytearray, bytearray]:
     """RGB fallback when a track has PWV7 but no PWV5.
 
-    Uses the same mid/high/low byte order. The column colour is mixed from
-    those amplitudes and the height is their peak, scaled to 0-31.
+    The column colour is mixed from the band amplitudes and the height is
+    their peak, scaled to 0-31.
     """
-    n = len(data) // 3
+    low_b, mid_b, high_b = split_bands(data, order)
+    n = len(low_b)
     heights = bytearray(n)
     rgb = bytearray(n * 3)
     for i in range(n):
-        mid_b, high_b, low_b = data[i * 3], data[i * 3 + 1], data[i * 3 + 2]
-        peak = max(low_b, mid_b, high_b)
+        lo, md, hi = low_b[i], mid_b[i], high_b[i]
+        peak = max(lo, md, hi)
         heights[i] = min(31, peak * 31 // 255)
         if peak:
-            rgb[i * 3] = high_b * 255 // peak
-            rgb[i * 3 + 1] = mid_b * 255 // peak
-            rgb[i * 3 + 2] = low_b * 255 // peak
+            rgb[i * 3] = hi * 255 // peak
+            rgb[i * 3 + 1] = md * 255 // peak
+            rgb[i * 3 + 2] = lo * 255 // peak
     return heights, rgb
+
+
+# PWV6 stores additive contributions; these weights stack them into one bar.
+PWV6_WEIGHTS = (0.49, 0.32, 0.25)
+
+
+def stacked_overview(data: bytes, width: int, order: str = PWV6_ORDER):
+    """3-band overview from PWV6, stacked bottom-up and peak-normalised.
+
+    Returns (low, mid, high) contribution lanes of ``width`` columns, scaled
+    so the loudest stacked column of the track is 255. Each output column is
+    the source column with the largest stacked total in its range (max
+    pooling), so transients survive. Upsampling repeats the nearest column.
+    """
+    low_b, mid_b, high_b = split_bands(data, order)
+    n = len(low_b)
+    out = bytearray(width), bytearray(width), bytearray(width)
+    if n == 0 or width <= 0:
+        return out
+    wl, wm, wh = PWV6_WEIGHTS
+    lo_c = [b * wl for b in low_b]
+    md_c = [b * wm for b in mid_b]
+    hi_c = [b * wh for b in high_b]
+    totals = [lo_c[i] + md_c[i] + hi_c[i] for i in range(n)]
+    peak = max(totals)
+    if peak <= 0:
+        return out
+    scale = 255.0 / peak
+    for x in range(width):
+        a = (x * n) // width
+        b = max(a + 1, ((x + 1) * n) // width)
+        best = max(range(a, min(n, b)), key=totals.__getitem__)
+        l = int(lo_c[best] * scale + 0.5)
+        m = int(md_c[best] * scale + 0.5)
+        h = int(hi_c[best] * scale + 0.5)
+        over = l + m + h - 255
+        if over > 0:          # rounding can push the stack past full scale
+            h = max(0, h - over)
+        out[0][x], out[1][x], out[2][x] = l, m, h
+    return out
 
 
 def waveform_levels(a: Analysis):

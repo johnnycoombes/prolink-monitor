@@ -10,6 +10,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Archivo:wght@400;500;600&display=swap" rel="stylesheet">
+<!--WAVE_PALETTES-->
 <script src="wavepack.js"></script>
 <script src="playhead.js"></script>
 <style>
@@ -469,7 +470,7 @@ function applyStrings() {
 /* ------------------------------------------------------------------- state */
 const DECK_COLORS = {1:'--d1',2:'--d2',3:'--d3',4:'--d4',5:'--d1',6:'--d2'};
 const ZOOM_BARS = [1, 2, 4, 8, 16];      // 4/4 bars shown in the detail view
-const WAVE_STYLES = ['rgb', '3band', 'blue'];
+const WAVE_STYLES = ['auto', 'rgb', '3band', 'blue'];
 const DEFAULT_BPM = 120;
 
 let zoomBars = 4;
@@ -478,7 +479,29 @@ const zoomByDeck = new Map(); // deck number → bars, from the desktop Monitor 
 function deckZoom(n) {
   return zoomByDeck.has(n) ? zoomByDeck.get(n) : zoomBars;
 }
-let waveStyle = 'rgb';
+let waveStyle = 'rgb';          // user choice; may be 'auto'
+let waveFallback = 'rgb';       // what 'auto' draws when the player reports nothing
+let wavePalette = 'beatlink';   // 3-band colours, from web/wavepalette.json
+let paintStyle = 'rgb';         // resolved style for the deck being painted
+
+/* Wheel / pinch zoom of the scrolling strip, in seconds per deck. Saved in
+   browser storage (WAVE_ZOOM_KEY); double-click resets the deck to the bar zoom. */
+const WAVE_ZOOM_KEY = 'prolink.waveZoomSeconds';
+const zoomSecByDeck = new Map();
+try {
+  const saved = JSON.parse(localStorage.getItem(WAVE_ZOOM_KEY) || '{}');
+  for (const [k, v] of Object.entries(saved)) zoomSecByDeck.set(+k, ProlinkWave.clampSeconds(v));
+} catch (e) { /* private mode or junk: start unzoomed */ }
+function saveZoomSec() {
+  try { localStorage.setItem(WAVE_ZOOM_KEY, JSON.stringify(Object.fromEntries(zoomSecByDeck))); }
+  catch (e) { /* ignore */ }
+}
+function deckVisibleSeconds(n, bpm) {
+  return zoomSecByDeck.has(n) ? zoomSecByDeck.get(n) : barsToSeconds(deckZoom(n), bpm);
+}
+function deckPaintStyle(deck) {
+  return ProlinkWave.resolveStyle(waveStyle, deck && deck.waveform_color, waveFallback);
+}
 const PLAYHEAD_MODES = ['auto', 'centre', 'left'];
 // Left needle sits at the left quarter of the strip (same fraction as the desktop painter).
 const PLAYHEAD_LEFT_FRACTION = 0.25;
@@ -590,6 +613,19 @@ function setWaveStyle(style) {
   if (!WAVE_STYLES.includes(style)) style = 'rgb';
   if (style === waveStyle) return;
   waveStyle = style;
+  invalidateWaves();
+}
+
+function setWavePalette(name, fallback) {
+  name = ProlinkWave.normalizePalette(name);
+  fallback = ['rgb', '3band', 'blue'].includes(fallback) ? fallback : waveFallback;
+  if (name === wavePalette && fallback === waveFallback) return;
+  wavePalette = name;
+  waveFallback = fallback;
+  invalidateWaves();
+}
+
+function invalidateWaves() {
   for (const d of decks.values()) {
     d.overviewId = null;
     d.detailKey = null;
@@ -705,6 +741,7 @@ function applyMonitorDisplay(display) {
   if (typeof d.show_next_cue === 'boolean') setShowNextCue(d.show_next_cue);
   if (d.zoom_bars != null) setZoom(+d.zoom_bars);
   if (d.waveform_style) setWaveStyle(d.waveform_style);
+  if (d.waveform_palette || d.waveform_style_fallback) setWavePalette(d.waveform_palette || wavePalette, d.waveform_style_fallback);
   if (d.playhead_position) setPlayheadMode(d.playhead_position);
   if (d.max_decks != null) setDeckCount(d.max_decks);
   if (d.zoom_bars_by_deck) applyDeckZooms(d.zoom_bars_by_deck);
@@ -784,32 +821,18 @@ function bandHeightsAt(wave, src) {
 function fillWave(ctx, x, mid, amp, src, wave, span, colW) {
   span = span || amp;
   colW = colW || 1;
-  if (waveStyle === '3band') {
+  if (paintStyle === '3band') {
     const bands = bandHeightsAt(wave, src);
     if (bands) {
       const [low, md, hi, peak] = bands;
-      const lowPx = low / peak * span, midPx = md / peak * span, highPx = hi / peak * span;
-      if (lowPx > midPx) {
-        ctx.fillStyle = 'rgb(32,83,217)';
-        fillMirrored(ctx, x, mid, lowPx, colW);
-        ctx.fillStyle = 'rgb(169,107,39)';
-        fillMirrored(ctx, x, mid, midPx, colW);
-      } else {
-        if (Math.abs(lowPx - midPx) >= 0.4) {
-          ctx.fillStyle = 'rgb(242,170,60)';
-          fillMirrored(ctx, x, mid, midPx, colW);
-        }
-        ctx.fillStyle = 'rgb(169,107,39)';
-        fillMirrored(ctx, x, mid, lowPx, colW);
-      }
-      ctx.fillStyle = 'rgb(255,255,255)';
-      fillMirrored(ctx, x, mid, highPx, colW);
+      ProlinkWave.paintBandColumn(ctx, x, mid, low / peak * span, md / peak * span,
+        hi / peak * span, colW, ProlinkWave.getPalette(wavePalette));
       return;
     }
     // Last resort: plain RGB so we never silently look like Blue.
   }
   let drawAmp = amp;
-  if (waveStyle === 'blue') {
+  if (paintStyle === 'blue') {
     if (wave.blueH && wave.blueH.length === wave.n) drawAmp = (wave.blueH[src] / 31) * span;
     if (wave.blueRgb && wave.blueRgb.length === wave.n * 3) {
       const b = wave.blueRgb;
@@ -957,9 +980,8 @@ function createDeck(n) {
       if (!dur) return null;
       return (x / Math.max(1, rect.width)) * dur;
     }
-    const bars = deckZoom(d.n);
     const bpm = d.lastBpm || 120;
-    const visible = barsToSeconds(bars, bpm) * 1000;
+    const visible = deckVisibleSeconds(d.n, bpm) * 1000;
     const needle = (d.anchor === PLAYHEAD_LEFT_FRACTION) ? PLAYHEAD_LEFT_FRACTION : 0.5;
     let ms = d.posMs + ((x - rect.width * needle) / Math.max(1, rect.width)) * visible;
     if (dur) ms = Math.max(0, Math.min(dur, ms));
@@ -972,6 +994,37 @@ function createDeck(n) {
     }
     d.scrub.textContent = mmss(ms);
   }
+  // Zoom: wheel and two-finger pinch on the scrolling strip; double-click resets.
+  const setZoomSec = sec => {
+    if (sec == null) zoomSecByDeck.delete(d.n);
+    else zoomSecByDeck.set(d.n, ProlinkWave.clampSeconds(sec));
+    saveZoomSec();
+    d.detailKey = null;
+  };
+  const curSec = () => deckVisibleSeconds(d.n, d.lastBpm || DEFAULT_BPM);
+  d.cvDetail.addEventListener('wheel', ev => {
+    ev.preventDefault();
+    const unit = ev.deltaMode === 1 ? 40 : (ev.deltaMode === 2 ? 800 : 1);
+    setZoomSec(ProlinkWave.wheelZoom(curSec(), -ev.deltaY * unit * (120 / 100)));
+  }, {passive: false});
+  d.cvDetail.addEventListener('dblclick', () => setZoomSec(null));
+  d.cvDetail.style.touchAction = 'none';
+  const pointers = new Map();
+  let pinch = null;
+  const dist = () => { const [a, b] = [...pointers.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+  d.cvDetail.addEventListener('pointerdown', ev => {
+    pointers.set(ev.pointerId, {x: ev.clientX, y: ev.clientY});
+    if (pointers.size === 2) pinch = {d0: dist(), s0: curSec()};
+  });
+  d.cvDetail.addEventListener('pointermove', ev => {
+    if (!pointers.has(ev.pointerId)) return;
+    pointers.set(ev.pointerId, {x: ev.clientX, y: ev.clientY});
+    if (pinch && pointers.size === 2) setZoomSec(ProlinkWave.pinchZoom(pinch.s0, pinch.d0, dist()));
+  });
+  for (const t of ['pointerup', 'pointercancel', 'pointerleave']) {
+    d.cvDetail.addEventListener(t, ev => { pointers.delete(ev.pointerId); if (pointers.size < 2) pinch = null; });
+  }
+
   for (const [cv, kind] of [[d.cvOverview, 'overview'], [d.cvDetail, 'detail']]) {
     cv.addEventListener('mousemove', ev => showScrub(msAt(cv, ev, kind)));
     cv.addEventListener('mouseleave', () => showScrub(null));
@@ -1279,16 +1332,28 @@ function drawOverview(d, track, pos, looping, deck) {
   const cssW = Math.max(1, Math.round(cv.clientWidth));
   if (!track || !track.overview || !track.overview.n) { ctx.clearRect(0, 0, W, H); return; }
 
-  if (resized || d.overviewId !== `${track.meta.id}|${waveStyle}`) {
-    d.overviewId = `${track.meta.id}|${waveStyle}`;
+  paintStyle = deckPaintStyle(deck);
+  const ovId = `${track.meta.id}|${paintStyle}|${wavePalette}`;
+  if (resized || d.overviewId !== ovId) {
+    d.overviewId = ovId;
     const off = document.createElement('canvas');
     off.width = W; off.height = H;
     const o = off.getContext('2d');
     o.imageSmoothingEnabled = false;
-    const {n, h} = track.overview, mid = H / 2, span = mid * 0.94;
+    const ov = track.overview, {n, h} = ov, mid = H / 2, span = mid * 0.94;
+    const colW = Math.max(1, Math.round(r));
+    const pal = ProlinkWave.getPalette(wavePalette);
     for (let x = 0; x < cssW; x++) {
-      const i = Math.min(n - 1, Math.floor(x * n / cssW));
-      fillWave(o, Math.round(x * r), mid, (h[i] / 31) * span, i, track.overview, span, Math.max(1, Math.round(r)));
+      // Max-pool every source column under this pixel.
+      const a = Math.min(n - 1, Math.floor(x * n / cssW));
+      const b = Math.max(a + 1, Math.min(n, Math.floor((x + 1) * n / cssW)));
+      if (paintStyle === '3band' && ov.bandStacked) {
+        const i = ProlinkWave.stackedPick(ov, a, b);
+        ProlinkWave.paintStackedColumn(o, Math.round(x * r), H - 1, H - 2, ov.low[i], ov.mid[i], ov.high[i], colW, pal);
+        continue;
+      }
+      const i = ProlinkWave.peakPick(h, a, b);
+      fillWave(o, Math.round(x * r), mid, (h[i] / 31) * span, i, ov, span, colW);
     }
     d.overviewOff = off;
   }
@@ -1355,13 +1420,14 @@ function drawDetail(d, track, pos, playing, looping, anchor, deck) {
       || (last.decks.find(x => x.number === d.n) || {}).bpm
     : 0) || DEFAULT_BPM;
   d.lastBpm = bpm;
-  const visibleSeconds = barsToSeconds(deckZoom(d.n), bpm);
+  paintStyle = deckPaintStyle(deck);
+  const visibleSeconds = deckVisibleSeconds(d.n, bpm);
   const visibleCols = visibleSeconds * cps;
   const pxPerCol = cssW / visibleCols;
   const currentCol = (pos / 1000) * cps;
   const needle = anchor === PLAYHEAD_LEFT_FRACTION ? PLAYHEAD_LEFT_FRACTION : 0.5;
   const start = currentCol - visibleCols * needle;
-  const key = `${track.meta.id}|${waveStyle}|${deckZoom(d.n)}|${Math.round(bpm)}|${cssW}|${H}|${needle}`;
+  const key = `${track.meta.id}|${paintStyle}|${wavePalette}|${visibleSeconds.toFixed(3)}|${Math.round(bpm)}|${cssW}|${H}|${needle}`;
 
   function paintRange(o, rangeStart, xLo, xHi) {
     // Peak-pick CSS pixels [xLo, xHi) into offscreen context `o`.

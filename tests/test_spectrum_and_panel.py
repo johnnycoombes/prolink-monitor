@@ -181,7 +181,11 @@ class WebPanelSourceTests(unittest.TestCase):
         self.assertNotIn('id="deck-switch"', html)
         self.assertNotIn('id="wave-switch"', html)
         self.assertNotIn('id="needle-switch"', html)
-        self.assertNotIn("localStorage", html)
+        # Settings come from the desktop app. The only browser storage is the
+        # per-deck wheel/pinch zoom of the scrolling strip (1.0.10).
+        for line in html.splitlines():
+            if "localStorage" in line:
+                self.assertIn("WAVE_ZOOM_KEY", line)
         self.assertIn("applyMonitorDisplay", html)
         self.assertIn('id="fs-btn"', html)
         self.assertNotIn('id="fs-prompt"', html)

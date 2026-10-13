@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Archivo:wght@500;600;700&display=swap" rel="stylesheet">
+<!--WAVE_PALETTES-->
 <script src="wavepack.js"></script>
 <script src="spectrum.js"></script>
 <script src="playhead.js"></script>
@@ -525,8 +526,18 @@ const preview = params.get('preview') === '1';
 const embed = params.get('embed') === '1';
 const useMix = params.get('mix') !== '0';
 const maxDecks = Math.min(4, Math.max(1, +(params.get('decks') || (layout === 'dual' ? 2 : 1))));
-const WAVE_STYLES = ['rgb', '3band', 'blue'];
+const WAVE_STYLES = ['auto', 'rgb', '3band', 'blue'];
 const waveStyle = WAVE_STYLES.includes(params.get('wave')) ? params.get('wave') : 'rgb';
+// wavefb: what wave=auto draws when the player does not report its colour.
+const waveFallback = ['rgb', '3band', 'blue'].includes(params.get('wavefb')) ? params.get('wavefb') : 'rgb';
+const wavePalette = ProlinkWave.normalizePalette(params.get('palette') || 'beatlink');
+// zoom=<seconds>: fixed scrolling-strip window (2-30 s). No interaction on overlays.
+const zoomSecondsParam = params.has('zoom') && isFinite(+params.get('zoom')) && +params.get('zoom') > 0
+  ? ProlinkWave.clampSeconds(+params.get('zoom')) : null;
+let paintStyle = 'rgb';
+function deckPaintStyle(deck) {
+  return ProlinkWave.resolveStyle(waveStyle, deck && deck.waveform_color, waveFallback);
+}
 const spread = layout === 'dual';
 const SETLIST_MAX = 12;
 const showTags = params.get('tags') !== '0';
@@ -917,8 +928,18 @@ function paintWaveCanvas(cv, pack, pos, color, looping, deck){
   if (!ov || !ov.n) return;
   const mid = H / 2, span = mid * 0.9;
   const colW = Math.max(1, Math.round(r));
+  paintStyle = deckPaintStyle(deck);
+  const pal = ProlinkWave.getPalette(wavePalette);
   for (let x = 0; x < cssW; x++) {
-    const i = Math.min(ov.n - 1, Math.floor(x * ov.n / cssW));
+    // Max-pool every source column under this pixel.
+    const a = Math.min(ov.n - 1, Math.floor(x * ov.n / cssW));
+    const b = Math.max(a + 1, Math.min(ov.n, Math.floor((x + 1) * ov.n / cssW)));
+    if (paintStyle === '3band' && ov.bandStacked) {
+      const i = ProlinkWave.stackedPick(ov, a, b);
+      ProlinkWave.paintStackedColumn(ctx, Math.round(x * r), H - 1, H - 2, ov.low[i], ov.mid[i], ov.high[i], colW, pal);
+      continue;
+    }
+    const i = ProlinkWave.peakPick(ov.h, a, b);
     const amp = (ov.h[i] / 31) * span;
     fillOverlayColumn(ctx, Math.round(x * r), mid, amp, i, ov, span, colW);
   }
@@ -960,30 +981,19 @@ function fillMirrored(ctx, x, mid, amp, colW){
 }
 
 function fillOverlayColumn(ctx, x, mid, amp, src, wave, span, colW){
-  if (waveStyle === '3band') {
+  if (paintStyle === '3band') {
     const low = wave.low && wave.low[src];
     const md = wave.mid && wave.mid[src];
     const hi = wave.high && wave.high[src];
     const peak = wave.bandPeak || 31;
     if (peak >= 2 && (low || md || hi)) {
-      const lowPx = (low || 0) / peak * span;
-      const midPx = (md || 0) / peak * span;
-      const highPx = (hi || 0) / peak * span;
-      if (lowPx > midPx) {
-        ctx.fillStyle = 'rgb(32,83,217)'; fillMirrored(ctx, x, mid, lowPx, colW);
-        ctx.fillStyle = 'rgb(169,107,39)'; fillMirrored(ctx, x, mid, midPx, colW);
-      } else {
-        if (Math.abs(lowPx - midPx) >= 0.4) {
-          ctx.fillStyle = 'rgb(242,170,60)'; fillMirrored(ctx, x, mid, midPx, colW);
-        }
-        ctx.fillStyle = 'rgb(169,107,39)'; fillMirrored(ctx, x, mid, lowPx, colW);
-      }
-      ctx.fillStyle = 'rgb(255,255,255)'; fillMirrored(ctx, x, mid, highPx, colW);
+      ProlinkWave.paintBandColumn(ctx, x, mid, (low || 0) / peak * span, (md || 0) / peak * span,
+        (hi || 0) / peak * span, colW, ProlinkWave.getPalette(wavePalette));
       return;
     }
   }
   let drawAmp = amp;
-  if (waveStyle === 'blue') {
+  if (paintStyle === 'blue') {
     if (wave.blueH && wave.blueH.length === wave.n) drawAmp = (wave.blueH[src] / 31) * span;
     if (wave.blueRgb && wave.blueRgb.length === wave.n * 3) {
       const b = wave.blueRgb;
@@ -1087,14 +1097,15 @@ function paintPanelDetail(cv, pack, pos, deck, playing, looping) {
   const colW = Math.max(1, Math.round(r));
   const bpm = deck.track_bpm || deck.bpm || DEFAULT_BPM;
   const bars = ZOOM_BARS_OPTS.includes(zoomBarsDisplay) ? zoomBarsDisplay : 4;
-  const visibleSeconds = barsToSeconds(bars, bpm);
+  const visibleSeconds = zoomSecondsParam != null ? zoomSecondsParam : barsToSeconds(bars, bpm);
   const visibleCols = visibleSeconds * cps;
+  paintStyle = deckPaintStyle(deck);
   const pxPerCol = cssW / visibleCols;
   const currentCol = (pos / 1000) * cps;
   const needle = playheadAnchorForDeck(deck);
   const start = currentCol - visibleCols * needle;
   const color = DECK_COLORS[deck.number] || '#22d3ee';
-  const key = `${deck.track_id}|${deck.track_key}|${waveStyle}|${bars}|${Math.round(bpm)}|${cssW}|${H}|${needle}`;
+  const key = `${deck.track_id}|${deck.track_key}|${paintStyle}|${wavePalette}|${visibleSeconds.toFixed(3)}|${Math.round(bpm)}|${cssW}|${H}|${needle}`;
 
   function paintRange(o, rangeStart, xLo, xHi) {
     const meta = track.meta;
@@ -1442,9 +1453,10 @@ function paintSpectrum(cv, pack, pos, deck, playing) {
   ctx.fillRect(0, 0, W, H);
   // Three zones, same colours as the 3-band waveform, so the analyser reads at a glance.
   ctx.globalAlpha = 0.14;
-  ctx.fillStyle = 'rgb(32,83,217)';
+  const zonePal = ProlinkWave.getPalette(wavePalette) || {low: '#888', mid: '#aaa'};
+  ctx.fillStyle = zonePal.low;
   ctx.fillRect(0, 0, W * 0.38, H);
-  ctx.fillStyle = 'rgb(242,170,60)';
+  ctx.fillStyle = zonePal.mid;
   ctx.fillRect(W * 0.38, 0, W * 0.30, H);
   ctx.fillStyle = 'rgb(244,246,251)';
   ctx.fillRect(W * 0.68, 0, W * 0.32, H);
@@ -1456,8 +1468,8 @@ function paintSpectrum(cv, pack, pos, deck, playing) {
     const bh = floor + amp * (H - floor - 3 * r);
     const x = gap + i * (barW + gap);
     const y = H - bh;
-    if (u < 0.38) ctx.fillStyle = 'rgb(32,83,217)';
-    else if (u < 0.68) ctx.fillStyle = 'rgb(242,170,60)';
+    if (u < 0.38) ctx.fillStyle = zonePal.low;
+    else if (u < 0.68) ctx.fillStyle = zonePal.mid;
     else ctx.fillStyle = 'rgb(244,246,251)';
     ctx.fillRect(x, y, barW, bh);
     ctx.fillStyle = 'rgba(255,255,255,.72)';

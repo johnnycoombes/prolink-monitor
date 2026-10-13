@@ -92,7 +92,7 @@ SETTINGS_BLOCK_MARKER = bytes.fromhex("12345678")
 WAVEFORM_COLOR_OFFSET = 0xDA      # 01 blue, 03 RGB, 04 3-band
 WAVEFORM_POSITION_OFFSET = 0xDD   # 01 centre, 02 left
 
-_WAVEFORM_COLORS = {0x01: "blue", 0x03: "rgb", 0x04: "3band"}
+from .wavestyle import PLAYER_COLOR_BYTES as _WAVEFORM_COLORS  # 0xDA: 01 blue, 03 RGB, 04 3-band
 _WAVEFORM_POSITIONS = {0x01: "centre", 0x02: "left"}
 
 # CDJ-3000 status packets (0x200 bytes) carry the loop that is actually playing.
