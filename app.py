@@ -386,23 +386,28 @@ class Monitor:
             if thread.is_alive() and thread is not threading.current_thread():
                 thread.join(max(0.0, deadline - time.monotonic()))
 
-    def _apply_pwv7_order(self, name) -> None:
+    def _apply_pwv7_order(self, name, name6=None) -> None:
         """Switch the PWV7 byte order; rebuild cached waves when it changes."""
         before = anlz.pwv7_order()
         order = anlz.set_pwv7_order(name)
         if order != before:
             with self._lock:
                 self._waveforms.clear()
+        before6 = anlz.pwv6_order()
+        order6 = anlz.set_pwv6_order(name6)
+        if order6 != before6:
+            with self._lock:
+                self._waveforms.clear()
         if not getattr(self, "_pwv7_logged", False):
             self._pwv7_logged = True
-            print(f"[listener] PWV7 3-band byte order: {order}", flush=True)
+            print(f"[listener] 3-band byte order: PWV7 {order}, PWV6 {order6}", flush=True)
 
     def configure_display(self, prefs: dict | None) -> None:
         """Live Monitor-view prefs for the web panel and overlay."""
         from gui.settings import display_prefs_from
 
         self._display = display_prefs_from(prefs)
-        self._apply_pwv7_order((prefs or {}).get("pwv7_order"))
+        self._apply_pwv7_order((prefs or {}).get("pwv7_order"), (prefs or {}).get("pwv6_order"))
         self.show_phrases = bool(self._display.get("show_phrases", True))
         self.show_vocals = bool(self._display.get("show_vocals", True))
         self.show_next_cue = bool(self._display.get("show_next_cue", True))

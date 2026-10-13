@@ -43,11 +43,16 @@ def node_eval(script: str):
 class ByteOrderTests(unittest.TestCase):
     def tearDown(self):
         anlz.set_pwv7_order(anlz.DEFAULT_PWV7_ORDER)
+        anlz.set_pwv6_order(anlz.DEFAULT_PWV6_ORDER)
 
-    def test_default_is_beat_link_order(self):
-        self.assertEqual(anlz.DEFAULT_PWV7_ORDER, "mid_high_low")
-        self.assertEqual(anlz.pwv7_order(), "mid_high_low")
-        self.assertEqual(anlz.normalize_band_order("junk"), "mid_high_low")
+    def test_default_is_rbxport_order(self):
+        # rbxport (reader and writer, measured against rekordbox) and OLC: low, mid, high.
+        self.assertEqual(anlz.DEFAULT_PWV7_ORDER, "low_mid_high")
+        self.assertEqual(anlz.DEFAULT_PWV6_ORDER, "low_mid_high")
+        self.assertEqual(anlz.pwv7_order(), "low_mid_high")
+        self.assertEqual(anlz.pwv6_order(), "low_mid_high")
+        self.assertEqual(anlz.normalize_band_order("junk"), "low_mid_high")
+        self.assertEqual(anlz.normalize_band_order("mid_high_low"), "mid_high_low")
 
     def test_pwv7_fixture_mid_high_low(self):
         # One column: mid=100, high=50, low=200 in Beat Link's order.
@@ -57,19 +62,20 @@ class ByteOrderTests(unittest.TestCase):
         self.assertEqual((lows[0], mids[0], highs[0]), (80, 30, 3))   # 200*.4, 100*.3, 50*.06
 
     def test_pwv7_fixture_low_mid_high(self):
-        # Same bytes read in OneLibraryCompanion's order: low=100, mid=50, high=200.
+        # Same bytes in the default rbxport/OLC order: low=100, mid=50, high=200,
+        # all on one scale (value / 127, as rbxport draws them).
         a = anlz.parse(anlz_2ex(pwv7=bytes([100, 50, 200])))
         lows, mids, highs = anlz.decode_3band_heights(a.band3_detail, "low_mid_high")
-        self.assertEqual((lows[0], mids[0], highs[0]), (40, 15, 12))
+        self.assertEqual((lows[0], mids[0], highs[0]), (100, 50, 200))
+        self.assertEqual(anlz.decode_3band_heights(a.band3_detail)[0][0], 100)   # default
 
     def test_setting_switches_the_global_order_and_logs(self):
-        data = bytes([0, 0, 120])   # a kick: only the low byte in Beat Link order
+        data = bytes([0, 0, 120])   # a kick in Beat Link's order (last byte = low)
+        lows, _, highs = anlz.decode_3band_heights(data)          # default low, mid, high
+        self.assertEqual((lows[0], highs[0]), (0, 120))
         with self.assertLogs("prolink.anlz", level="INFO") as logs:
-            self.assertEqual(anlz.set_pwv7_order("low_mid_high"), "low_mid_high")
-        self.assertIn("low_mid_high", "\n".join(logs.output))
-        lows, _, highs = anlz.decode_3band_heights(data)
-        self.assertEqual((lows[0], highs[0]), (0, 7))
-        anlz.set_pwv7_order("mid_high_low")
+            self.assertEqual(anlz.set_pwv7_order("mid_high_low"), "mid_high_low")
+        self.assertIn("mid_high_low", "\n".join(logs.output))
         lows, _, highs = anlz.decode_3band_heights(data)
         self.assertEqual((lows[0], highs[0]), (48, 0))
 
@@ -81,31 +87,39 @@ class ByteOrderTests(unittest.TestCase):
 
 
 class Pwv6OverviewTests(unittest.TestCase):
-    def test_pwv6_fixture_parses_in_mid_high_low(self):
-        a = anlz.parse(anlz_2ex(pwv6=bytes([10, 20, 30, 40, 50, 60])))
-        self.assertEqual(a.band3_preview, bytes([10, 20, 30, 40, 50, 60]))
-        self.assertEqual(anlz.PWV6_ORDER, "mid_high_low")
+    def tearDown(self):
+        anlz.set_pwv6_order(anlz.DEFAULT_PWV6_ORDER)
 
-    def test_stacked_weights_and_peak_normalisation(self):
-        # Column 0: low 255 only. Column 1: half of everything.
-        data = bytes([0, 0, 255,  128, 128, 128])
-        lo, md, hi = anlz.stacked_overview(data, 2)
-        totals = [lo[i] + md[i] + hi[i] for i in range(2)]
-        self.assertEqual(max(totals), 255)            # loudest stacked column is full scale
-        # Column 1 total: 128*(.49+.32+.25) = 135.7 is the peak; column 0: 255*.49 = 124.95
-        self.assertEqual(totals[1], 255)
-        self.assertAlmostEqual(lo[0], round(124.95 * 255 / 135.68), delta=1)
-        self.assertGreater(lo[1], md[1])
-        self.assertGreater(md[1], hi[1])               # weights 0.49 > 0.32 > 0.25
+    def test_pwv6_fixture_both_orders(self):
+        a = anlz.parse(anlz_2ex(pwv6=bytes([64, 32, 16])))
+        self.assertEqual(a.band3_preview, bytes([64, 32, 16]))
+        lo, md, hi = anlz.stacked_overview(a.band3_preview, 1)           # low, mid, high
+        self.assertEqual((lo[0], md[0], hi[0]), (128, 32, 32))           # 64/128, 32/256, 16/128
+        lo, md, hi = anlz.stacked_overview(a.band3_preview, 1, "mid_high_low")
+        self.assertEqual((lo[0], md[0], hi[0]), (32, 64, 64))            # low=16, mid=64, high=32
+        anlz.set_pwv6_order("mid_high_low")
+        self.assertEqual(anlz.stacked_overview(a.band3_preview, 1)[0][0], 32)
+
+    def test_rbxport_stack_scales(self):
+        # low/128, mid/256, high/128 of the stack height (2:1:2 per unit).
+        self.assertEqual(anlz.PWV6_STACK_SCALE, (128.0, 256.0, 128.0))
+        lo, md, hi = anlz.stacked_overview(bytes([32, 32, 32]), 1)
+        self.assertEqual((lo[0], md[0], hi[0]), (64, 32, 64))
+
+    def test_loud_columns_clip_at_the_top(self):
+        lo, md, hi = anlz.stacked_overview(bytes([127, 127, 127]), 1)
+        self.assertEqual(lo[0] + md[0] + hi[0], 255)
+        self.assertEqual(lo[0], 253)                                     # 127/128 of the stack
+        self.assertEqual(hi[0], 0)                                       # the top layer is clipped first
 
     def test_max_pool_keeps_the_transient(self):
-        data = bytes([0, 0, 10] * 9 + [0, 0, 250])     # one loud column among ten
+        data = bytes([10, 0, 0] * 9 + [100, 0, 0])     # one loud column among ten
         lo, _, _ = anlz.stacked_overview(data, 1)
-        self.assertEqual(lo[0], 255)
+        self.assertEqual(lo[0], 199)                   # 100/128 * 255
 
     def test_upsampling_repeats(self):
-        lo, _, _ = anlz.stacked_overview(bytes([0, 0, 100]), 4)
-        self.assertEqual(list(lo), [255] * 4)
+        lo, _, _ = anlz.stacked_overview(bytes([64, 0, 0]), 4)
+        self.assertEqual(list(lo), [128] * 4)
 
     def _pack(self, stacked: bool) -> bytes:
         import app
@@ -142,6 +156,15 @@ class PaletteParityTests(unittest.TestCase):
         with open(os.path.join(ROOT, "web", "wavepalette.json"), encoding="utf-8") as f:
             self.doc = json.load(f)
 
+    def test_cdj3000_is_the_default(self):
+        from gui.settings import DEFAULTS
+        self.assertEqual(self.doc["default"], "cdj3000")
+        self.assertEqual(wavestyle.DEFAULT_PALETTE, "cdj3000")
+        self.assertEqual(wavestyle.normalize_palette(None), "cdj3000")
+        self.assertEqual(DEFAULTS["waveform_palette"], "cdj3000")
+        self.assertEqual(DEFAULTS["pwv7_order"], "low_mid_high")
+        self.assertEqual(DEFAULTS["pwv6_order"], "low_mid_high")
+
     def test_palettes_are_the_agreed_sets(self):
         bl, cdj = self.doc["palettes"]["beatlink"], self.doc["palettes"]["cdj3000"]
         self.assertEqual((bl["low"], bl["mid"], bl["low_mid"], bl["high"]),
@@ -167,7 +190,7 @@ class PaletteParityTests(unittest.TestCase):
             "x:w.normalizePalette('nope')}))")
         self.assertEqual(got["b"], self.doc["palettes"]["beatlink"])
         self.assertEqual(got["c"], self.doc["palettes"]["cdj3000"])
-        self.assertEqual(got["x"], "beatlink")
+        self.assertEqual(got["x"], "cdj3000")
 
     def test_pages_have_no_private_band_colours(self):
         literals = re.compile(r"rgb\(32,\s*83,\s*217\)|rgb\(242,\s*170,\s*60\)|rgb\(169,\s*107,\s*39\)"

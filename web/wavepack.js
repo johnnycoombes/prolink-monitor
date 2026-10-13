@@ -148,7 +148,7 @@
   }
   function normalizePalette(name) {
     const doc = palettes();
-    return doc && doc.palettes && doc.palettes[name] ? name : "beatlink";
+    return doc && doc.palettes && doc.palettes[name] ? name : (doc.default || "cdj3000");
   }
   function getPalette(name) {
     const doc = palettes();

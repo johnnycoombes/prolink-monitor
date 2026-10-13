@@ -16,7 +16,7 @@ from functools import lru_cache
 WAVE_STYLES = ("rgb", "3band", "blue")
 STYLE_CHOICES = ("auto",) + WAVE_STYLES
 PALETTES = ("beatlink", "cdj3000")
-DEFAULT_PALETTE = "beatlink"
+DEFAULT_PALETTE = "cdj3000"
 # Mask order used by the "mask" palette mode (low=1, mid=2, high=4).
 MASK_KEYS = ("low", "mid", "high", "low_mid", "low_high", "mid_high", "all")
 MASK_BITS = (1, 2, 4, 3, 5, 6, 7)

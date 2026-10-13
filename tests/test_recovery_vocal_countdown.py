@@ -191,8 +191,8 @@ class PwvcTests(unittest.TestCase):
             + struct.pack(">HHI", 1, 12000, 0)
             + struct.pack(">HHI", 2, 12000, 10000)
         )
-        # mid, high, low. First column is vocal; the second is not.
-        columns = bytes([200, 10, 10, 10, 10, 200])
+        # low, mid, high (the default pwv6_order). First column is vocal; the second is not.
+        columns = bytes([10, 200, 10, 200, 10, 10])
         pwv6 = struct.pack(">II", 3, 2) + columns
         pwvc = struct.pack(">HHHH", 0, 100, 80, 150)
         parsed = anlz.parse(_pmai(_tag(b"PQTZ", beats), _tag(b"PWV6", pwv6), _tag(b"PWVC", pwvc)))
@@ -208,6 +208,9 @@ class PwvcTests(unittest.TestCase):
         band = bytes([200, 10, 10])
         spans = vocal_regions(band, VocalThresholds(100, 80, 150), 3000)
         self.assertEqual(spans, [{"t": 0.0, "end": 3000.0}])
+        # The default PWV6 order is low, mid, high.
+        self.assertEqual(vocal_regions(bytes([10, 200, 10]), VocalThresholds(100, 80, 150), 3000,
+                                       (0, 1, 2)), [{"t": 0.0, "end": 3000.0}])
         quiet = bytes([10, 10, 10])
         self.assertEqual(vocal_regions(quiet, VocalThresholds(100, 80, 150), 3000), [])
 

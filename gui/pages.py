@@ -266,7 +266,7 @@ class MonitorPage(Page):
             self._apply_card_zooms()
             self.set_max_decks(int(settings.get("max_decks", 4)))
             self._wave_fallback = normalize_style(settings.get("waveform_style_fallback"), allow_auto=False)
-            self.set_wave_palette(str(settings.get("waveform_palette") or "beatlink"))
+            self.set_wave_palette(str(settings.get("waveform_palette") or "cdj3000"))
             self._zoom_seconds = {
                 int(k): float(v)
                 for k, v in clean_zoom_seconds(settings.get("wave_zoom_seconds_by_deck")).items()
@@ -530,7 +530,7 @@ class MonitorPage(Page):
                 else:
                     card.set_zoom(self._zoom, override=False)
                 card.set_wave_style(self._wave_style, getattr(self, "_wave_fallback", "rgb"))
-                card.set_wave_palette(getattr(self, "_wave_palette", "beatlink"))
+                card.set_wave_palette(getattr(self, "_wave_palette", "cdj3000"))
                 card.set_zoom_seconds(getattr(self, "_zoom_seconds", {}).get(n))
                 card.zoom_seconds_changed.connect(self._on_deck_zoom_seconds)
                 card.set_playhead_mode(self._playhead_mode)
@@ -2162,8 +2162,8 @@ class OverlayPage(Page):
             from gui.settings import load_settings as _load
             palette = normalize_palette(_load().get("waveform_palette"))
         except Exception:
-            palette = "beatlink"
-        if palette != "beatlink":
+            palette = "cdj3000"
+        if palette != "cdj3000":
             qs.append(f"palette={palette}")
         if layout == "nowplaying":
             style = normalize_now_style(self.now_style_box.currentData())
@@ -2303,13 +2303,17 @@ class SettingsPage(Page):
         self.wave_fallback.addItem(i18n.t("wave_blue"), "blue")
         self.wave_fallback.setToolTip(i18n.t("wave_fallback_tip"))
         self.wave_palette = QComboBox()
-        self.wave_palette.addItem(i18n.t("palette_beatlink"), "beatlink")
         self.wave_palette.addItem(i18n.t("palette_cdj3000"), "cdj3000")
+        self.wave_palette.addItem(i18n.t("palette_beatlink"), "beatlink")
         self.wave_palette.setToolTip(i18n.t("palette_tip"))
         self.pwv7_order = QComboBox()
-        self.pwv7_order.addItem(i18n.t("pwv7_mid_high_low"), "mid_high_low")
         self.pwv7_order.addItem(i18n.t("pwv7_low_mid_high"), "low_mid_high")
+        self.pwv7_order.addItem(i18n.t("pwv7_mid_high_low"), "mid_high_low")
         self.pwv7_order.setToolTip(i18n.t("pwv7_order_tip"))
+        self.pwv6_order = QComboBox()
+        self.pwv6_order.addItem(i18n.t("pwv7_low_mid_high"), "low_mid_high")
+        self.pwv6_order.addItem(i18n.t("pwv7_mid_high_low"), "mid_high_low")
+        self.pwv6_order.setToolTip(i18n.t("pwv6_order_tip"))
         self.playhead = QComboBox()
         self.playhead.addItem(i18n.t("playhead_auto"), "auto")
         self.playhead.addItem(i18n.t("playhead_centre"), "centre")
@@ -2335,6 +2339,7 @@ class SettingsPage(Page):
         disp.addRow(i18n.t("wave_fallback"), self.wave_fallback)
         disp.addRow(i18n.t("palette"), self.wave_palette)
         disp.addRow(i18n.t("pwv7_order"), self.pwv7_order)
+        disp.addRow(i18n.t("pwv6_order"), self.pwv6_order)
         disp.addRow(i18n.t("playhead"), self.playhead)
         disp.addRow("", self.show_phrases)
         disp.addRow("", self.show_vocals)
@@ -2566,8 +2571,9 @@ class SettingsPage(Page):
         idx = self.wave_style.findData(data.get("waveform_style", "rgb"))
         self.wave_style.setCurrentIndex(max(0, idx))
         for box, key, default in ((self.wave_fallback, "waveform_style_fallback", "rgb"),
-                                  (self.wave_palette, "waveform_palette", "beatlink"),
-                                  (self.pwv7_order, "pwv7_order", "mid_high_low")):
+                                  (self.wave_palette, "waveform_palette", "cdj3000"),
+                                  (self.pwv7_order, "pwv7_order", "low_mid_high"),
+                                  (self.pwv6_order, "pwv6_order", "low_mid_high")):
             box.setCurrentIndex(max(0, box.findData(data.get(key, default))))
         idx = self.playhead.findData(normalize_playhead_mode(data.get("playhead_position")))
         self.playhead.setCurrentIndex(max(0, idx))
@@ -2646,6 +2652,7 @@ class SettingsPage(Page):
             "waveform_style_fallback": self.wave_fallback.currentData(),
             "waveform_palette": self.wave_palette.currentData(),
             "pwv7_order": self.pwv7_order.currentData(),
+            "pwv6_order": self.pwv6_order.currentData(),
             "playhead_position": self.playhead.currentData(),
             "show_phrases": self.show_phrases.isChecked(),
             "show_vocals": self.show_vocals.isChecked(),

@@ -530,7 +530,7 @@ const WAVE_STYLES = ['auto', 'rgb', '3band', 'blue'];
 const waveStyle = WAVE_STYLES.includes(params.get('wave')) ? params.get('wave') : 'rgb';
 // wavefb: what wave=auto draws when the player does not report its colour.
 const waveFallback = ['rgb', '3band', 'blue'].includes(params.get('wavefb')) ? params.get('wavefb') : 'rgb';
-const wavePalette = ProlinkWave.normalizePalette(params.get('palette') || 'beatlink');
+const wavePalette = ProlinkWave.normalizePalette(params.get('palette') || 'cdj3000');
 // zoom=<seconds>: fixed scrolling-strip window (2-30 s). No interaction on overlays.
 const zoomSecondsParam = params.has('zoom') && isFinite(+params.get('zoom')) && +params.get('zoom') > 0
   ? ProlinkWave.clampSeconds(+params.get('zoom')) : null;

@@ -524,7 +524,7 @@ class WaveformView(QWidget):
         self._bpm = 120.0
         self._offair = False
         self._style = "rgb"
-        self._palette = "beatlink"
+        self._palette = _ws.DEFAULT_PALETTE
         self._zoom_seconds: float | None = None   # wheel zoom; None = bars setting
         self._playhead_frac = 0.5
         self._loop_start_ms: float | None = None

@@ -31,8 +31,9 @@ DEFAULTS: dict[str, Any] = {
     "zoom_bars_by_deck": {},        # optional per-deck overrides { "1": 8, ... }
     "waveform_style": "rgb",       # auto | rgb | 3band | blue
     "waveform_style_fallback": "rgb",  # what Auto draws when the player reports nothing
-    "waveform_palette": "beatlink",    # beatlink | cdj3000 (3-band colours)
-    "pwv7_order": "mid_high_low",      # mid_high_low (Beat Link) | low_mid_high (OLC)
+    "waveform_palette": "cdj3000",     # cdj3000 (rekordbox colours) | beatlink
+    "pwv7_order": "low_mid_high",      # low_mid_high (rbxport/OLC) | mid_high_low (Beat Link)
+    "pwv6_order": "low_mid_high",      # same choices, for the PWV6 overview
     "wave_zoom_seconds_by_deck": {},   # deck -> seconds (2-30) set with the wheel
     "show_phrases": True,          # Rekordbox-style phrase strip under overview
     "show_vocals": True,           # vocal lane under the phrase strip
@@ -267,6 +268,7 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     out["waveform_palette"] = normalize_palette(data.get("waveform_palette"))
     from prolink.anlz import normalize_band_order
     out["pwv7_order"] = normalize_band_order(data.get("pwv7_order"))
+    out["pwv6_order"] = normalize_band_order(data.get("pwv6_order"))
     out["wave_zoom_seconds_by_deck"] = clean_zoom_seconds(data.get("wave_zoom_seconds_by_deck"))
     out["show_phrases"] = bool(data.get("show_phrases", True))
     out["show_vocals"] = bool(data.get("show_vocals", True))
