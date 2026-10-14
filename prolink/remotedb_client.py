@@ -246,6 +246,46 @@ class RemoteDbBrowser:
         count = int(avail.args[1]) if len(avail.args) > 1 else 0
         return [wire.menu_item_row(m) for m in self._render_all(count)]
 
+    def playlist_tree(self, *, max_depth: int = 16, max_nodes: int = 5000) -> list[dict]:
+        """Every playlist and folder, walking sub-folders (read-only).
+
+        The root request (folder id 0) only lists the top level. Playlists
+        inside folders need one more folder request per folder, so a library
+        organised in folders used to show only its loose root playlists.
+        Each row gets ``parent_id`` (the folder it sits in) and ``depth``.
+        """
+        return self.call(lambda: self._playlist_tree(max_depth, max_nodes))
+
+    def _playlist_tree(self, max_depth: int, max_nodes: int) -> list[dict]:
+        out: list[dict] = []
+        seen: set[int] = {0}
+
+        def walk(folder_id: int, depth: int) -> None:
+            if depth > max_depth or len(out) >= max_nodes:
+                return
+            try:
+                rows = self._playlist_folder(folder_id)
+            except Exception as exc:
+                # An empty sub-folder can answer "menu unavailable". Keep the
+                # rest of the tree; a dropped socket still restarts the walk.
+                if folder_id == 0 or is_connection_drop(exc):
+                    raise
+                return
+            for row in rows:
+                if not row or len(out) >= max_nodes:
+                    continue
+                row = dict(row)
+                row["parent_id"] = folder_id
+                row["depth"] = depth
+                out.append(row)
+                rid = int(row.get("id") or 0)
+                if row.get("folder") and rid and rid not in seen:
+                    seen.add(rid)
+                    walk(rid, depth + 1)
+
+        walk(0, 0)
+        return out
+
     def playlist_tracks(self, playlist_id: int) -> list[dict]:
         return self.call(lambda: self._playlist_tracks(playlist_id))
 

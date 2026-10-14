@@ -2,7 +2,7 @@
 
 A live Pro DJ Link monitor. It joins the booth network as a virtual player, reads the library and analysis from the player while the set is running, and draws decks, waveforms, and artwork on this computer. It is read-only toward the player and the USB stick: it never writes a Rekordbox database, never sends library edits, and a packet capture only records what already arrived.
 
-This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.9**. This tree is **1.0.10**.
+This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.10**. This tree is **1.0.11**.
 
 ## Contents
 
@@ -17,6 +17,14 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 - [Credits](#credits)
 
 ## What's new
+
+**1.0.11.** The Library shows every playlist and folder, and artwork can come from the audio file.
+
+- **Full playlist tree.** The live (dbserver) Library only asked the player for the root playlist menu and then dropped the folders, so any playlist inside a folder never appeared. It now walks every folder (one read-only folder request per folder, with a loop guard and a node cap), keeps folders as headers, and indents playlists under them. Smart playlists are listed like any other playlist. Long menus are still read in full, 64 rows at a time.
+- **Fallback tree.** The NFS fallback reads the OneLibrary `playlist_id_parent` and `attribute` columns (1 = folder, 4 = smart playlist). Before, attribute 2 was treated as a folder and the parent was ignored. When OneLibrary is not available, the fallback reads `export.pdb`'s playlist tree and playlist entries.
+- **Track columns.** The second line of a dbserver track row is whatever the player's sub-column is set to (album, genre, comment, key, and so on). It is now mapped by the row's item type instead of always going into Artist. A cached `export.pdb` row is only merged when its title matches, so a stick with different track ids no longer shows another track's artist or album.
+- **Library diagnostics.** **Library > Diagnostics** (or `/api/library/diagnostics`) saves a read-only JSON report: folder and playlist counts and tree depth from the live player and from the USB copy, the full tree from both, and the first 20 rows of a playlist side by side.
+- **Hi-res artwork from file.** Large artwork is read from the cover embedded in the audio file over NFS, with mutagen, using ranged reads of the tag region only. It loads in the background and is cached in memory and on disk; until it is ready the player's dbserver art is shown. Settings: **Hi-res artwork from file** (on by default) and **Hi-res artwork read cap (MB)** (16 by default, 1 to 64). The player and USB stay read-only.
 
 **1.0.10.** 3-band waveforms and a zoomable scrolling wave.
 
@@ -399,8 +407,9 @@ Default base is `http://127.0.0.1:8777` when that port bound, and `http://127.0.
 | `/api/session/start`, `/stop`, `/clear` | Start, stop (keep the list), or clear |
 | `/api/session/export?fmt=csv\|json\|m3u` | Download the playlist |
 | `/api/library/tracks?q=&limit=&offset=` | Search tracks |
-| `/api/library/playlists` | OneLibrary playlists and history |
+| `/api/library/playlists` | Playlist tree (folders with `parent_id` and `depth`) and history |
 | `/api/library/playlist/<id>?host=&limit=` | Tracks in one playlist |
+| `/api/library/diagnostics` | Read-only Library report (live vs USB copy) |
 | `/api/library/loaded` | Tracks currently on decks |
 | `/api/events` | Server-sent events: a full snapshot about 15 times a second, and a light playhead frame at 60 Hz |
 | `/api/track/<id>` | Metadata, beat grid, cues, phrases. Optional `deck` and `key` |

@@ -196,6 +196,8 @@ class BundleLayoutTests(unittest.TestCase):
             self.assertTrue(any("pyrekordbox" in item for item in missing))
             (internal / "pyrekordbox").mkdir()
             (internal / "pyrekordbox" / "__init__.py").write_text("x", encoding="utf-8")
+            (internal / "mutagen").mkdir()
+            (internal / "mutagen" / "__init__.py").write_text("x", encoding="utf-8")
             (internal / "sqlcipher3").mkdir()
             (internal / "sqlcipher3" / "__init__.py").write_text("x", encoding="utf-8")
             (internal / "sqlcipher3" / "_sqlite3.pyd").write_bytes(b"bin")

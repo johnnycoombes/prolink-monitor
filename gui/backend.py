@@ -300,6 +300,13 @@ class Backend(QObject):
             return {"id": playlist_id, "host": host, "tracks": []}
         return mon.browse_playlist_tracks(playlist_id, host)
 
+    def library_diagnostics(self) -> dict:
+        with self._lock:
+            mon = self._monitor
+        if mon is None:
+            return {"hosts": [], "error": "not connected"}
+        return mon.library_diagnostics()
+
     def loaded_tracks(self) -> list:
         with self._lock:
             mon = self._monitor

@@ -43,11 +43,25 @@ def verify(dist: Path) -> list[str]:
 
     files = _parts()
 
+    def _in_pyz(name: str) -> bool:
+        """Pure-Python packages can live only inside the PYZ archive."""
+        needle = name.encode()
+        for parts, path in files:
+            if path.suffix.lower() == ".pyz" or path.name.endswith(".pkg"):
+                try:
+                    if needle in path.read_bytes():
+                        return True
+                except OSError:
+                    continue
+        return False
+
     def _has_part(name: str) -> bool:
         return any(name in parts for parts, _path in files)
 
     if not _has_part("pyrekordbox"):
         errors.append("pyrekordbox is missing from the frozen folder")
+    if not _has_part("mutagen") and not _in_pyz("mutagen"):
+        errors.append("mutagen (hi-res artwork from file) is missing from the frozen folder")
     if not _has_part("sqlcipher3"):
         errors.append("sqlcipher3 is missing from the frozen folder")
     has_sqlite = False

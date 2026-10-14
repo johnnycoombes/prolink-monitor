@@ -26,6 +26,17 @@ STRINGS = {
     "library_playlists": "Playlists",
     "library_history": "History",
     "library_loaded": "On decks",
+    "library_diagnostics": "Diagnostics",
+    "library_diagnostics_tip": (
+        "Save a read-only report: playlist tree counts and depth, and 20 rows "
+        "from the live player next to the USB copy."
+    ),
+    "hires_art_from_file": "Hi-res artwork from file",
+    "hires_art_from_file_tip": (
+        "Read the cover embedded in the audio file over NFS (read-only) when "
+        "a larger image is needed. Falls back to player artwork."
+    ),
+    "hires_art_max_mb": "Hi-res artwork read cap (MB)",
     "library_all": "All tracks",
     "library_empty": "Connect a player with a USB/SD to browse the library.",
     "library_loading": "Loading library…",

@@ -1435,9 +1435,14 @@ class LibraryPage(Page):
         self.loaded_btn = QPushButton(i18n.t("library_loaded"))
         self.loaded_btn.setCursor(Qt.PointingHandCursor)
         self.loaded_btn.clicked.connect(self._show_loaded)
+        self.diag_btn = QPushButton(i18n.t("library_diagnostics"))
+        self.diag_btn.setCursor(Qt.PointingHandCursor)
+        self.diag_btn.setToolTip(i18n.t("library_diagnostics_tip"))
+        self.diag_btn.clicked.connect(self._export_diagnostics)
         tools.addWidget(self.search, 1)
         tools.addWidget(self.refresh_btn)
         tools.addWidget(self.loaded_btn)
+        tools.addWidget(self.diag_btn)
         self.layout_root.addLayout(tools)
 
         split = QSplitter(Qt.Horizontal)
@@ -1550,8 +1555,35 @@ class LibraryPage(Page):
         self._source = "loaded"
         self._reload_tracks()
 
+    def _export_diagnostics(self) -> None:
+        """Save a read-only live-vs-fallback Library report as JSON."""
+        if self.backend is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, self._i18n.t("library_diagnostics"),
+            "library-diagnostics.json", "JSON (*.json)")
+        if not path:
+            return
+        backend = self.backend
+
+        def work() -> None:
+            import json
+            try:
+                data = backend.library_diagnostics()
+            except Exception as exc:  # pragma: no cover - UI path
+                data = {"error": str(exc)}
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2, default=str)
+            except OSError:
+                pass
+
+        threading.Thread(target=work, name="library-diagnostics", daemon=True).start()
+
     def _on_playlist(self, item: QListWidgetItem) -> None:
         data = item.data(Qt.UserRole) or {}
+        if not data or data.get("folder"):
+            return  # folder header
         self._source = f"playlist:{data.get('id')}|{data.get('host') or ''}"
         self._reload_tracks()
 
@@ -1615,11 +1647,21 @@ class LibraryPage(Page):
 
     def _fill_sidebars(self, data: dict) -> None:
         self.playlist_list.clear()
+        # Full tree: folders as headers, their playlists indented under them.
         for p in data.get("playlists") or []:
+            depth = max(0, min(12, int(p.get("depth") or 0)))
+            name = p.get("name") or f"#{p.get('id')}"
+            indent = "    " * depth
             if p.get("folder"):
-                continue
-            item = QListWidgetItem(p.get("name") or f"#{p.get('id')}")
-            item.setData(Qt.UserRole, p)
+                item = QListWidgetItem(f"{indent}\u25B8 {name}")
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
+                item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+                item.setData(Qt.UserRole, None)
+            else:
+                item = QListWidgetItem(f"{indent}{name}")
+                item.setData(Qt.UserRole, p)
             self.playlist_list.addItem(item)
         self.history_list.clear()
         for h in data.get("history") or []:
@@ -2280,6 +2322,14 @@ class SettingsPage(Page):
         conn.addRow(i18n.t("tshark"), self.tshark)
         conn.addRow(i18n.t("cache"), self.cache)
         conn.addRow(i18n.t("local_music_root"), self.local_music_root)
+        self.hires_art_from_file = QCheckBox(i18n.t("hires_art_from_file"))
+        self.hires_art_from_file.setToolTip(i18n.t("hires_art_from_file_tip"))
+        self.hires_art_from_file.setChecked(True)
+        conn.addRow("", self.hires_art_from_file)
+        self.hires_art_max_mb = QSpinBox()
+        self.hires_art_max_mb.setRange(1, 64)
+        self.hires_art_max_mb.setValue(16)
+        conn.addRow(i18n.t("hires_art_max_mb"), self.hires_art_max_mb)
 
         disp = section("section_display")
         self.max_decks = QComboBox()
@@ -2564,6 +2614,8 @@ class SettingsPage(Page):
         self.tshark.setText(data.get("tshark") or "")
         self.cache.setText(data.get("cache") or "")
         self.local_music_root.setText(data.get("local_music_root") or "")
+        self.hires_art_from_file.setChecked(bool(data.get("hires_art_from_file", True)))
+        self.hires_art_max_mb.setValue(int(data.get("hires_art_max_mb", 16) or 16))
         idx = self.max_decks.findData(normalize_max_decks(data.get("max_decks", 4)))
         self.max_decks.setCurrentIndex(max(0, idx))
         idx = self.zoom.findData(int(data.get("zoom_bars", DEFAULT_ZOOM_BARS)))
@@ -2646,6 +2698,8 @@ class SettingsPage(Page):
             "tshark": self.tshark.text().strip(),
             "cache": self.cache.text().strip(),
             "local_music_root": self.local_music_root.text().strip(),
+            "hires_art_from_file": self.hires_art_from_file.isChecked(),
+            "hires_art_max_mb": int(self.hires_art_max_mb.value()),
             "max_decks": self.max_decks.currentData(),
             "zoom_bars": self.zoom.currentData(),
             "waveform_style": self.wave_style.currentData(),

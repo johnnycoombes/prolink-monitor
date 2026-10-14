@@ -120,6 +120,8 @@ class PdbDatabase:
         self.colors: dict[int, str] = {}
         self.artwork: dict[int, str] = {}
         self.tracks: dict[int, Track] = {}
+        self.playlists: dict[int, dict] = {}
+        self.playlist_entries: dict[int, list[tuple[int, int]]] = {}
         self._load()
 
     # -- walking pages ------------------------------------------------------
@@ -217,6 +219,7 @@ class PdbDatabase:
             ("colors", lambda: self._load_simple(COLORS, "<H", 0x05, 0x08, self.colors)),
             ("artwork", lambda: self._load_simple(ARTWORK, "<I", 0x00, 0x04, self.artwork)),
             ("tracks", self._load_tracks),
+            ("playlists", self._load_playlists),
         )
         self.parse_errors: list[str] = []
         for name, step in steps:
@@ -287,6 +290,46 @@ class PdbDatabase:
                      "key": key_id, "label": label_id, "artwork": artwork_id,
                      "color": color_id},
             )
+
+    # -- playlists ----------------------------------------------------------
+    def _load_playlists(self) -> None:
+        """playlist_tree rows (Deep Symmetry layout).
+
+        parent_id u32 @0, unknown @4, sort_order u32 @8, id u32 @12,
+        raw_is_folder u32 @16 (non-zero = folder), name @20.
+        """
+        d = self.data
+        for row in self._rows(PLAYLIST_TREE):
+            try:
+                parent_id, _u, sort_order, pid, raw_folder = struct.unpack_from(
+                    "<IIIII", d, row)
+            except struct.error:
+                continue
+            if not pid:
+                continue
+            self.playlists[pid] = {
+                "id": pid,
+                "name": _sql_string(d, row + 20),
+                "parent_id": parent_id,
+                "folder": raw_folder != 0,
+                "sort": sort_order,
+            }
+        for row in self._rows(PLAYLIST_ENTRIES):
+            try:
+                index, track_id, pid = struct.unpack_from("<III", d, row)
+            except struct.error:
+                continue
+            self.playlist_entries.setdefault(pid, []).append((index, track_id))
+        for entries in self.playlist_entries.values():
+            entries.sort()
+
+    def playlist_tree(self) -> list[dict]:
+        from .library_tree import with_depth
+
+        return with_depth(self.playlists.values())
+
+    def playlist_track_ids(self, playlist_id: int) -> list[int]:
+        return [tid for _i, tid in self.playlist_entries.get(int(playlist_id), [])]
 
     # -- queries ------------------------------------------------------------
     def get(self, track_id: int) -> Track | None:

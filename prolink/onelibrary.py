@@ -644,25 +644,47 @@ def find_content(db: Any, content_id: int) -> OneLibraryTrack | None:
         return None
 
 
+def _first_attr(item: Any, *names: str) -> Any:
+    for name in names:
+        val = getattr(item, name, None)
+        if val is not None:
+            return val
+    return None
+
+
+# OneLibrary ``playlist.attribute``: 1 is a folder; 0 is a playlist and 4 a
+# smart playlist (rbxport rbl-onelibrary). 2 is not a folder, which the
+# previous mapping assumed, so those playlists were hidden.
+ONELIBRARY_FOLDER = 1
+
+
 def _playlist_row(item: Any) -> dict[str, Any]:
-    pid = int(getattr(item, "ID", 0) or getattr(item, "id", 0)
-              or getattr(item, "playlist_id", 0) or 0)
-    name = (getattr(item, "name", None) or getattr(item, "title", None)
-            or getattr(item, "Name", None) or f"Playlist {pid}")
-    parent = getattr(item, "parent_id", None)
-    if parent is None:
-        parent = getattr(item, "ParentID", None)
+    pid = int(_first_attr(item, "playlist_id", "history_id", "ID", "id") or 0)
+    name = (_first_attr(item, "name", "title", "Name") or f"Playlist {pid}")
+    parent = _first_attr(item, "playlist_id_parent", "parent_id", "ParentID",
+                         "parent")
+    if parent is not None and not isinstance(parent, (int, str)):
+        parent = _first_attr(parent, "playlist_id", "ID", "id")
     try:
-        parent_id = int(parent) if parent is not None else 0
+        parent_id = int(parent) if parent not in (None, "", "root") else 0
     except (TypeError, ValueError):
         parent_id = 0
-    is_folder = bool(getattr(item, "is_folder", False)
-                     or getattr(item, "attribute", 0) in (1, 2))
+    try:
+        attribute = int(_first_attr(item, "attribute", "Attribute") or 0)
+    except (TypeError, ValueError):
+        attribute = 0
+    is_folder = bool(getattr(item, "is_folder", False)) or attribute == ONELIBRARY_FOLDER
+    try:
+        sort = int(_first_attr(item, "sequenceNo", "sequence_no", "Seq") or 0)
+    except (TypeError, ValueError):
+        sort = 0
     return {
         "id": pid,
         "name": str(name),
         "parent_id": parent_id,
         "folder": is_folder,
+        "smart": attribute == 4,
+        "sort": sort,
     }
 
 

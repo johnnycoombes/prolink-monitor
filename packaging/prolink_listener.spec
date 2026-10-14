@@ -56,6 +56,10 @@ hiddenimports = [
     "packaging",
     "packaging.version",
     # OneLibrary. Imported lazily, so name the modules and collect their files.
+    "mutagen",
+    "mutagen.id3",
+    "mutagen.flac",
+    "mutagen.mp4",
     "pyrekordbox",
     "pyrekordbox.masterdb",
     "pyrekordbox.masterdb.database",
@@ -78,7 +82,7 @@ hiddenimports = [
 from PyInstaller.utils.hooks import collect_all
 
 _collected_bins = []
-for _pkg in ("pyrekordbox", "sqlcipher3", "sqlalchemy", "numpy"):
+for _pkg in ("pyrekordbox", "sqlcipher3", "sqlalchemy", "numpy", "mutagen"):
     _datas, _bins, _hidden = collect_all(_pkg)
     datas += _datas
     _collected_bins += _bins
@@ -114,7 +118,7 @@ def _ship_tree(module_name):
     return shipped_datas, shipped_bins
 
 
-for _name in ("pyrekordbox", "sqlcipher3"):
+for _name in ("pyrekordbox", "sqlcipher3", "mutagen"):
     _extra_datas, _extra_bins = _ship_tree(_name)
     datas += _extra_datas
     _collected_bins += _extra_bins
