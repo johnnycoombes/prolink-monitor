@@ -78,15 +78,50 @@ def color_label(value) -> tuple[str, str]:
     return name, COLOR_SWATCH.get(name.lower(), "")
 
 
-def beat_phrase_text(bar: int, phrase: str) -> str:
-    """Beat-in-bar and the phrase the playhead is in, when either is known."""
-    parts: list[str] = []
+_NO_BEAT = 0x7FFFFFFF
+
+
+def bar_beat(beat: int, beat_in_bar: int = 0) -> tuple[int, int] | None:
+    """Absolute ``(bar, beat 1-4)`` from the status beat number (4/4).
+
+    ``beat`` is the CDJ status beat number (1-based index into the track's
+    beat grid). ``beat_in_bar`` is the player's own 1-4 counter; when known it
+    anchors the downbeat, so the bar flips on the grid's beat 1 even when the
+    track's first grid beat is not a downbeat. None when no beat is known.
+    """
     try:
-        beat = int(bar or 0)
+        b = int(beat or 0)
+        k = int(beat_in_bar or 0)
     except (TypeError, ValueError):
-        beat = 0
-    if 1 <= beat <= 4:
-        parts.append(f"Beat {beat}/4")
+        return None
+    if b <= 0 or b >= _NO_BEAT:
+        return None
+    if 1 <= k <= 4 and b >= k:
+        return (b - k) // 4 + 1, k
+    return (b - 1) // 4 + 1, (b - 1) % 4 + 1
+
+
+def bar_beat_text(beat: int, beat_in_bar: int = 0) -> str:
+    """``Bar 33.2`` (bar 33, beat 2 of 4), or "" when no beat is known."""
+    got = bar_beat(beat, beat_in_bar)
+    if got is None:
+        return ""
+    return f"Bar {got[0]}.{got[1]}"
+
+
+def beat_phrase_text(bar: int, phrase: str, beat: int = 0) -> str:
+    """Bar.beat (or beat-in-bar) and the phrase the playhead is in."""
+    parts: list[str] = []
+    text = bar_beat_text(beat, bar)
+    if text:
+        parts.append(text)
+    else:
+        try:
+            k = int(bar or 0)
+        except (TypeError, ValueError):
+            k = 0
+        if 1 <= k <= 4:
+            parts.append(f"Beat {k}/4")
     label = display_text(phrase)
     if label:
         parts.append(label)

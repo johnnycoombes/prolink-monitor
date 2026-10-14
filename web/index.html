@@ -131,7 +131,7 @@ body.hide-el-bpm.hide-el-tempo.hide-el-time.hide-el-key.hide-el-state .readouts{
   font-family:var(--mono);font-size:22px;color:var(--dimmest)}
 .who{min-width:0;flex:1;display:flex;flex-direction:column;gap:1px}
 .num{font-family:var(--mono);font-weight:700;color:var(--c);line-height:1;
-  font-size:calc(20px * var(--row-scale, 1))}
+  font-size:calc(var(--num-size, 11px) * var(--row-scale, 1))}
 .tags{display:flex;flex-wrap:wrap;align-items:center}
 .tag{
   font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:1px;
@@ -147,7 +147,7 @@ body.hide-el-bpm.hide-el-tempo.hide-el-time.hide-el-key.hide-el-state .readouts{
   overflow:hidden;text-overflow:ellipsis;display:-webkit-box;
   -webkit-line-clamp:2;-webkit-box-orient:vertical;
 }
-.deck.compact .title{-webkit-line-clamp:1}
+.deck.compact .title{-webkit-line-clamp:2}
 .artist{
   font-size:calc(var(--artist-size) * var(--row-scale, 1));color:var(--dim);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
@@ -162,7 +162,7 @@ body.hide-el-bpm.hide-el-tempo.hide-el-time.hide-el-key.hide-el-state .readouts{
 .deck.compact .extra{display:none !important}
 .facts{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline;min-width:0}
 .key{font-family:var(--mono);font-weight:700;color:var(--c);
-  font-size:calc(18px * var(--row-scale, 1));letter-spacing:.03em}
+  font-size:calc(var(--key-size, 12px) * var(--row-scale, 1));letter-spacing:.03em}
 .rating{letter-spacing:0;color:#ffd45e;display:inline-flex;align-items:center}
 .swatch{display:inline-block;width:.7em;height:.7em;border-radius:2px;margin-right:4px}
 .played{height:6px;border-radius:3px;background:var(--line);overflow:hidden;flex:none}
@@ -328,7 +328,7 @@ body.readonly #session .head::after{content:' · read-only'; color:var(--dimmest
 .ph-loop{stroke:none !important}
 .rating .ph-star{width:1.05em;height:1.05em;margin-right:1px}
 </style>
-<script id="monitor-layout" type="application/json">{"identWidth":360,"identCollapsed":44,"readoutMin":208,"readoutMax":248,"art":72,"artRadius":4,"accent":4,"cardRadius":6,"cardGap":8,"pageMargins":[20,14,20,12],"bodyMargins":[12,10,12,10],"bodyGap":12,"phraseH":16,"overviewFrac":0.14,"overviewMin":28,"overviewMax":48,"bpm":28,"pitch":12,"time":15,"phaseW":12,"phaseH":4,"titlePx":22,"artistPx":16,"detailPx":13,"order2":[1,2],"order4":[3,1,2,4]}</script>
+<script id="monitor-layout" type="application/json">{"identWidth":360,"identCollapsed":44,"readoutMin":208,"readoutMax":248,"art":72,"artRadius":4,"accent":4,"cardRadius":6,"cardGap":8,"pageMargins":[20,14,20,12],"bodyMargins":[12,10,12,10],"bodyGap":12,"phraseH":16,"overviewFrac":0.14,"overviewMin":28,"overviewMax":48,"bpm":28,"pitch":12,"time":15,"phaseW":12,"phaseH":4,"titlePx":14,"artistPx":11,"detailPx":11,"numPx":11,"keyPx":12,"order2":[1,2],"order4":[3,1,2,4]}</script>
 <script>
 const MONITOR_LAYOUT = JSON.parse(document.getElementById('monitor-layout').textContent);
 function applyMonitorLayout() {
@@ -356,7 +356,9 @@ function applyMonitorLayout() {
   s.setProperty('--time-size', L.time + 'px');
   s.setProperty('--phase-w', L.phaseW + 'px');
   s.setProperty('--phase-h', L.phaseH + 'px');
-  s.setProperty('--title-size', (L.titlePx || 22) + 'px');
+  s.setProperty('--title-size', (L.titlePx || 14) + 'px');
+  s.setProperty('--num-size', (L.numPx || 11) + 'px');
+  s.setProperty('--key-size', (L.keyPx || 12) + 'px');
   s.setProperty('--artist-size', (L.artistPx || 16) + 'px');
   s.setProperty('--detail-size', (L.detailPx || 13) + 'px');
 }
@@ -388,6 +390,7 @@ applyMonitorLayout();
 const wrapLoopPosition = ProlinkPlayhead.wrapLoopPosition;
 const extrapolatePlayhead = ProlinkPlayhead.extrapolatePlayhead;
 const syncDetailCache = ProlinkPlayhead.syncDetailCache;
+const barBeatText = ProlinkPlayhead.barBeatText;
 /* ------------------------------------------------------------------- strings */
 const params = new URLSearchParams(location.search);
 const READONLY = params.get('readonly') === '1' || params.get('ro') === '1';
@@ -1577,7 +1580,9 @@ function render() {
     }
     const phraseName = currentPhrase(pos, track && track.meta);
     const beatNo = (s.bar >= 1 && s.bar <= 4) ? s.bar : 0;
-    const phraseText = [beatNo ? ('Beat ' + beatNo + '/4') : '', phraseName].filter(Boolean).join(' · ');
+    // Bar.beat in 4/4 (e.g. "Bar 33.2"), from the beat-grid beat number.
+    const barBeat = s.bar_beat || barBeatText(s.beat, s.bar) || (beatNo ? ('Beat ' + beatNo + '/4') : '');
+    const phraseText = [barBeat, phraseName].filter(Boolean).join(' · ');
     showField(d.phrase, phraseText);
 
     const loop = track ? activeLoop(track.meta, pos, looping, s) : null;
@@ -1801,7 +1806,7 @@ function enablePanelMock() {
       master: row[4], sync: i === 1,
       loop_start_ms: i === 0 ? 40000 : null,
       loop_end_ms: i === 0 ? 47620 : null,
-      name: 'XDJ-AZ', beat: 1, bar: i === 0 ? 3 : 1, waveform_position: 'left',
+      name: 'XDJ-AZ', beat: [131, 98, 112, 140][i], bar: [3, 2, 4, 4][i], waveform_position: 'left',
     });
   });
   const deckCount = params.get('decks') === '2' ? 2 : 4;

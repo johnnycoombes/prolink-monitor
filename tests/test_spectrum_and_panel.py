@@ -209,7 +209,7 @@ class WebPanelSourceTests(unittest.TestCase):
             CARD_GAP, CARD_RADIUS, DECK_ORDER, IDENT_COLLAPSED, IDENT_WIDTH,
             OVERVIEW_FRAC, OVERVIEW_MAX, OVERVIEW_MIN, PAGE_MARGINS, PHASE_H,
             PHASE_W, PHRASE_H, PITCH_PX, READOUT_PANEL_MAX, READOUT_PANEL_MIN,
-            TIME_PX, TITLE_PX, ARTIST_PX, DETAIL_PX,
+            TIME_PX, TITLE_PX, ARTIST_PX, DETAIL_PX, NUM_PX, KEY_PX,
         )
 
         path = os.path.join(ROOT, "web", "index.html")
@@ -245,6 +245,8 @@ class WebPanelSourceTests(unittest.TestCase):
         self.assertEqual(data["titlePx"], TITLE_PX)
         self.assertEqual(data["artistPx"], ARTIST_PX)
         self.assertEqual(data["detailPx"], DETAIL_PX)
+        self.assertEqual(data["numPx"], NUM_PX)
+        self.assertEqual(data["keyPx"], KEY_PX)
         self.assertIn("data-genre", html)
         self.assertIn("data-comment", html)
         self.assertIn("data-played", html)

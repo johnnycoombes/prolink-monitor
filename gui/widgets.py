@@ -26,7 +26,7 @@ from gui.deck_fit import (
 from gui.deck_layout import (
     ACCENT_PX, ARTIST_PX, ART_PX, ART_RADIUS, BODY_GAP, BODY_MARGINS, BPM_PX,
     DETAIL_PX, IDENT_COLLAPSED, IDENT_WIDTH, PHRASE_H, PHASE_H, PHASE_W, PITCH_PX,
-    READOUT_PANEL_MAX, READOUT_PANEL_MIN, TIME_PX, TITLE_PX, overview_height,
+    READOUT_PANEL_MAX, READOUT_PANEL_MIN, TIME_PX, TITLE_PX, NUM_PX, KEY_PX, overview_height,
 )
 from gui.theme import COLORS, DECK_COLORS
 from gui.settings import deck_elements_from
@@ -1584,7 +1584,7 @@ class DeckCard(QFrame):
         title_px = max(TITLE_MIN, int(round(TITLE_PX * scale)))
         artist_px = max(ARTIST_MIN, int(round(ARTIST_PX * scale)))
         detail_px = max(DETAIL_MIN, int(round(DETAIL_PX * scale)))
-        num_px = max(NUM_MIN, int(round(16 * scale)))
+        num_px = max(NUM_MIN, int(round(NUM_PX * scale)))
         show_title = bool(e.get("deck_show_title")) and bool(self._title_raw) and not self._empty
         show_artist = bool(e.get("deck_show_artist")) and bool(self._artist_raw)
         show_num = True
@@ -1646,7 +1646,7 @@ class DeckCard(QFrame):
                 optional.append(("genre", box(detail_px, mono=True, lines=genre_lines)[1] + gap))
             facts_filled = any((self._year_raw, self._key_raw, self._rating_raw, self._color_html))
             if facts_filled and (e.get("deck_show_meta") or e.get("deck_show_key")):
-                key_px = max(DETAIL_MIN, int(round(16 * scale)))
+                key_px = max(DETAIL_MIN, int(round(KEY_PX * scale)))
                 facts_h = max(box(detail_px, mono=True)[1], box(key_px, bold=True, mono=True)[1])
                 optional.append(("facts", facts_h + gap))
             if self._comment_raw:
@@ -1658,7 +1658,7 @@ class DeckCard(QFrame):
             and self._key_raw
             and not any(name == "facts" for name, _h in optional)
         ):
-            key_px = max(DETAIL_MIN, int(round(16 * scale)))
+            key_px = max(DETAIL_MIN, int(round(KEY_PX * scale)))
             optional.append(("facts", box(key_px, bold=True, mono=True)[1] + gap))
 
         # Detail lines spend the leftover first. The played bar is last, so it
@@ -2172,11 +2172,12 @@ class DeckCard(QFrame):
         self.played.setProperty("filled", False)
         self.played.set_fraction(0)
 
-    def _paint_phrase(self, pos_ms: float, bar: int) -> None:
+    def _paint_phrase(self, pos_ms: float, bar: int, beat: int = 0) -> None:
         meta = self._meta or {}
         text = beat_phrase_text(
             bar,
             current_phrase(pos_ms, meta.get("phrases"), meta.get("beats")),
+            beat,
         )
         was_empty = not self._phrase_raw
         self._phrase_raw = text
@@ -2229,7 +2230,7 @@ class DeckCard(QFrame):
         )
 
     def advance_playhead(self, pos_ms: float, playing: bool, duration_ms: float = 0,
-                         *, bar: int = 0, looping: bool = False,
+                         *, bar: int = 0, beat: int = 0, looping: bool = False,
                          loop_start_ms: float | None = None,
                          loop_end_ms: float | None = None) -> None:
         """Lightweight per-frame update: times + waveform position + phase."""
@@ -2259,7 +2260,7 @@ class DeckCard(QFrame):
             self._packed_has("played") and bool(self.played.property("filled"))
         )
         self._set_phase(bar)
-        self._paint_phrase(pos_ms, bar)
+        self._paint_phrase(pos_ms, bar, beat)
         self._apply_loop_region(pos_ms, looping)
         self._paint_next(pos_ms)
         self.wave.set_position(pos_ms, playing)
@@ -2431,6 +2432,7 @@ class DeckCard(QFrame):
             bool(deck.get("playing")),
             float(deck.get("duration_ms") or 0),
             bar=int(deck.get("bar") or 0),
+            beat=int(deck.get("beat") or 0),
             looping=(deck.get("state") == "looping"),
             loop_start_ms=deck.get("loop_start_ms"),
             loop_end_ms=deck.get("loop_end_ms"),

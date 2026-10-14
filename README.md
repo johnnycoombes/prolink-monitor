@@ -2,7 +2,7 @@
 
 A live Pro DJ Link monitor. It joins the booth network as a virtual player, reads the library and analysis from the player while the set is running, and draws decks, waveforms, and artwork on this computer. It is read-only toward the player and the USB stick: it never writes a Rekordbox database, never sends library edits, and a packet capture only records what already arrived.
 
-This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.11**. This tree is **1.0.12**.
+This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.12**. This tree is **1.0.13**.
 
 ## Contents
 
@@ -17,6 +17,12 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 - [Credits](#credits)
 
 ## What's new
+
+**1.0.13.** Smaller deck text and a bar counter.
+
+- **Smaller identity text.** In each deck's left column the title, artist, key and deck number are about a third smaller, on the desktop Monitor and the web panel alike (title 22 → 14 px, artist 16 → 11 px, number 16/20 → 11 px, key 16/18 → 12 px at a 240 px row, still scaled with the row height). A title now gets two lines on any row 96 px or taller (it used to need 240 px), so a long title shows in full instead of being cut short after the first line.
+- **Bar.beat counter.** The beat readout is now the standard 4/4 counter, **`Bar 33.2`** (bar 33, beat 2), followed by the phrase: `Bar 33.2 · Chorus`. The bar is computed from the player's beat-grid beat number in its status packets, and the player's own 1–4 beat counter marks the downbeat, so the bar changes on beat 1 even when the grid's first beat isn't a downbeat. The JSON state has the same text as `bar_beat`. It appears on the Monitor, the web panel, and the card, panel and bar overlays (next to the clock), and `barbeat=0` hides it on an overlay. With no beat number it falls back to `Beat 2/4`.
+- Screenshots recaptured, including the overlay settings page.
 
 **1.0.12.** The floating Now Playing window opens again. Since 1.0.7, `apply_state` and `tick_paint` had slipped out of the window class into the body of a module function during the clean-exit change. Opening the window called `apply_state` before `show()`, raised `AttributeError` inside the Qt slot, and nothing appeared and nothing was logged. Both methods are back on the class. A failure while opening is now logged and shown in a message box. A test opens the window the way the app does, and another checks that every method the main window calls exists. The drag-strip grip is sized to the 22 px strip so the top and bottom dots are no longer clipped. README screenshots were recaptured from demo data with `scripts/capture_readme_shots.py`.
 
@@ -199,6 +205,8 @@ The overview is the detail wave reduced by peak (PWV6 for 3-band), not `PWV4`. Z
 
 **Icons.** [Phosphor](https://phosphoricons.com/) SVGs (MIT), recoloured to the theme in Qt and drawn inline in the web pages.
 
+**Bar counter.** The readout column shows the position as `Bar <bar>.<beat>` in 4/4 (for example `Bar 33.2 · Chorus`), computed from the beat-grid beat number the player sends.
+
 **Phrase strip.** Rekordbox phrase names (intro, verse, chorus, and the rest) sit under the overview when **Phrase strip under waveform** is on.
 
 **Vocal lane.** An optional strip under the phrases. A column counts as vocal when the mid band is above the PWVC threshold and the low and high bands stay under theirs. The preview wave is PWV6, with PWV7 as the fallback. On by default (`show_vocals`).
@@ -289,6 +297,7 @@ The **Overlay** page builds the URL. Copy it into OBS and size the source to the
 | Param | Values | Default | Meaning |
 |---|---|---|---|
 | `layout` | `nowplaying`, `dual`, `minimal`, `setlist` | `nowplaying` | `setlist` is now-playing plus a scrolling history |
+| `barbeat` | `1`, `0` | `1` | Bar.beat counter (`Bar 33.2`) next to the clock |
 | `style` | `card`, `panel`, `bar` | `card` | Now Playing only. Panel is the large-art strip with the visualiser on unless `spectrum=0`. Bar is the small-art strip. |
 | `pos` | card: `tl` `tr` `bl` `br`; panel and bar: `bottom` `top` | `bl` or `bottom` | Where that style sits |
 | `corner` | `bl`, `br`, `tl`, `tr`, `center` | `bl` | Other layouts |

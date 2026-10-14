@@ -181,6 +181,21 @@
     return Math.max(0, pos);
   }
 
+  // Absolute bar.beat in 4/4 from the status beat number (matches
+  // prolink.fields.bar_beat). beatInBar (1-4) anchors the downbeat.
+  function barBeat(beat, beatInBar) {
+    const b = Math.floor(+beat || 0);
+    const k = Math.floor(+beatInBar || 0);
+    if (!(b > 0) || b >= 0x7FFFFFFF) return null;
+    if (k >= 1 && k <= 4 && b >= k) return [Math.floor((b - k) / 4) + 1, k];
+    return [Math.floor((b - 1) / 4) + 1, ((b - 1) % 4) + 1];
+  }
+
+  function barBeatText(beat, beatInBar) {
+    const got = barBeat(beat, beatInBar);
+    return got ? ('Bar ' + got[0] + '.' + got[1]) : '';
+  }
+
   return {
     NOMINAL_INTERVAL_S: NOMINAL_INTERVAL_S,
     SMALL_ERROR_MS: SMALL_ERROR_MS,
@@ -197,5 +212,7 @@
     syncDetailCache: syncDetailCache,
     followSample: followSample,
     projectSample: projectSample,
+    barBeat: barBeat,
+    barBeatText: barBeatText,
   };
 });

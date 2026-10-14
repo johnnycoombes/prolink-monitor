@@ -33,6 +33,7 @@ from prolink.anlz_resolve import AnlzChoice               # noqa: E402
 from prolink.library import Library, Media                # noqa: E402
 from prolink import onelibrary                            # noqa: E402
 from prolink import library_tree                          # noqa: E402
+from prolink import fields as _fields                     # noqa: E402
 from prolink import __version__ as _PROLINK_VERSION       # noqa: E402
 
 
@@ -1934,6 +1935,7 @@ class Monitor:
                 "duration_ms": self._deck_duration_ms(d),
                 "beat": s.beat_count,
                 "bar": s.beat_in_bar,
+                "bar_beat": _fields.bar_beat_text(s.beat_count, s.beat_in_bar),
                 "state": s.play_state,
                 "master": s.master,
                 "sync": s.sync,
@@ -1994,6 +1996,7 @@ class Monitor:
                 "duration_ms": self._deck_duration_ms(d),
                 "beat": s.beat_count,
                 "bar": s.beat_in_bar,
+                "bar_beat": _fields.bar_beat_text(s.beat_count, s.beat_in_bar),
                 "beat_packets": d.beat_packets,
                 "absolute_packets": d.absolute_packets,
                 "position_source": d.position_source,
