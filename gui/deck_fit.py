@@ -13,12 +13,12 @@ import math
 import os
 
 # Two title lines only once the row can keep the artist under them.
-TALL_ROW = 240
+TALL_ROW = 96
 
-TITLE_MIN = 13
-ARTIST_MIN = 11
-DETAIL_MIN = 11
-NUM_MIN = 12
+TITLE_MIN = 10
+ARTIST_MIN = 9
+DETAIL_MIN = 9
+NUM_MIN = 9
 BPM_MIN = 15
 PITCH_MIN = 11
 TIME_MIN = 12

@@ -17,9 +17,12 @@ READOUT_PANEL_MIN = 208
 READOUT_PANEL_MAX = 248
 
 # Type sizes at a ~240px row. Both views scale these with the row height.
-TITLE_PX = 22
-ARTIST_PX = 16
-DETAIL_PX = 13
+# 1.0.13: about a third smaller so a full title fits on two lines.
+TITLE_PX = 14
+ARTIST_PX = 11
+DETAIL_PX = 11
+NUM_PX = 11
+KEY_PX = 12
 
 ART_PX = 72
 ART_RADIUS = 4

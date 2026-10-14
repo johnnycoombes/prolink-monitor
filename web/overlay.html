@@ -317,6 +317,8 @@ body.float-window canvas{-webkit-app-region:no-drag}
 .bpm small{font-size:11px;letter-spacing:.12em;color:var(--dimmest);margin-left:4px}
 .key{font-size:15px;font-weight:700;color:var(--deck,#22d3ee)}
 .time{font-size:13px;color:var(--dim)}
+.barbeat{font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.barbeat:empty{display:none}
 .time .remain{color:var(--dimmest)}
 .time .remain.low{color:#ff6b61}
 .progress{
@@ -487,6 +489,7 @@ body.float-window canvas{-webkit-app-region:no-drag}
 const wrapLoopPosition = ProlinkPlayhead.wrapLoopPosition;
 const extrapolatePlayhead = ProlinkPlayhead.extrapolatePlayhead;
 const syncDetailCache = ProlinkPlayhead.syncDetailCache;
+const barBeatText = ProlinkPlayhead.barBeatText;
 const DECK_COLORS = {1:'#ffb020',2:'#22d3ee',3:'#f472b6',4:'#4ade80',5:'#ffb020',6:'#22d3ee'};
 const params = new URLSearchParams(location.search);
 const layout = ['nowplaying','dual','minimal','setlist'].includes(params.get('layout'))
@@ -609,6 +612,13 @@ function remainHtml(pos, dur){
   const rem = Math.max(0, dur - pos);
   const low = rem < 30000 ? ' low' : '';
   return `<span class="remain${low}">-${mmss(rem)}</span>`;
+}
+
+// Bar.beat in 4/4 ("Bar 33.2") from the beat-grid beat number. barbeat=0 hides it.
+const showBarBeat = params.get('barbeat') !== '0';
+function barBeatOf(deck){
+  if (!showBarBeat || !deck) return '';
+  return deck.bar_beat || barBeatText(deck.beat, deck.bar) || '';
 }
 
 function timeHtml(pos, dur){
@@ -1212,6 +1222,7 @@ function renderNowPanel(deck, pos) {
           <div class="bpm">${deck.bpm ? deck.bpm.toFixed(2) : '—'}<small>BPM</small></div>
           ${key ? `<div class="key">${escapeHtml(key)}</div>` : ''}
           <div class="deck-tag">DECK ${deck.number}</div>
+          <div class="barbeat" data-barbeat>${escapeHtml(barBeatOf(deck))}</div>
           ${nextCueHtml()}
         </div>
       </div>
@@ -1245,6 +1256,7 @@ function renderNow(deck, pos, compact=false){
           <div class="bpm">${deck.bpm ? deck.bpm.toFixed(2) : '—'}<small>BPM</small></div>
           ${key ? `<div class="key">${escapeHtml(key)}</div>` : ''}
           <div class="time" data-time>${timeHtml(pos, overlayDuration(deck, pack))}</div>
+          <div class="barbeat" data-barbeat>${escapeHtml(barBeatOf(deck))}</div>
           ${nextCueHtml()}
         </div>
         ${compact ? waveHtml(deck.track_id) : ''}
@@ -1345,6 +1357,7 @@ function renderDual(decks, positions){
         <div class="readouts">
           <div class="bpm">${d.bpm?d.bpm.toFixed(2):'—'}<small>BPM</small></div>
           <div class="time" data-time>${timeHtml(positions[i], overlayDuration(d, pack))}</div>
+          <div class="barbeat" data-barbeat>${escapeHtml(barBeatOf(d))}</div>
         </div>
         ${waveHtml(d.track_id)}
         <div class="progress"><i style="width:${progressPct(positions[i], overlayDuration(d, pack))}%"></i></div>
@@ -1588,6 +1601,11 @@ function paint(){
       const pack = trackPack(d);
       el.style.width = progressPct(positions[i] ?? positions[0], overlayDuration(d, pack)) + '%';
     });
+    card.querySelectorAll('[data-barbeat]').forEach((el,i)=>{
+      const d = decks[i] || decks[0];
+      const text = barBeatOf(d);
+      if (el.textContent !== text) el.textContent = text;
+    });
     card.querySelectorAll('[data-time]').forEach((el,i)=>{
       const d = decks[i] || decks[0];
       const pack = trackPack(d);
@@ -1735,7 +1753,9 @@ function enableMockPreview() {
     overview: ov,
     track_id: 1,
   });
-  const held = params.get('pos');
+  // ``pos`` is also the overlay corner (tl, bottom, ...); only a number holds the mock clock.
+  const heldRaw = params.get('pos') || '';
+  const held = /^\d+(\.\d+)?$/.test(heldRaw) ? heldRaw : '';
   const position = held ? +held : 14000;
   applyState({
     decks: [{
@@ -1747,6 +1767,8 @@ function enableMockPreview() {
       speed: held ? 0 : 1,
       position_ms: position,
       duration_ms: 300000,
+      beat: Math.floor(position / 468.75) + 1,
+      bar: (Math.floor(position / 468.75) % 4) + 1,
       name: 'XDJ-AZ',
       master: true,
       on_air: true,

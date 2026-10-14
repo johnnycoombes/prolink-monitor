@@ -33,7 +33,7 @@ W, H = 1400, 920
 CHROME = os.environ.get("CHROME", "/opt/google/chrome/chrome")
 COLORS = ("#ffb020", "#22d3ee", "#f472b6", "#4ade80")
 TITLES = (
-    ("Night Drive", "Demo Artist", "8A", 1, True),
+    ("Night Drive (feat. Lasala) - Extended Club Mix", "Demo Artist, Lasala", "8A", 1, True),
     ("Glasshouse", "North Line", "4A", 2, False),
     ("Second Sun", "Kite Club", "11B", 3, False),
     ("Harbour", "Demo Artist", "8A", 4, False),
@@ -139,8 +139,8 @@ def _state(decks: int) -> dict:
             "master": row[4],
             "sync": i == 1,
             "name": "XDJ-AZ",
-            "beat": 1,
-            "bar": 1,
+            "beat": 101 + i * 9,
+            "bar": ((100 + i * 9) % 4) + 1,
             "waveform_position": "left",
         })
     return {"decks": rows, "devices": [{"number": 1, "name": "XDJ-AZ"}]}

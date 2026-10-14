@@ -657,6 +657,7 @@ class MonitorPage(Page):
                 bool(d.get("playing")),
                 dur,
                 bar=int(d.get("bar") or 0),
+                beat=int(d.get("beat") or 0),
                 looping=(d.get("state") == "looping"),
                 loop_start_ms=d.get("loop_start_ms"),
                 loop_end_ms=d.get("loop_end_ms"),

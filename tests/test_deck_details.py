@@ -55,8 +55,9 @@ class FieldTests(unittest.TestCase):
 
 class FitMathTests(unittest.TestCase):
     def test_title_stays_one_line_until_the_row_is_tall(self):
-        self.assertEqual(title_line_count(120), 1)
-        self.assertEqual(title_line_count(239), 1)
+        self.assertEqual(title_line_count(80), 1)
+        self.assertEqual(title_line_count(95), 1)
+        self.assertEqual(title_line_count(120), 2)
         self.assertEqual(title_line_count(240), 2)
         self.assertEqual(title_line_count(300), 2)
 
@@ -261,7 +262,8 @@ def probe_deck_rows() -> dict:
     tall = DeckCard(1, i18n)
     _load(tall, COLA, _packet(1, 7, 122.2, 0.16, 3, 320000, master=True, sync=True, on_air=True), 50000)
     check(tall, 420, loaded=True)
-    if tall.title.font().pixelSize() < 22:
+    # 1.0.13 type is about a third smaller; a tall row still scales it up.
+    if not 18 <= tall.title.font().pixelSize() <= 22:
         errors.append(f"tall title is {tall.title.font().pixelSize()}px")
     if tall.album.isHidden() or "Cola" not in tall.album.text():
         errors.append("tall row hid the album")

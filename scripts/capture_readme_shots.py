@@ -108,6 +108,25 @@ def library(app) -> None:
     page.close()
 
 
+def overlay_settings(app) -> None:
+    from gui.pages import OverlayPage
+
+    class B:
+        port = 8787
+        status = "connected"
+
+        def __getattr__(self, name):
+            return lambda *a, **k: None
+
+    page = OverlayPage(I18n(), B())
+    page.setStyleSheet(STYLESHEET)
+    page.resize(cmw.W, cmw.H)
+    page.show()
+    _settle(app, 30)
+    page.grab().save(os.path.join(OUT, "overlay-settings.png"))
+    page.close()
+
+
 def floating(app) -> None:
     from gui.floating_now import FloatingNowPlayingWindow
     from gui.overlay_url import build_floating_overlay_file_url
@@ -169,6 +188,10 @@ def main() -> int:
     app.setStyleSheet(STYLESHEET)
     monitor(app)
     library(app)
+    try:
+        overlay_settings(app)
+    except Exception as exc:  # keep the other shots
+        print(f"overlay-settings skipped: {exc}")
     floating(app)
     web()
     for name in sorted(os.listdir(OUT)):
