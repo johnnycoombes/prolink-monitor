@@ -81,6 +81,26 @@ ITEM_FOLDER = 0x0001
 ITEM_PLAYLIST = 0x0008
 ITEM_HISTORY = 0x0024
 
+# Track rows carry the secondary column in the high byte of the item type
+# (Beat Link MenuItemType: 0x0704 title+artist, 0x0204 title+album, ...).
+TRACK_SUBCOLUMN = {
+    0x0204: "album",
+    0x0604: "genre",
+    0x0704: "artist",
+    0x0a04: "rating",
+    0x0b04: "time",
+    0x0d04: "bpm",
+    0x0e04: "label",
+    0x0f04: "key",
+    0x1004: "rate",
+    0x1a04: "color",
+    0x2304: "comment",
+    0x2804: "original_artist",
+    0x2904: "remixer",
+    0x2a04: "play_count",
+    0x2e04: "date_added",
+}
+
 
 class DbServerError(Exception):
     """Remote dbserver returned an unexpected message or failed to connect."""
@@ -368,50 +388,66 @@ _KEY_BPM_LINE = re.compile(
 )
 
 
-def menu_track_fields(name: str, subtitle: str) -> dict[str, object]:
+def menu_track_fields(name: str, subtitle: str, item_type: int = 0,
+                      number: int = 0) -> dict[str, object]:
     """Map a track-menu row onto the Library columns.
 
-    ``name`` is the title. ``subtitle`` is the artist, except when the player
-    sends ``3A - 124.0 bpm`` — that belongs in Key and BPM, not Artist.
+    ``name`` is the title. What ``subtitle`` holds depends on the player's
+    sub-column setting, which the item type carries (0x0704 artist, 0x0204
+    album, 0x0f04 key, 0x0d04 BPM, ...). Older code treated every subtitle as
+    the artist, so a player showing Album, Genre or Comment filled the Artist
+    column with the wrong data. Unknown types keep the old guess, except the
+    ``3A - 124.0 bpm`` line that belongs in Key and BPM.
     """
     title = str(name or "").strip()
     second = str(subtitle or "").strip()
+    out: dict[str, object] = {"title": title, "artist": "", "album": "",
+                              "key": "", "bpm": 0.0, "genre": ""}
+    column = TRACK_SUBCOLUMN.get(int(item_type or 0) & 0xFFFF)
     match = _KEY_BPM_LINE.match(second)
     if match:
-        return {
-            "title": title,
-            "artist": "",
-            "album": "",
-            "key": match.group(1).upper(),
-            "bpm": float(match.group(2)),
-        }
-    return {
-        "title": title,
-        "artist": second,
-        "album": "",
-        "key": "",
-        "bpm": 0.0,
-    }
+        out["key"] = match.group(1).upper()
+        out["bpm"] = float(match.group(2))
+        return out
+    if column is None:
+        if int(item_type or 0) in (0, 0x0004, ITEM_TRACK_TITLE_ONLY):
+            out["artist"] = second
+        return out
+    if column in ("artist", "album", "genre", "key"):
+        out[column] = second
+    elif column == "bpm":
+        try:
+            out["bpm"] = float(second.split()[0]) if second else 0.0
+        except (ValueError, IndexError):
+            out["bpm"] = 0.0
+        if not out["bpm"] and number and 2000 <= int(number) <= 40000:
+            out["bpm"] = int(number) / 100.0
+    return out
 
 
-def columns_for_menu_track(name: str, subtitle: str, cached=None) -> dict[str, object]:
+ITEM_TRACK_TITLE_ONLY = 0x0004
+
+
+def columns_for_menu_track(name: str, subtitle: str, cached=None, *,
+                           item_type: int = 0, number: int = 0) -> dict[str, object]:
     """Menu columns, filled from a read-only export.pdb row when the menu omits them.
 
-    The track list itself still comes from dbserver. The cache only supplies
-    artist, album, and a key or tempo the menu did not already carry.
+    The track list itself still comes from dbserver. The cached row is only
+    trusted when its title matches the menu title: a OneLibrary-only stick
+    numbers tracks differently from a stale export.pdb, and blindly merging
+    by id put another track's album and artist on the row.
     """
-    fields = menu_track_fields(name, subtitle)
+    fields = menu_track_fields(name, subtitle, item_type, number)
     if cached is None:
         return fields
-    artist = getattr(cached, "artist", None)
-    if isinstance(artist, str) and artist and not fields["artist"]:
-        fields["artist"] = artist
-    album = getattr(cached, "album", None)
-    if isinstance(album, str) and album:
-        fields["album"] = album
-    key = getattr(cached, "key", None)
-    if isinstance(key, str) and key and not fields["key"]:
-        fields["key"] = key
+    ctitle = getattr(cached, "title", None)
+    if isinstance(ctitle, str) and ctitle and fields["title"]:
+        if ctitle.strip().casefold() != str(fields["title"]).strip().casefold():
+            return fields
+    for attr in ("artist", "album", "key", "genre"):
+        val = getattr(cached, attr, None)
+        if isinstance(val, str) and val and not fields.get(attr):
+            fields[attr] = val
     if not fields["bpm"]:
         try:
             bpm = float(getattr(cached, "tempo", 0) or 0)
@@ -419,9 +455,8 @@ def columns_for_menu_track(name: str, subtitle: str, cached=None) -> dict[str, o
             bpm = 0.0
         if bpm:
             fields["bpm"] = bpm
-    title = getattr(cached, "title", None)
-    if isinstance(title, str) and title and not fields["title"]:
-        fields["title"] = title
+    if isinstance(ctitle, str) and ctitle and not fields["title"]:
+        fields["title"] = ctitle
     return fields
 
 
@@ -448,6 +483,7 @@ def menu_item_row(msg: DbMessage) -> dict[str, object]:
         "folder": folder,
         "playlist": playlist,
         "history": history,
+        "number": parent_id,
     }
 
 

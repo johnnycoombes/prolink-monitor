@@ -26,6 +26,8 @@ DEFAULTS: dict[str, Any] = {
     "tshark": "",
     "cache": "",
     "local_music_root": "",  # optional mirror of USB library for embedded cover art
+    "hires_art_from_file": True,   # read the embedded cover from the audio file over NFS
+    "hires_art_max_mb": 16,        # cap on tag bytes read for that cover
     "max_decks": 4,
     "zoom_bars": 4,                # 4/4 bars shown in the detail waveform
     "zoom_bars_by_deck": {},        # optional per-deck overrides { "1": 8, ... }
@@ -347,6 +349,11 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     out["close_to_tray"] = bool(data.get("close_to_tray", True))
     out["check_for_updates"] = bool(data.get("check_for_updates", True))
     out["local_music_root"] = str(data.get("local_music_root") or "").strip()
+    out["hires_art_from_file"] = bool(data.get("hires_art_from_file", True))
+    try:
+        out["hires_art_max_mb"] = max(1, min(64, int(data.get("hires_art_max_mb", 16))))
+    except (TypeError, ValueError):
+        out["hires_art_max_mb"] = 16
     out["wnp_enabled"] = bool(data.get("wnp_enabled", False))
     host, port = normalize_target(data.get("wnp_host", "localhost"), data.get("wnp_port", 8899))
     out["wnp_host"] = host

@@ -32,6 +32,12 @@ from prolink.bundle import bundle_root                    # noqa: E402
 from prolink.anlz_resolve import AnlzChoice               # noqa: E402
 from prolink.library import Library, Media                # noqa: E402
 from prolink import onelibrary                            # noqa: E402
+from prolink import library_tree                          # noqa: E402
+from prolink import __version__ as _PROLINK_VERSION       # noqa: E402
+
+
+def _prolink_version() -> str:
+    return str(_PROLINK_VERSION)
 from prolink import remotedb as remotedb_wire             # noqa: E402
 from prolink.remotedb_client import RemoteDbBrowser, choose_requesting_player  # noqa: E402
 from prolink.mixstatus import MixStatus, MixStatusConfig  # noqa: E402
@@ -151,6 +157,9 @@ class Monitor:
         applog.configure()
         self.engine = link.ProLink(source)
         self.library = Library(cache_dir)
+        from prolink.hires_art import HiResArtCache
+
+        self._hires_art = HiResArtCache(cache_dir or getattr(self.library, "cache_dir", None))
         self.engine.on_track_change = self._on_track_change
         # Keyed by device + export + PDB fingerprint + slot + track_id.
         self._waveforms: dict[tuple, bytes] = {}
@@ -1141,6 +1150,10 @@ class Monitor:
         key = self._resolve_key(track_id, deck)
         if key is None:
             return None
+        if size == "large":
+            hi = self._hires_from_file(track_id, key, deck)
+            if hi is not None:
+                return hi
         with self._lock:
             cached = self._cached_art(key, size)
             if cached is not None:
@@ -1195,6 +1208,67 @@ class Monitor:
         if data:
             self._store_art(key, size, data, source, deck)
         return data
+
+    @staticmethod
+    def _hires_settings() -> tuple[bool, int]:
+        try:
+            from gui.settings import load_settings
+
+            data = load_settings()
+            return (bool(data.get("hires_art_from_file", True)),
+                    int(data.get("hires_art_max_mb", 16) or 16))
+        except Exception:
+            return True, 16
+
+    def _hires_from_file(self, track_id: int, key: tuple, deck: int | None) -> bytes | None:
+        """Embedded cover from the audio file over NFS, loaded in the background.
+
+        Returns the cached hi-res image when it is ready. Otherwise starts one
+        background load (read-only, tag bytes only, capped) and returns None so
+        the caller serves dbserver / thumbnail art meanwhile. When the load
+        finishes the art cache entry is replaced, so the next request upgrades.
+        """
+        enabled, cap_mb = self._hires_settings()
+        if not enabled:
+            return None
+        try:
+            host, media = self._media_for_key(key)
+        except Exception:
+            return None
+        if not media or not callable(getattr(media, "read_range", None)):
+            return None
+        try:
+            track, _src = media.copied_track(track_id)
+        except Exception:
+            track = None
+        path = str(getattr(track, "file_path", "") or "").lstrip("/").replace("\\", "/")
+        if not path:
+            return None
+        hkey = self._hires_art.key(host or "", path)
+        data = self._hires_art.get(hkey)
+        if data:
+            self._store_art(key, "large", data, "file-hires", deck)
+            return data
+        if self._hires_art.known_missing(hkey):
+            return None
+
+        def load() -> bytes | None:
+            from prolink.artwork_util import looks_like_image, normalize_artwork_jpeg
+            from prolink.hires_art import read_cover
+
+            size = int(media.remote_size(path) or 0)
+            raw = read_cover(lambda o, n: media.read_range(path, o, n), size,
+                             cap_mb=cap_mb, hint=path)
+            if not raw or not looks_like_image(raw):
+                return None
+            return normalize_artwork_jpeg(raw, max_px=1400, quality=90)
+
+        def done(img: bytes) -> None:
+            self._store_art(key, "large", img, "file-hires", deck)
+            self._remember_artwork(key)
+
+        self._hires_art.request(hkey, load, done)
+        return None
 
     def _artwork_from_db(self, host: str, artwork_id: int, slot: int,
                          *, high_res: bool = True) -> bytes | None:
@@ -1292,6 +1366,8 @@ class Monitor:
                                 str(row.get("name") or ""),
                                 str(row.get("subtitle") or ""),
                                 self._pdb_track(media, tid),
+                                item_type=int(row.get("type") or 0),
+                                number=int(row.get("number") or 0),
                             )
                             live_rows.append({
                                 "id": tid,
@@ -1421,15 +1497,18 @@ class Monitor:
                         library_source = "remotedb"
                         any_present = True
                         live_ok = True
-                        for row in browser.playlist_folder(0):
-                            if row.get("folder"):
-                                continue
+                        # Walk every folder, not only the root menu. The root
+                        # request lists folders but not the playlists in them.
+                        for row in browser.playlist_tree():
                             pid = int(row.get("id") or 0)
                             if not pid:
                                 continue
                             playlists.append({
                                 "id": pid,
                                 "name": row.get("name") or f"#{pid}",
+                                "folder": bool(row.get("folder")),
+                                "parent_id": int(row.get("parent_id") or 0),
+                                "depth": int(row.get("depth") or 0),
                                 "host": host,
                                 "slot": int(browser.slot),
                                 "source": "remotedb",
@@ -1463,27 +1542,23 @@ class Monitor:
                         "path": summary.path or onelibrary.ONE_LIBRARY_PATH,
                         "error": summary.error or summary.detail,
                     })
-            ol = getattr(media, "onelibrary_db", None)
-            if ol is None:
-                try:
-                    media.load_database()
-                    ol = getattr(media, "onelibrary_db", None)
-                except Exception:
-                    ol = None
-            if ol is None:
+            fb_rows, fb_source, ol = self._fallback_playlists(media)
+            if fb_source == "none":
                 continue
             reason = self._browse_live_reason(host)
             media.set_library_source(
                 "nfs-cache",
-                f"NFS exportLibrary.db cache ({media.cache_dir}); "
+                f"NFS {fb_source} cache ({media.cache_dir}); "
                 f"live dbserver failed: {reason}",
             )
             library_source = "nfs-cache"
-            for p in onelibrary.list_playlists(ol):
+            for p in fb_rows:
                 p = dict(p)
                 p["host"] = host
                 p["source"] = "nfs-cache"
                 playlists.append(p)
+            if ol is None:
+                continue
             for h in onelibrary.list_history(ol):
                 h = dict(h)
                 h["host"] = host
@@ -1499,6 +1574,117 @@ class Monitor:
             "library_source": library_source,
             "remotedb_errors": dict(self._remotedb_fail),
         }
+
+    def _fallback_playlists(self, media) -> tuple[list[dict], str, Any]:
+        """Playlist tree from the NFS copy: exportLibrary.db, else export.pdb.
+
+        Returns (rows with depth, source label, onelibrary db or None).
+        """
+        ol = getattr(media, "onelibrary_db", None)
+        if ol is None:
+            try:
+                media.load_database()
+                ol = getattr(media, "onelibrary_db", None)
+            except Exception:
+                ol = None
+        if ol is not None:
+            rows = library_tree.with_depth(onelibrary.list_playlists(ol))
+            if rows:
+                return rows, "exportLibrary.db", ol
+        db = getattr(media, "db", None)
+        tree = getattr(db, "playlist_tree", None)
+        if callable(tree):
+            try:
+                rows = tree()
+            except Exception:
+                rows = []
+            if rows:
+                return rows, "export.pdb", ol
+        if ol is not None:
+            return [], "exportLibrary.db", ol
+        return [], "none", None
+
+    def library_diagnostics(self, *, rows: int = 20) -> dict:
+        """Read-only Library report: live dbserver vs NFS fallback, side by side.
+
+        Only menu reads and the cached NFS copies are used. Nothing is written
+        to the player, the USB, or any rekordbox database.
+        """
+        rows = max(1, min(100, int(rows)))
+        with self.library.lock:
+            media_list = list(self.library.media.items())
+        report: dict[str, Any] = {"generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                                  "version": _prolink_version(), "hosts": []}
+        for host, media in media_list:
+            entry: dict[str, Any] = {"host": host}
+            live_tree: list[dict] = []
+            live_tracks: list[dict] = []
+            browser = None
+            for slot in self._library_db_slots():
+                browser = self._open_remotedb(host, slot=slot)
+                if browser is None:
+                    continue
+                try:
+                    with browser:
+                        live_tree = browser.playlist_tree()
+                        entry["live_slot"] = int(browser.slot)
+                        first = next((r for r in live_tree if not r.get("folder")), None)
+                        if first:
+                            entry["sample_playlist"] = first.get("name")
+                            for r in browser.playlist_tracks(int(first["id"]))[:rows]:
+                                f = remotedb_wire.columns_for_menu_track(
+                                    str(r.get("name") or ""), str(r.get("subtitle") or ""),
+                                    None, item_type=int(r.get("type") or 0),
+                                    number=int(r.get("number") or 0))
+                                f.update({"id": r.get("id"), "menu_type": f"{int(r.get('type') or 0):#06x}",
+                                          "raw_subtitle": r.get("subtitle")})
+                                live_tracks.append(f)
+                    if live_tree:
+                        break
+                except Exception as exc:
+                    entry.setdefault("live_errors", []).append(f"slot {slot}: {exc}")
+            fb_tree, fb_source, ol = self._fallback_playlists(media)
+            fb_tracks: list[dict] = []
+            name = entry.get("sample_playlist")
+            match = next((r for r in fb_tree if not r.get("folder")
+                          and (not name or r.get("name") == name)), None)
+            if match:
+                pid = int(match["id"])
+                if ol is not None:
+                    fb_tracks = onelibrary.playlist_tracks(ol, pid, limit=rows)
+                if not fb_tracks:
+                    fb_tracks = self._pdb_playlist_tracks(media, pid, rows)
+            side = []
+            for i in range(max(len(live_tracks), len(fb_tracks))):
+                side.append({"row": i + 1,
+                             "live": live_tracks[i] if i < len(live_tracks) else None,
+                             "fallback": fb_tracks[i] if i < len(fb_tracks) else None})
+            entry.update({
+                "live": {"stats": library_tree.tree_stats(live_tree),
+                         "tree": [{k: r.get(k) for k in ("id", "name", "folder", "parent_id", "depth")}
+                                  for r in live_tree]},
+                "fallback": {"source": fb_source, "stats": library_tree.tree_stats(fb_tree),
+                             "tree": [{k: r.get(k) for k in ("id", "name", "folder", "parent_id", "depth")}
+                                      for r in fb_tree]},
+                "rows": side,
+            })
+            report["hosts"].append(entry)
+        return report
+
+    def _pdb_playlist_tracks(self, media, playlist_id: int, limit: int) -> list[dict]:
+        db = getattr(media, "db", None)
+        ids_of = getattr(db, "playlist_track_ids", None)
+        if not callable(ids_of):
+            return []
+        out = []
+        for tid in ids_of(playlist_id)[:limit]:
+            t = db.get(tid)
+            if t is None:
+                continue
+            out.append({"id": tid, "title": t.title, "artist": t.artist,
+                        "album": t.album, "genre": t.genre, "key": t.key,
+                        "bpm": t.tempo or 0})
+        return out
 
     def browse_playlist_tracks(self, playlist_id: int, host: str | None = None,
                                *, limit: int = 200) -> dict:
@@ -1541,6 +1727,7 @@ class Monitor:
                                 "album": str(fields.get("album") or ""),
                                 "bpm": fields.get("bpm") or 0,
                                 "key": str(fields.get("key") or ""),
+                                "genre": str(fields.get("genre") or ""),
                                 "host": h,
                                 "slot": int(browser.slot),
                                 "source": "remotedb",
@@ -1568,9 +1755,13 @@ class Monitor:
                     payload["error"] = self._browse_live_reason(h)
                 return payload
             ol = getattr(media, "onelibrary_db", None)
-            if ol is None:
+            tracks = []
+            if ol is not None:
+                tracks = onelibrary.playlist_tracks(ol, playlist_id, limit=limit)
+            if not tracks:
+                tracks = self._pdb_playlist_tracks(media, playlist_id, limit)
+            if ol is None and not tracks:
                 continue
-            tracks = onelibrary.playlist_tracks(ol, playlist_id, limit=limit)
             for t in tracks:
                 t["host"] = h
                 t["source"] = "nfs-cache"
@@ -2167,6 +2358,12 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     offset = 0
                 return self._json(self.monitor.browse_tracks(q, limit=limit, offset=offset))
+            if path == "/api/library/diagnostics":
+                body = json.dumps(self.monitor.library_diagnostics(), indent=2, default=str)
+                return self._send(
+                    200, body.encode("utf-8"), "application/json; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="library-diagnostics.json"'},
+                )
             if path == "/api/library/playlists":
                 return self._json(self.monitor.browse_playlists())
             if path.startswith("/api/library/playlist/"):
