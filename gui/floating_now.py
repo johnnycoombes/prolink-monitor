@@ -117,7 +117,8 @@ class _FloatingDragHandle(QWidget):
 
     def _paint_grip(self, painter: QPainter, hot: bool) -> None:
         """Phosphor Dots Six Vertical grip. A dark halo keeps it visible on light content."""
-        size = 30.0 if hot else 28.0
+        # Fit the 22px strip; a 28px icon clipped the top and bottom dots.
+        size = float(max(12, self.height() - (0 if hot else 2)))
         x = (self.width() - size) / 2
         y = (self.height() - size) / 2
         halo = QColor(0, 0, 0, 200)
@@ -521,6 +522,12 @@ class FloatingNowPlayingWindow(QWidget):
         if app is not None:
             app.processEvents()
 
+    def apply_state(self, state: dict | None) -> None:
+        """No-op: overlay page consumes SSE directly from the embedded HTTP server."""
+
+    def tick_paint(self) -> None:
+        """No-op: overlay paint loop runs inside the web view."""
+
     def closeEvent(self, event):  # noqa: N802
         self._end_drag()
         self._persist_geometry()
@@ -559,9 +566,3 @@ def release_webengine_views() -> None:
         except Exception:
             pass
     app.processEvents()
-
-    def apply_state(self, state: dict | None) -> None:
-        """No-op: overlay page consumes SSE directly from the embedded HTTP server."""
-
-    def tick_paint(self) -> None:
-        """No-op: overlay paint loop runs inside the web view."""

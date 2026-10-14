@@ -261,16 +261,27 @@ class MainWindow(QMainWindow):
             self._floating_now.close()
             self._floating_now = None
             return
-        win = FloatingNowPlayingWindow(
-            self.backend, self.i18n, lambda: self.settings, self)
-        win.setAttribute(Qt.WA_DeleteOnClose)
-        win.destroyed.connect(lambda: setattr(self, "_floating_now", None))
-        self._floating_now = win
-        win.restore_geometry(self.settings)
-        win.apply_settings()
-        if self._last_state:
-            win.apply_state(self._last_state)
-        win.show()
+        try:
+            win = FloatingNowPlayingWindow(
+                self.backend, self.i18n, lambda: self.settings, self)
+            win.setAttribute(Qt.WA_DeleteOnClose)
+            win.destroyed.connect(lambda: setattr(self, "_floating_now", None))
+            self._floating_now = win
+            win.restore_geometry(self.settings)
+            win.apply_settings()
+            if self._last_state:
+                win.apply_state(self._last_state)
+            win.show()
+            win.raise_()
+        except Exception as exc:
+            # A failure here used to vanish into the Qt slot with no window
+            # and nothing in the log.
+            import logging
+
+            logging.getLogger(__name__).exception("floating now playing failed to open")
+            self._floating_now = None
+            QMessageBox.warning(self, self.i18n.t("floating_now_title"),
+                                f"The floating window could not open: {exc}")
 
     def _open_overlay_hotkey(self) -> None:
         if self.backend.status != "connected":
