@@ -2,7 +2,7 @@
 
 A live Pro DJ Link monitor. It joins the booth network as a virtual player, reads the library and analysis from the player while the set is running, and draws decks, waveforms, and artwork on this computer. It is read-only toward the player and the USB stick: it never writes a Rekordbox database, never sends library edits, and a packet capture only records what already arrived.
 
-This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.10**. This tree is **1.0.11**.
+This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.11**. This tree is **1.0.12**.
 
 ## Contents
 
@@ -17,6 +17,8 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 - [Credits](#credits)
 
 ## What's new
+
+**1.0.12.** The floating Now Playing window opens again. Since 1.0.7, `apply_state` and `tick_paint` had slipped out of the window class into the body of a module function during the clean-exit change. Opening the window called `apply_state` before `show()`, raised `AttributeError` inside the Qt slot, and nothing appeared and nothing was logged. Both methods are back on the class. A failure while opening is now logged and shown in a message box. A test opens the window the way the app does, and another checks that every method the main window calls exists. The drag-strip grip is sized to the 22 px strip so the top and bottom dots are no longer clipped. README screenshots were recaptured from demo data with `scripts/capture_readme_shots.py`.
 
 **1.0.11.** The Library shows every playlist and folder, and artwork can come from the audio file.
 
@@ -65,6 +67,8 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 ![Overlay panel](doc/overlay-panel.png)
 
 ![Overlay bar](doc/overlay-bar.png)
+
+![Floating window](doc/floating-now.png)
 
 ![Overlay settings](doc/overlay-settings.png)
 
@@ -188,10 +192,12 @@ Each deck card can show artwork, title, artist, album / genre / label, MASTER / 
 | Style | Analysis tag | How a column is read |
 |---|---|---|
 | RGB | `PWV5` | Height in bits 2–6. Colour in bits 13–15 red, 7–9 green, 10–12 blue. |
-| 3-band | `PWV7` | Three bytes, ordered **mid, high, low**. Drawn as separate bands. |
+| 3-band | `PWV7` (detail), `PWV6` (overview) | Three bytes, **low, mid, high** by default (rbxport and OneLibraryCompanion); *mid, high, low* (Deep Symmetry and Beat Link) is a setting. Two palettes: *CDJ-3000* (default) and *Beat Link*. |
 | Blue | `PWV3` | Height in bits 0–4. Bits 5–7 pick a shade. |
 
-The overview is the detail wave reduced by peak, not `PWV4`. Zoom is in **4/4 bars** (1, 2, 4, 8, or 16). Each deck can keep its own zoom.
+The overview is the detail wave reduced by peak (PWV6 for 3-band), not `PWV4`. Zoom is in **4/4 bars** (1, 2, 4, 8, or 16). Each deck can keep its own zoom. The **mouse wheel** over a deck's scrolling wave zooms it smoothly from 2 to 30 seconds, and a double-click resets it. The web panel does the same with the wheel and a pinch. *Auto* style follows the colour the player is set to.
+
+**Icons.** [Phosphor](https://phosphoricons.com/) SVGs (MIT), recoloured to the theme in Qt and drawn inline in the web pages.
 
 **Phrase strip.** Rekordbox phrase names (intro, verse, chorus, and the rest) sit under the overview when **Phrase strip under waveform** is on.
 
@@ -212,13 +218,15 @@ The window paints at 60 Hz by default. Metadata refreshes more slowly. See [doc/
 
 **NEXT countdown.** `NEXT: <name> in m:ss` for the next hot cue, memory cue, or phrase change after the playhead. A hot cue with no name is `CUE A` (and so on). A memory cue with no name is `MEMORY`. Loop cues are skipped. The text is amber at 10 seconds or less (`#ff9f45`) and red at 3 seconds or less (`#ff3b30`). On by default (`show_next_cue`). A seek picks a new target immediately.
 
-**Artwork.** The card uses a large image. The panel uses a larger cover than the bar (and the spectrum visualiser unless `spectrum=0`). The bar uses a small image. The page requests `/api/artwork/<id>` as soon as a track id is known. If that request fails, the placeholder is shown. Large art is tried in this order, and stops at the first image: a cover embedded in a local music mirror, dbserver high-res, the NFS `_m` thumbnail, dbserver standard, the NFS thumbnail, then an embedded cover read from the audio header only (ID3, FLAC, or MP4). The audio file is not downloaded. The player and the USB stay read-only. A successful dbserver or NFS lookup sets `has_artwork` immediately, before the waveform metadata arrives.
+**Artwork.** The card uses a large image. The panel uses a larger cover than the bar (and the spectrum visualiser unless `spectrum=0`). The bar uses a small image. The page requests `/api/artwork/<id>` as soon as a track id is known. If that request fails, the placeholder is shown. Large art is tried in this order, and stops at the first image: a cover embedded in a local music mirror, dbserver high-res, the NFS `_m` thumbnail, dbserver standard, the NFS thumbnail, then an embedded cover read from the audio header only (ID3, FLAC, or MP4). The audio file is not downloaded. With **Hi-res artwork from file** on (the default since 1.0.11), the original cover embedded in the audio file is loaded in the background with mutagen. Only the tag region is read, capped by **Hi-res artwork read cap (MB)**. It is cached in memory and on disk and replaces the player's art once it is ready. The player and the USB stay read-only. A successful dbserver or NFS lookup sets `has_artwork` immediately, before the waveform metadata arrives.
 
 **Session.** **Record session** (also the Session page, and `Ctrl+R`) keeps a chronological list of on-air tracks. The set clock starts at `00:00:00` and pauses when nothing is on air. Export CSV, JSON, or M3U. Auto-save writes all three on Stop, under `~/.prolink-monitor/sessions` unless you set another folder.
 
 ### Library
 
 ![Library](doc/library.png)
+
+The playlist list is the whole tree, read live from the player: folders are bold headers and their playlists are indented under them, at any depth, smart playlists included. When the live session is down, the tree comes from the USB copy (`exportLibrary.db`, or `export.pdb`). Track rows put the player's second column where it belongs (artist, album, genre, key, BPM, and so on). **Diagnostics** saves a read-only JSON report: folder and playlist counts and tree depth from the live player and from the USB copy, both trees, and 20 rows side by side.
 
 Search the USB tracks, browse OneLibrary playlists and history when `pyrekordbox` can open `exportLibrary.db`, and see artwork for tracks that are on decks. Classic `export.pdb` search works without that package. The page says when OneLibrary is present but not readable yet. The Windows zip bundles `pyrekordbox`. A source checkout still uses the optional install below.
 
@@ -311,6 +319,8 @@ http://127.0.0.1:8787/overlay?layout=setlist&corner=bl
 ```
 
 ### Floating window
+
+![Floating window](doc/floating-now.png)
 
 A topmost window of the same overlay page. Transparent by default. It reloads after the web server comes back, so a reconnect does not leave a blank frame. The card remembers its own place. Panel and Bar share the wide window’s saved place.
 
