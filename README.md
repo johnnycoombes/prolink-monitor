@@ -62,6 +62,8 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 
 ## Screenshots
 
+The Monitor, web panel and card, panel and bar overlays are real captures of 1.0.13 running on Windows against an XDJ-AZ (Library, floating window and overlay settings are from demo data).
+
 ![Monitor](doc/monitor.png)
 
 ![Library](doc/library.png)
