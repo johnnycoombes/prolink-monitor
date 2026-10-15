@@ -570,6 +570,8 @@ Use this when the versioned zip is already on GitHub and only the signed metadat
 
 Fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor) by [@fidow](https://github.com/fidow). The Pro DJ Link engine, NFS library access, web panel, console monitor, and protocol probe started there.
 
+- [SuperTimecodeConverter](https://github.com/fiverecords/SuperTimecodeConverter) (MIT): ideas for the XZ dbserver client number, number-claim stages, macOS socket binding and keep-alive targets (re-implemented, no code copied).
+
 Ideas and small pieces adapted under their own licences:
 
 - [chrisle/alphatheta-connect](https://github.com/chrisle/alphatheta-connect) (MIT). The dbserver reconnect backoff, the header-only NFS artwork read (`prolink/art_header.py`), and the PWVC vocal test. Our 3-band columns are ordered mid, high, low, which is not that project’s low, mid, high order. The retry loop and the vocal drawing are written here.
