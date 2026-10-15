@@ -221,7 +221,7 @@
   }
 
   /* ---- Zoom maths (mirrors prolink/wavezoom.py) ---- */
-  const ZOOM_MIN = 2, ZOOM_MAX = 30, ZOOM_STEP = 1.15;
+  const ZOOM_MIN = 2, ZOOM_MAX = 96, ZOOM_STEP = 1.15;
   function clampSeconds(s) {
     s = +s;
     if (!isFinite(s)) return ZOOM_MIN;

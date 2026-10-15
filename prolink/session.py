@@ -35,7 +35,7 @@ def bars_to_seconds(bars: float, bpm: float) -> float:
 
 
 # Waveform zoom options: musical bars in 4/4 (not wall-clock seconds).
-ZOOM_BARS = (1, 2, 4, 8, 16)
+ZOOM_BARS = (1, 2, 4, 8, 16, 32)
 DEFAULT_ZOOM_BARS = 4
 
 

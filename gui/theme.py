@@ -33,7 +33,7 @@ DECK_COLORS = {
 
 STYLESHEET = f"""
 * {{
-    font-family: "Segoe UI", "DejaVu Sans", "Helvetica Neue", sans-serif;
+    font-family: "Segoe UI", ".AppleSystemUIFont", "Helvetica Neue", "DejaVu Sans", sans-serif;
     color: {COLORS["text"]};
 }}
 
@@ -82,7 +82,7 @@ QFrame#Card {{
 }}
 
 QLabel#Brand {{
-    font-family: "Cascadia Mono", "DejaVu Sans Mono", "Consolas", monospace;
+    font-family: "Cascadia Mono", "SF Mono", "Menlo", "DejaVu Sans Mono", "Consolas", monospace;
     font-size: 14px;
     font-weight: 700;
     letter-spacing: 2px;
@@ -90,7 +90,7 @@ QLabel#Brand {{
 }}
 
 QLabel#BrandSub {{
-    font-family: "Cascadia Mono", "DejaVu Sans Mono", "Consolas", monospace;
+    font-family: "Cascadia Mono", "SF Mono", "Menlo", "DejaVu Sans Mono", "Consolas", monospace;
     font-size: 11px;
     color: {COLORS["dimmest"]};
 }}
@@ -106,7 +106,7 @@ QLabel#PageSubtitle {{
 }}
 
 QLabel#SectionTitle {{
-    font-family: "Cascadia Mono", "DejaVu Sans Mono", "Consolas", monospace;
+    font-family: "Cascadia Mono", "SF Mono", "Menlo", "DejaVu Sans Mono", "Consolas", monospace;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 1px;
@@ -119,7 +119,7 @@ QLabel#Dim {{
 }}
 
 QLabel#Mono {{
-    font-family: "Cascadia Mono", "DejaVu Sans Mono", "Consolas", monospace;
+    font-family: "Cascadia Mono", "SF Mono", "Menlo", "DejaVu Sans Mono", "Consolas", monospace;
 }}
 
 QPushButton {{
@@ -167,7 +167,7 @@ QPushButton#NavButton {{
     border: none;
     border-radius: 6px;
     background-color: transparent;
-    font-family: "Cascadia Mono", "DejaVu Sans Mono", "Consolas", monospace;
+    font-family: "Cascadia Mono", "SF Mono", "Menlo", "DejaVu Sans Mono", "Consolas", monospace;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 1px;
@@ -188,7 +188,7 @@ QPushButton#NavButton[active="true"] {{
 QPushButton#Chip {{
     padding: 5px 10px;
     border-radius: 3px;
-    font-family: "Cascadia Mono", "DejaVu Sans Mono", "Consolas", monospace;
+    font-family: "Cascadia Mono", "SF Mono", "Menlo", "DejaVu Sans Mono", "Consolas", monospace;
     font-size: 11px;
     font-weight: 600;
 }}
@@ -204,7 +204,7 @@ QToolButton#Chip {{
     border: 1px solid {COLORS["line"]};
     border-radius: 3px;
     padding: 5px 10px;
-    font-family: "Cascadia Mono", "DejaVu Sans Mono", "Consolas", monospace;
+    font-family: "Cascadia Mono", "SF Mono", "Menlo", "DejaVu Sans Mono", "Consolas", monospace;
     font-size: 11px;
     font-weight: 600;
 }}
@@ -331,7 +331,7 @@ QHeaderView::section {{
     border-bottom: 1px solid {COLORS["line"]};
     border-right: 1px solid {COLORS["line"]};
     padding: 8px;
-    font-family: "Cascadia Mono", "DejaVu Sans Mono", "Consolas", monospace;
+    font-family: "Cascadia Mono", "SF Mono", "Menlo", "DejaVu Sans Mono", "Consolas", monospace;
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 1px;

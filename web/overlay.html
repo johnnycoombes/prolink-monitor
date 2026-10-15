@@ -265,6 +265,10 @@ body.float-window canvas{-webkit-app-region:no-drag}
   font-family:var(--mono);font-size:calc(13px * var(--scale));font-weight:700;
   font-variant-numeric:tabular-nums;
 }
+.now-panel .panel-overview{width:100%;flex:0 0 auto}
+.now-panel .panel-overview .wave{margin-top:0;height:calc(30px * var(--scale))}
+.now-panel.panel-bar .panel-overview .wave{height:calc(22px * var(--scale))}
+.now-panel .panel-overview .wave-vocals{display:none}
 .now-panel .panel-detail{
   width:100%;height:calc(96px * var(--scale));display:block;border-radius:calc(8px * var(--scale));
   background:rgba(0,0,0,.28);
@@ -516,7 +520,7 @@ const nowPos = stripNow
   : normalizeCardPos(nowPosRaw);
 const PLAYHEAD_LEFT_FRACTION = 0.25;
 const DEFAULT_BPM = 120;
-const ZOOM_BARS_OPTS = [1, 2, 4, 8, 16];
+const ZOOM_BARS_OPTS = [1, 2, 4, 8, 16, 32];
 let showPhrasesDisplay = true;
 let showVocalsDisplay = true;
 let showNextCueDisplay = true;
@@ -1232,10 +1236,13 @@ function renderNowPanel(deck, pos) {
   const spectrumOn = nowStyle === 'panel' ? spectrumParam !== '0' : showSpectrum;
   const spectrum = spectrumOn ? '<canvas class="panel-spectrum"></canvas>' : '';
   const detail = '<canvas class="panel-detail"></canvas>';
+  // Whole-track overview (same strip as the card), so the panel and bar show
+  // where the playhead is in the track, not only the scrolling detail.
+  const overview = `<div class="panel-overview">${waveHtml(deck.track_id)}</div>`;
   // Spectrum sits between the track row and the scrolling wave.
   const blocks = nowPos === 'top'
-    ? `${detail}${spectrum}${phrases}${info}`
-    : `${info}${phrases}${spectrum}${detail}`;
+    ? `${detail}${spectrum}${phrases}${overview}${info}`
+    : `${info}${overview}${phrases}${spectrum}${detail}`;
   const kind = nowStyle === 'panel' ? 'panel-large' : 'panel-bar';
   return `<div class="now-panel ${kind}" style="--deck:${color}">${blocks}</div>`;
 }
@@ -1506,6 +1513,10 @@ function paintPanelWaves(deck, pos, playing) {
   try { paintVocalCanvas(card.querySelector('.panel-vocals'), pack, pos); } catch (_) {}
   try { paintNextEl(card.querySelector('[data-next]'), pos, pack && pack.meta); } catch (_) {}
   try { paintSpectrum(spec, pack, pos, deck, playing); } catch (_) {}
+  try {
+    const ov = card.querySelector('.panel-overview canvas[data-wave]');
+    paintWaveCanvas(ov, pack, pos, DECK_COLORS[deck.number], deck.state === 'looping', deck);
+  } catch (_) {}
 }
 
 function paintWaves(decks, positions){

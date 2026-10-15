@@ -33,6 +33,7 @@ from gui.settings import deck_elements_from
 from prolink.playhead_smooth import sync_detail_origin
 from prolink.proto import playhead_fraction, resolve_playhead_position
 from prolink.session import ZOOM_BARS, bars_to_seconds
+from prolink.wavezoom import bars_for_seconds
 
 def _draw_vocal_strip(p: QPainter, x: int, y: int, w: int, h: int,
                       spans: list, dur: float, pos_ms: float) -> None:
@@ -1207,7 +1208,7 @@ class DeckCard(QFrame):
         self.zoom_btn = QPushButton(f"{self._zoom_bars}b")
         self.zoom_btn.setObjectName("Chip")
         self.zoom_btn.setCursor(Qt.PointingHandCursor)
-        self.zoom_btn.setToolTip("Per-deck zoom (cycles 1/2/4/8/16 bars). Right-click clears override.")
+        self.zoom_btn.setToolTip("Per-deck zoom (cycles 1/2/4/8/16/32 bars). Right-click clears override.")
         self.zoom_btn.clicked.connect(self._cycle_zoom)
         self.zoom_btn.setContextMenuPolicy(Qt.CustomContextMenu)
         self.zoom_btn.customContextMenuRequested.connect(lambda *_: self.clear_zoom_override())
@@ -1217,8 +1218,7 @@ class DeckCard(QFrame):
         self.wave.set_deck_color(self._color)
         self.wave.hover_ms_changed.connect(self._on_hover_ms)
         self.wave.cue_ms_clicked.connect(self._on_cue_ms)
-        self.wave.zoom_seconds_changed.connect(
-            lambda sec: self.zoom_seconds_changed.emit(self.number, float(sec)))
+        self.wave.zoom_seconds_changed.connect(self._on_wheel_zoom)
         wave_col.addWidget(self.wave, 1)
         body.addLayout(wave_col, 1)
 
@@ -1429,10 +1429,10 @@ class DeckCard(QFrame):
         # so a line that fits on Linux ellipsizes after a few words.
         font = QFont()
         if mono:
-            font.setFamilies(["DejaVu Sans Mono", "Cascadia Mono", "Consolas", "Courier New"])
+            font.setFamilies(["DejaVu Sans Mono", "Cascadia Mono", "Consolas", "Menlo", "Courier New"])
             font.setStyleHint(QFont.StyleHint.Monospace)
         else:
-            font.setFamilies(["DejaVu Sans", "Segoe UI"])
+            font.setFamilies(["DejaVu Sans", "Segoe UI", "Helvetica Neue"])
             font.setStyleHint(QFont.StyleHint.SansSerif)
         matched = QFontInfo(font).family()
         if matched:
@@ -1962,13 +1962,46 @@ class DeckCard(QFrame):
             self._zoom_override = bool(override)
         self._zoom_bars = bars
         self.wave.set_zoom(bars)
-        label = f"{bars}b"
-        if self._zoom_override:
-            label = f"{bars}b*"
+        self._paint_zoom_btn()
+
+    def effective_bars(self) -> int | None:
+        """Bars the strip is showing: the bar setting, or the bar button a
+        wheel zoom matches at this BPM. None when the wheel sits between two."""
+        sec = self.wave._zoom_seconds
+        if sec is None:
+            return self._zoom_bars
+        return bars_for_seconds(sec, self.wave._bpm, ZOOM_BARS)
+
+    def _paint_zoom_btn(self) -> None:
+        bars = self.effective_bars()
+        if bars is None:
+            label = f"{self.wave._zoom_seconds:.0f}s"
+        else:
+            label = f"{bars}b"
+        override = self._zoom_override or self.wave._zoom_seconds is not None
+        if override:
+            label += "*"
+        if getattr(self, "_zoom_btn_painted", None) == (label, override):
+            return
+        self._zoom_btn_painted = (label, override)
         self.zoom_btn.setText(label)
-        self.zoom_btn.setProperty("active", "true" if self._zoom_override else "false")
+        self.zoom_btn.setProperty("active", "true" if override else "false")
         self.zoom_btn.style().unpolish(self.zoom_btn)
         self.zoom_btn.style().polish(self.zoom_btn)
+
+    def _on_wheel_zoom(self, seconds: float) -> None:
+        self._paint_zoom_btn()
+        self.zoom_seconds_changed.emit(self.number, float(seconds))
+
+    def clear_wheel_zoom(self) -> bool:
+        """Drop the wheel zoom so the bar setting shows again. One zoom state:
+        a bar button (toolbar, deck chip or All) replaces whatever the wheel set."""
+        if self.wave._zoom_seconds is None:
+            return False
+        self.wave.set_zoom_seconds(None)
+        self._paint_zoom_btn()
+        self.zoom_seconds_changed.emit(self.number, -1.0)
+        return True
 
     def clear_zoom_override(self) -> None:
         if not self._zoom_override:
@@ -1979,6 +2012,7 @@ class DeckCard(QFrame):
     def _cycle_zoom(self) -> None:
         idx = ZOOM_BARS.index(self._zoom_bars) if self._zoom_bars in ZOOM_BARS else 2
         bars = ZOOM_BARS[(idx + 1) % len(ZOOM_BARS)]
+        self.clear_wheel_zoom()
         self.set_zoom(bars, override=True)
         self.zoom_override_changed.emit(self.number, bars)
 
@@ -2050,6 +2084,7 @@ class DeckCard(QFrame):
 
     def set_zoom_seconds(self, seconds: float | None) -> None:
         self.wave.set_zoom_seconds(seconds)
+        self._paint_zoom_btn()
 
     def set_show_phrases(self, enabled: bool) -> None:
         self.wave.set_show_phrases(enabled)

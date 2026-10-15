@@ -22,7 +22,7 @@ class ZoomMathTests(unittest.TestCase):
         # Two half-notches equal one notch (smooth trackpads).
         self.assertAlmostEqual(z.wheel_zoom(z.wheel_zoom(s, 60), 60), zin)
 
-    def test_clamped_to_2_and_30_seconds(self):
+    def test_clamped_to_2_and_96_seconds(self):
         s = 8.0
         for _ in range(100):
             s = z.wheel_zoom(s, 120)
@@ -46,8 +46,8 @@ class ZoomMathTests(unittest.TestCase):
                 self.assertAlmostEqual(z.ms_for_x(x, 60000, secs, 800, frac), 61234)
 
     def test_saved_zoom_is_cleaned(self):
-        self.assertEqual(z.clean_zoom_seconds({"1": 99, "2": 0.5, "x": 3, "3": "nan", "4": 6}),
-                         {"1": 30.0, "2": 2.0, "4": 6.0})
+        self.assertEqual(z.clean_zoom_seconds({"1": 120, "2": 0.5, "x": 3, "3": "nan", "4": 6}),
+                         {"1": 96.0, "2": 2.0, "4": 6.0})
         self.assertEqual(z.clean_zoom_seconds(None), {})
 
     def test_js_matches_python(self):

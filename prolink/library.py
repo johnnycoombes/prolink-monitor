@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+
 import re
 import threading
 import time
@@ -19,6 +20,7 @@ from collections import OrderedDict
 
 from . import anlz, applog, onelibrary, pdb
 from .anlz_resolve import AnlzChoice, choose_by_id, match_by_title
+from .paths import cache_dir as _cache_root
 from .nfs import NfsClient
 
 PDB_PATH = "PIONEER/rekordbox/export.pdb"
@@ -77,7 +79,7 @@ class Media:
                  max_analysis: int = 32):
         self.host = host
         base = cache_dir or os.path.join(
-            os.path.expanduser("~"), ".prolink-cache", host.replace(":", "_"))
+            _cache_root(), host.replace(":", "_"))
         self.lock = threading.RLock()
         self._analysis: OrderedDict[int, anlz.Analysis] = OrderedDict()
         self._artwork: OrderedDict[int, bytes] = OrderedDict()

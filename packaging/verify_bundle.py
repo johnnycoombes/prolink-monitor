@@ -1,10 +1,12 @@
 """Check that a PyInstaller folder contains the Qt WebEngine files and web assets.
 
     python packaging/verify_bundle.py dist/ProlinkListener
+    python packaging/verify_bundle.py dist/ProlinkListener.app   (macOS)
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -13,15 +15,22 @@ def verify(dist: Path) -> list[str]:
     """Return a list of problems. An empty list means the folder looks usable."""
     dist = Path(dist)
     errors: list[str] = []
-    exe_candidates = [
-        dist / "ProlinkListener.exe",
-        dist / "ProlinkListener",
-    ]
+    if dist.suffix == ".app":
+        errors += verify_mac_plist(dist)
+        exe_candidates = [dist / "Contents" / "MacOS" / "ProlinkListener"]
+        roots = [dist / "Contents" / "Resources", dist / "Contents" / "Frameworks",
+                 dist / "Contents" / "MacOS"]
+    else:
+        exe_candidates = [
+            dist / "ProlinkListener.exe",
+            dist / "ProlinkListener",
+        ]
+        roots = [dist, dist / "_internal"]
     if not any(path.is_file() for path in exe_candidates):
         errors.append("ProlinkListener executable is missing")
 
     def _find(relative: str) -> bool:
-        return (dist / relative).is_file() or (dist / "_internal" / relative).is_file()
+        return any((base / relative).is_file() for base in roots)
 
     if not _find("web/index.html"):
         errors.append("web/index.html is missing")
@@ -87,14 +96,45 @@ def verify(dist: Path) -> list[str]:
     return errors
 
 
+def verify_mac_plist(app: Path) -> list[str]:
+    """Info.plist checks for the macOS bundle."""
+    import plistlib
+
+    plist = app / "Contents" / "Info.plist"
+    if not plist.is_file():
+        return ["Contents/Info.plist is missing"]
+    try:
+        info = plistlib.loads(plist.read_bytes())
+    except Exception as exc:  # noqa: BLE001
+        return [f"Contents/Info.plist cannot be read ({exc})"]
+    errors = []
+    if not str(info.get("NSLocalNetworkUsageDescription") or "").strip():
+        errors.append("Info.plist has no NSLocalNetworkUsageDescription "
+                      "(macOS 14+ would block Pro DJ Link traffic)")
+    if info.get("CFBundleIdentifier") != "com.johnnycoombes.prolinklistener":
+        errors.append("Info.plist CFBundleIdentifier is not com.johnnycoombes.prolinklistener")
+    if not info.get("CFBundleShortVersionString"):
+        errors.append("Info.plist has no CFBundleShortVersionString")
+    icon = str(info.get("CFBundleIconFile") or "")
+    if not icon or not list((app / "Contents" / "Resources").glob(icon.split(".")[0] + "*.icns")):
+        errors.append("app icon (.icns) is missing")
+    return errors
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) != 1:
         print("usage: python packaging/verify_bundle.py dist/ProlinkListener", file=sys.stderr)
         return 2
-    errors = verify(Path(args[0]))
+    # Build checks only look inside the working tree (dist/ under the checkout).
+    base = os.path.realpath(os.getcwd())
+    target = os.path.normpath(os.path.realpath(args[0]))
+    if not target.startswith(base + os.sep):
+        print(f"refusing a path outside {base}: {args[0]}", file=sys.stderr)
+        return 2
+    errors = verify(Path(target))
     if errors:
-        print("Windows bundle is incomplete:")
+        print("Bundle is incomplete:")
         for item in errors:
             print(f"  - {item}")
         return 1

@@ -67,7 +67,8 @@ def captures_dir() -> str:
     """Directory for diagnostic captures. Created on demand."""
     base = os.environ.get("PROLINK_CONFIG_DIR")
     if not base:
-        base = os.path.join(os.path.expanduser("~"), ".prolink-monitor")
+        from prolink.paths import default_config_dir
+        base = default_config_dir()
     path = os.path.join(base, "captures")
     os.makedirs(path, exist_ok=True)
     return path

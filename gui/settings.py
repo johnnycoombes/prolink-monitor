@@ -11,6 +11,7 @@ from gui.overlay_now import normalize_now_pos, normalize_now_style
 from prolink.playhead_smooth import normalize_mode as _smoothing_mode
 from prolink.proto import normalize_playhead_mode
 from prolink.wavestyle import normalize_palette, normalize_style
+from prolink.session import ZOOM_BARS
 from prolink.wavezoom import clean_zoom_seconds
 from prolink.wnp import normalize_target
 
@@ -130,7 +131,7 @@ def display_prefs_from(data: dict[str, Any] | None = None) -> dict[str, Any]:
         zoom = int(src.get("zoom_bars", 4))
     except (TypeError, ValueError):
         zoom = 4
-    if zoom not in (1, 2, 4, 8, 16):
+    if zoom not in ZOOM_BARS:
         zoom = 4
     by_deck_raw = src.get("zoom_bars_by_deck") or {}
     by_deck: dict[str, int] = {}
@@ -141,7 +142,7 @@ def display_prefs_from(data: dict[str, Any] | None = None) -> dict[str, Any]:
                 deck_no = int(key)
             except (TypeError, ValueError):
                 continue
-            if bars in (1, 2, 4, 8, 16):
+            if bars in ZOOM_BARS:
                 by_deck[str(deck_no)] = bars
     try:
         max_decks = 4 if int(src.get("max_decks", 4)) >= 4 else 2
@@ -175,7 +176,8 @@ def display_prefs_from(data: dict[str, Any] | None = None) -> dict[str, Any]:
 def settings_path() -> str:
     base = os.environ.get("PROLINK_CONFIG_DIR")
     if not base:
-        base = os.path.join(os.path.expanduser("~"), ".prolink-monitor")
+        from prolink.paths import default_config_dir
+        base = default_config_dir()
     return os.path.join(base, "settings.json")
 
 
@@ -187,7 +189,8 @@ def sessions_dir(data: dict[str, Any] | None = None) -> str:
         return os.path.expanduser(custom)
     base = os.environ.get("PROLINK_CONFIG_DIR")
     if not base:
-        base = os.path.join(os.path.expanduser("~"), ".prolink-monitor")
+        from prolink.paths import default_config_dir
+        base = default_config_dir()
     return os.path.join(base, "sessions")
 
 
@@ -251,7 +254,7 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
             # Legacy seconds → bars at 120 BPM (1 bar ≈ 2 s).
             sec = int(data.get("zoom_seconds", 8))
             zoom = {4: 2, 8: 4, 16: 8, 32: 16, 64: 16}.get(sec, 4)
-        out["zoom_bars"] = zoom if zoom in (1, 2, 4, 8, 16) else 4
+        out["zoom_bars"] = zoom if zoom in ZOOM_BARS else 4
     except (TypeError, ValueError):
         out["zoom_bars"] = 4
     by_deck = data.get("zoom_bars_by_deck") or {}
@@ -262,7 +265,7 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
                 bars = int(v)
             except (TypeError, ValueError):
                 continue
-            if bars in (1, 2, 4, 8, 16):
+            if bars in ZOOM_BARS:
                 clean_deck[str(int(k))] = bars
     out["zoom_bars_by_deck"] = clean_deck
     out["waveform_style"] = normalize_style(data.get("waveform_style"))

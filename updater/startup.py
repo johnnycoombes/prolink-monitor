@@ -59,7 +59,10 @@ def _on_result(window: QWidget, result: UpdateCheck) -> None:
     )
     if result.status != "available" or not result.available:
         return
-    frozen = bool(getattr(sys, "frozen", False))
+    # Only the Windows build installs itself. A macOS .app is replaced by
+    # hand (unsigned bundle), so it is treated like a source checkout: the
+    # prompt offers the Releases page instead.
+    frozen = bool(getattr(sys, "frozen", False)) and sys.platform == "win32"
     confirmed = _confirm(window, result, frozen=frozen)
     action = decide_action(result.status, confirmed=confirmed, frozen=frozen)
     if action == "show_download":
@@ -101,8 +104,13 @@ def _confirm(window: QWidget, result: UpdateCheck, *, frozen: bool) -> bool:
     text = (
         f"Version {result.available} is available.\n"
         f"This copy is {result.current}.\n\n"
-        "This one is running from source, so it will not replace your files. "
-        "The Releases page has the Windows build."
+        + (
+            "Updates are installed by hand on macOS. "
+            "The Releases page has the new ProlinkListener-macos zip."
+            if sys.platform == "darwin" and getattr(sys, "frozen", False)
+            else "This one is running from source, so it will not replace your files. "
+            "The Releases page has the Windows and macOS builds."
+        )
     )
     answer = QMessageBox.question(
         window,
