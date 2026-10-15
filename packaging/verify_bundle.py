@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -125,7 +126,13 @@ def main(argv: list[str] | None = None) -> int:
     if len(args) != 1:
         print("usage: python packaging/verify_bundle.py dist/ProlinkListener", file=sys.stderr)
         return 2
-    errors = verify(Path(args[0]))
+    # Build checks only look inside the working tree (dist/ under the checkout).
+    base = os.path.realpath(os.getcwd())
+    target = os.path.normpath(os.path.realpath(args[0]))
+    if not target.startswith(base + os.sep):
+        print(f"refusing a path outside {base}: {args[0]}", file=sys.stderr)
+        return 2
+    errors = verify(Path(target))
     if errors:
         print("Bundle is incomplete:")
         for item in errors:
