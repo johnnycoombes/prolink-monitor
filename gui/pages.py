@@ -9,7 +9,7 @@ from typing import Any
 
 from prolink.wavestyle import normalize_palette, normalize_style
 from prolink.wavezoom import clean_zoom_seconds
-from PySide6.QtCore import Qt, QTimer, Signal, QEvent
+from PySide6.QtCore import Qt, QTimer, Signal, QEvent, QObject
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QGridLayout,
@@ -99,15 +99,76 @@ def normalize_max_decks(n: int) -> int:
     return 4 if n >= 4 else 2
 
 
+class _FitToContent(QObject):
+    """Keeps a card at least as tall as its content needs at its current width.
+
+    Qt does not pass height-for-width (word-wrapped labels) up through a
+    plain QFrame, so a card in a tight page was squeezed below its content
+    and its rows drew over each other (Health in 1.0.15). On every resize the
+    card's minimum height is set to what its layout needs at that width.
+    """
+
+    def eventFilter(self, obj, event):
+        if event.type() in (QEvent.Resize, QEvent.LayoutRequest, QEvent.Show):
+            lay = obj.layout()
+            if lay is not None:
+                w = obj.width()
+                need = (lay.totalHeightForWidth(w) if lay.hasHeightForWidth()
+                        else lay.totalMinimumSize().height())
+                need = max(need, lay.totalMinimumSize().height())
+                if need > 0 and obj.minimumHeight() != need:
+                    obj.setMinimumHeight(need)
+        return False
+
+
+def fit_cards(root: QWidget) -> None:
+    """Install :class:`_FitToContent` on every card under ``root``."""
+    filt = getattr(root, "_fit_filter", None)
+    if filt is None:
+        filt = root._fit_filter = _FitToContent(root)
+    for card in root.findChildren(QFrame):
+        if card.objectName() == "Card" and card.layout() is not None:
+            card.installEventFilter(filt)
+
+
+def _size_table_to_rows(table: QTableWidget, rows: int) -> None:
+    """A table tall enough for its header and ``rows`` rows at the current font
+    (so it scales with DPI), growing with its contents but never squeezed."""
+    fm = table.fontMetrics()
+    row_h = max(table.verticalHeader().defaultSectionSize(), fm.height() + 10)
+    head_h = max(table.horizontalHeader().sizeHint().height(), fm.height() + 10)
+    table.setMinimumHeight(head_h + row_h * rows + 2 * table.frameWidth() + 4)
+    table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+
+
 class Page(QFrame):
-    def __init__(self, i18n, title_key: str, sub_key: str, parent=None):
+    def __init__(self, i18n, title_key: str, sub_key: str, parent=None,
+                 scrollable: bool = False):
         super().__init__(parent)
         self.setObjectName("Page")
         self._i18n = i18n
         self._title_key = title_key
         self._sub_key = sub_key
 
-        self.layout_root = QVBoxLayout(self)
+        host: QWidget = self
+        self.scroll_area = None
+        if scrollable:
+            # Content keeps its natural height; the page scrolls instead of
+            # squeezing sections into each other.
+            outer = QVBoxLayout(self)
+            outer.setContentsMargins(0, 0, 0, 0)
+            self.scroll_area = QScrollArea()
+            self.scroll_area.setWidgetResizable(True)
+            self.scroll_area.setFrameShape(QFrame.NoFrame)
+            self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            host = QFrame()
+            host.setObjectName("Page")          # same background as the page
+            self.scroll_area.setWidget(host)
+            self.scroll_area.setStyleSheet(
+                f"QScrollArea {{ background-color: {COLORS['bg']}; border: none; }}")
+            outer.addWidget(self.scroll_area)
+
+        self.layout_root = QVBoxLayout(host)
         self.layout_root.setContentsMargins(24, 20, 24, 20)
         self.layout_root.setSpacing(16)
 
@@ -756,6 +817,7 @@ _POSITION_SOURCE_KEYS = {
 _AZ_MODE_KEYS = {
     "pro_dj_link": "health_az_pro",
     "four_deck": "health_az_four",
+    "unknown": "health_az_unknown",
 }
 
 
@@ -769,7 +831,7 @@ class HealthPage(Page):
     """Packet rates, AP vs beat-grid position source, and NFS RTT."""
 
     def __init__(self, i18n, backend=None, parent=None):
-        super().__init__(i18n, "health_title", "health_sub", parent)
+        super().__init__(i18n, "health_title", "health_sub", parent, scrollable=True)
         self._backend = backend
         self._prev_packets = 0
         self._prev_t = 0.0
@@ -964,7 +1026,7 @@ class HealthPage(Page):
         self.deck_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.deck_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.deck_table.setMinimumHeight(140)
-        self.layout_root.addWidget(self.deck_table, 1)
+        self.layout_root.addWidget(self.deck_table)
         self.deck_empty = QLabel(i18n.t("health_no_decks"))
         self.deck_empty.setObjectName("Dim")
         self.layout_root.addWidget(self.deck_empty)
@@ -987,10 +1049,20 @@ class HealthPage(Page):
         self.nfs_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.nfs_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.nfs_table.setMinimumHeight(100)
-        self.layout_root.addWidget(self.nfs_table, 1)
+        self.layout_root.addWidget(self.nfs_table)
         self.nfs_empty = QLabel(i18n.t("health_no_nfs"))
         self.nfs_empty.setObjectName("Dim")
         self.layout_root.addWidget(self.nfs_empty)
+        self.layout_root.addStretch(1)
+        for table in (self.deck_table, self.nfs_table):
+            _size_table_to_rows(table, 4)
+        for w in (self._mode_val, self._host_val, self._pkts_val, self._rate_val,
+                  self._az_val, self._number_val):
+            w.setWordWrap(True)
+            w.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        for lbl in self._overview_labels:
+            lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        fit_cards(self)
 
     def _start_capture(self, seconds: int) -> None:
         backend = getattr(self, "_backend", None)

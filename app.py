@@ -81,7 +81,7 @@ def _az_mode_value(engine) -> str | None:
     """Health-page value. Ignores stand-ins that are not a real mode string."""
     fn = getattr(engine, "az_mode", None)
     mode = fn() if callable(fn) else None
-    if mode in ("pro_dj_link", "four_deck"):
+    if mode in ("pro_dj_link", "four_deck", "unknown"):
         return mode
     return None
 
@@ -397,8 +397,9 @@ class Monitor:
         az = _az_mode_value(self.engine) if hasattr(self, "engine") else None
         res["az_mode"] = az
         if az and (res["profile"] or {}).get("name") == "XDJ-AZ":
-            res["line"] += ("; Pro DJ Link mode" if az == "pro_dj_link"
-                            else "; rekordbox lighting / 4-deck mode")
+            res["line"] += {"pro_dj_link": "; Pro DJ Link mode",
+                            "four_deck": "; rekordbox lighting / 4-deck mode"}.get(
+                                az, "; link mode unknown yet")
         return res
 
     def _profile_for_host(self, host: str) -> dict:

@@ -18,6 +18,12 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 
 ## What's new
 
+**1.0.16.** Health page layout fix, an honest XDJ-AZ mode label, and an optional Intel Mac build.
+
+- **Health is readable again.** In 1.0.15 the top LINK card grew (model, all-in-one and device-number lines), but Qt does not pass the height of word-wrapped labels up through a plain card, so when the window was not tall enough the card was squeezed below its content and the column headers, the `XDJ-AZ` row, the mode label and the new lines drew over each other (clearly at 150 % scaling). The Health page now scrolls instead of squeezing, every card is kept at least as tall as its content at its current width, the overview values wrap, and the deck and NFS tables keep room for four rows at the current font size. Checked offscreen at 560–1100 px wide and 100/150/200 % scale; a layout test fails if any overview line is clipped or overlaps another.
+- **XDJ-AZ mode.** 1.0.15 said *4-deck / rekordbox lighting* whenever no Channels On-Air packet had arrived in the last second, even on a live Pro DJ Link session over dbserver (that packet is not always seen, for example away from the mixer port). Now a status packet from AZ deck 1–4 in the last 5 s also means **Pro DJ Link**, the label is **unknown** for the first 5 s, and *4-deck / rekordbox lighting* is shown only after 5 s with neither packet.
+- **Intel Mac build is optional.** Pull requests and tagged releases build Windows and Apple Silicon only. The Intel (x86_64) Mac app is built by hand with the new **macOS Intel build** workflow, which can attach it to an existing release.
+
 **1.0.15.** XDJ-XZ support (untested on hardware yet), a device-model setting, and a safer device number.
 
 - **Device model setting.** Settings → Connection → **Device model**: *Auto-detect* (default) or a fixed model — XDJ-AZ, XDJ-XZ, CDJ-3000, CDJ-3000X, CDJ-2000/NXS/NXS2, CDJ-900/NXS, XDJ-1000/MK2, XDJ-700, XDJ-RX/RX2/RX3, XDJ-RR, Opus Quad, OMNIS-DUO, DJM mixers or rekordbox. CLI: `--model xdj-xz` (see `prolink/models.py` for the keys). See [Device model profiles](#device-model-profiles).
@@ -163,7 +169,7 @@ Npcap is only needed when rekordbox is open. See [Troubleshooting](#troubleshoot
 
 You do not need Python for this path. macOS 12 or later.
 
-1. From a versioned release on the [Releases](https://github.com/johnnycoombes/prolink-monitor/releases) page, download `ProlinkListener-<version>-macos-arm64.dmg` for Apple Silicon (M1 and later) or `ProlinkListener-<version>-macos-x86_64.dmg` for an Intel Mac. The `.zip` holds the same app.
+1. From a versioned release on the [Releases](https://github.com/johnnycoombes/prolink-monitor/releases) page, download `ProlinkListener-<version>-macos-arm64.dmg` for Apple Silicon (M1 and later). The `.zip` holds the same app. Intel Macs: `ProlinkListener-<version>-macos-x86_64.dmg` is built only on request (see [Release process](#release-process)), so it is not on every release; ask for it if you need it.
 2. Open the dmg and drag **ProlinkListener** into **Applications**.
 3. The app is **not signed or notarised**, so Gatekeeper blocks the first launch ("cannot be opened because the developer cannot be verified", or "is damaged"). Either:
    - in Finder, **right-click** (or Control-click) ProlinkListener → **Open**, then **Open** again in the dialog (on macOS 15 and later: try to open it once, then **System Settings → Privacy & Security → Open Anyway**); or
@@ -522,7 +528,7 @@ Default base is `http://127.0.0.1:8777` when that port bound, and `http://127.0.
 
 ## Release process
 
-Tests run on every pull request and every push to `main`: pytest on Ubuntu, Windows and macOS (Apple Silicon), Python 3.12 and 3.14. The macOS app is a PyInstaller `.app` bundle built on `macos-14` (arm64) and `macos-15-intel` (x86_64), shipped as a zip and a dmg. The Windows app is a PyInstaller folder build (not one file). Qt WebEngine needs `QtWebEngineProcess.exe` beside the Qt libraries. PyInstaller 6.16 or newer is what builds the 3.14 interpreter used for that package.
+Tests run on every pull request and every push to `main`: pytest on Ubuntu, Windows and macOS (Apple Silicon), Python 3.12 and 3.14. The macOS app is a PyInstaller `.app` bundle built on `macos-14` (arm64) and shipped as a zip and a dmg. The Intel (x86_64) build is optional and not part of pull-request CI: run the **macOS Intel build** workflow (Actions → macOS Intel build → Run workflow) with a tag or branch, and tick *attach* to add it to that tag's GitHub Release. The Windows app is a PyInstaller folder build (not one file). Qt WebEngine needs `QtWebEngineProcess.exe` beside the Qt libraries. PyInstaller 6.16 or newer is what builds the 3.14 interpreter used for that package.
 
 ### Cut a release
 
@@ -534,7 +540,7 @@ Tests run on every pull request and every push to `main`: pytest on Ubuntu, Wind
    git push origin v1.1.0
    ```
 
-3. The **Release builds** workflow builds `ProlinkListener-<version>-win64.zip` and the macOS `ProlinkListener-<version>-macos-arm64` / `-macos-x86_64` `.zip` and `.dmg`, and attaches them all to the GitHub Release. The text after `v` has to match `__version__`, or the build stops.
+3. The **Release builds** workflow builds `ProlinkListener-<version>-win64.zip` and the macOS `ProlinkListener-<version>-macos-arm64` `.zip` and `.dmg`, and attaches them all to the GitHub Release. The text after `v` has to match `__version__`, or the build stops.
 4. If the signing secrets below are set, the same workflow publishes signed update files on a release named `updates`. If they are not set, it prints a note and still publishes the zip.
 
 Pull requests also run the Windows and macOS builds and upload them as Actions artifacts. Signed update metadata covers the Windows zip only. Once signing is on, install the copy from the GitHub Release, not a pull-request artifact. The workflow’s tag-only jobs do not run on a pull request. That is expected.
