@@ -76,7 +76,38 @@ def local_net(target: str) -> NetInfo:
                 prefix = int(p)
         except (subprocess.SubprocessError, ValueError, OSError):
             pass
+    elif sys.platform == "darwin":
+        try:
+            out = subprocess.run(["/sbin/ifconfig"], capture_output=True,
+                                 text=True, timeout=10).stdout
+            found = parse_ifconfig(out, ip)
+            if found:
+                prefix, alias = found
+        except (subprocess.SubprocessError, ValueError, OSError):
+            pass
     return NetInfo(ip, prefix, alias.strip())
+
+
+def parse_ifconfig(text: str, ip: str) -> tuple[int, str] | None:
+    """Prefix length and interface name for ``ip`` in BSD/macOS ifconfig output.
+
+    macOS prints ``inet 192.168.1.20 netmask 0xffffff00 broadcast ...`` under
+    a ``en0: flags=...`` header line.
+    """
+    iface = ""
+    for line in text.splitlines():
+        if line and not line[0].isspace() and ":" in line:
+            iface = line.split(":", 1)[0].strip()
+            continue
+        parts = line.split()
+        if len(parts) >= 4 and parts[0] == "inet" and parts[1] == ip and parts[2] == "netmask":
+            mask = parts[3]
+            if mask.startswith("0x"):
+                bits = bin(int(mask, 16)).count("1")
+            else:
+                bits = ipaddress.ip_network(f"0.0.0.0/{mask}").prefixlen
+            return bits, iface
+    return None
 
 
 def local_mac() -> bytes:

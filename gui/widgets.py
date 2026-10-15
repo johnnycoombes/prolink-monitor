@@ -1429,10 +1429,10 @@ class DeckCard(QFrame):
         # so a line that fits on Linux ellipsizes after a few words.
         font = QFont()
         if mono:
-            font.setFamilies(["DejaVu Sans Mono", "Cascadia Mono", "Consolas", "Courier New"])
+            font.setFamilies(["DejaVu Sans Mono", "Cascadia Mono", "Consolas", "Menlo", "Courier New"])
             font.setStyleHint(QFont.StyleHint.Monospace)
         else:
-            font.setFamilies(["DejaVu Sans", "Segoe UI"])
+            font.setFamilies(["DejaVu Sans", "Segoe UI", "Helvetica Neue"])
             font.setStyleHint(QFont.StyleHint.SansSerif)
         matched = QFontInfo(font).family()
         if matched:

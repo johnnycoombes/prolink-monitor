@@ -45,15 +45,16 @@ def trusted_root_in_source() -> Path:
 
 def config_dir() -> Path:
     """Same folder as ``settings.json`` (``~/.prolink-monitor`` by default)."""
-    base = os.environ.get("PROLINK_CONFIG_DIR")
-    if base:
-        return Path(base)
-    return Path.home() / ".prolink-monitor"
+    from prolink.paths import config_dir as _config_dir
+
+    return Path(_config_dir())
 
 
 def library_cache_dir() -> Path:
     """USB/NFS cache. The updater must never write here."""
-    return Path.home() / ".prolink-cache"
+    from prolink.paths import cache_dir
+
+    return Path(cache_dir())
 
 
 def update_cache_dir() -> Path:

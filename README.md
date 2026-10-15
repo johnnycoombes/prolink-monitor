@@ -2,7 +2,7 @@
 
 A live Pro DJ Link monitor. It joins the booth network as a virtual player, reads the library and analysis from the player while the set is running, and draws decks, waveforms, and artwork on this computer. It is read-only toward the player and the USB stick: it never writes a Rekordbox database, never sends library edits, and a packet capture only records what already arrived.
 
-This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.12**. This tree is **1.0.13**.
+This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.13**. This tree is **1.0.14**, which adds a macOS build.
 
 ## Contents
 
@@ -17,6 +17,13 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 - [Credits](#credits)
 
 ## What's new
+
+**1.0.14.** A macOS build.
+
+- **Prolink Listener for Mac.** Releases now include `ProlinkListener-<version>-macos-arm64` (Apple Silicon) and `-macos-x86_64` (Intel), each as a `.dmg` and a `.zip`, built with PyInstaller on GitHub's macOS runners. See [macOS, from the GitHub Release](#macos-from-the-github-release). The app is not signed or notarised, and it does not update itself: when a new version is out it says so and opens the Releases page.
+- On macOS, settings live in `~/Library/Application Support/Prolink Listener` and the library cache in `~/Library/Caches/Prolink Listener`. Windows and Linux keep `~/.prolink-monitor` and `~/.prolink-cache`.
+- The bundle's `Info.plist` carries `NSLocalNetworkUsageDescription`, so macOS 14 and later can ask for Local Network access, which Pro DJ Link needs. The network interface and its prefix are read from `ifconfig` on macOS (Windows still uses PowerShell). Fonts fall back to the system font and Menlo.
+- Tests also run on macOS in CI, and `packaging/verify_bundle.py` checks a `.app` (executable, Qt WebEngine helper, web files, Info.plist and icon).
 
 **1.0.13.** Smaller deck text and a bar counter.
 
@@ -117,9 +124,30 @@ You do not need Python for this path.
 
 Npcap is only needed when rekordbox is open. See [Troubleshooting](#troubleshooting).
 
+### macOS, from the GitHub Release
+
+You do not need Python for this path. macOS 12 or later.
+
+1. From a versioned release on the [Releases](https://github.com/johnnycoombes/prolink-monitor/releases) page, download `ProlinkListener-<version>-macos-arm64.dmg` for Apple Silicon (M1 and later) or `ProlinkListener-<version>-macos-x86_64.dmg` for an Intel Mac. The `.zip` holds the same app.
+2. Open the dmg and drag **ProlinkListener** into **Applications**.
+3. The app is **not signed or notarised**, so Gatekeeper blocks the first launch ("cannot be opened because the developer cannot be verified", or "is damaged"). Either:
+   - in Finder, **right-click** (or Control-click) ProlinkListener → **Open**, then **Open** again in the dialog (on macOS 15 and later: try to open it once, then **System Settings → Privacy & Security → Open Anyway**); or
+   - in Terminal, remove the quarantine flag once:
+
+     ```bash
+     xattr -dr com.apple.quarantine /Applications/ProlinkListener.app
+     ```
+
+4. When macOS asks whether Prolink Listener may **find devices on your local network**, choose **Allow**. Without it no player shows up. To change it later: **System Settings → Privacy & Security → Local Network**. If the macOS firewall is on, allow incoming connections for Prolink Listener too, so phones can open the web panel.
+5. Settings stay in `~/Library/Application Support/Prolink Listener` (`settings.json`, `prolink-monitor.log`, sessions). The USB library cache stays in `~/Library/Caches/Prolink Listener`.
+
+The Mac build does **not** update itself. It checks for a new signed release like the Windows app, and **Yes** opens the Releases page; download the new dmg and replace the app in Applications. Settings are not touched.
+
+Not yet tested on a real Mac with a player: see the 1.0.14 pull request for what CI does check. Passive capture needs Wireshark's `tshark` (and its ChmodBPF helper) on macOS.
+
 ### Updates
 
-A couple of seconds after the Windows app opens, it looks for a newer **signed** release. The packaged app then asks:
+A couple of seconds after the Windows app opens (the macOS app only offers the Releases page), it looks for a newer **signed** release. The packaged app then asks:
 
 > Version X is available. This copy is Y. Install it now? Prolink Listener will close and open again. Your settings stay in the .prolink-monitor folder and the library cache stays in .prolink-cache.
 
@@ -459,7 +487,7 @@ Default base is `http://127.0.0.1:8777` when that port bound, and `http://127.0.
 
 ## Release process
 
-Tests run on every pull request and every push to `main`: pytest on Ubuntu and Windows, Python 3.12 and 3.14. The Windows app is a PyInstaller folder build (not one file). Qt WebEngine needs `QtWebEngineProcess.exe` beside the Qt libraries. PyInstaller 6.16 or newer is what builds the 3.14 interpreter used for that package.
+Tests run on every pull request and every push to `main`: pytest on Ubuntu, Windows and macOS (Apple Silicon), Python 3.12 and 3.14. The macOS app is a PyInstaller `.app` bundle built on `macos-14` (arm64) and `macos-15-intel` (x86_64), shipped as a zip and a dmg. The Windows app is a PyInstaller folder build (not one file). Qt WebEngine needs `QtWebEngineProcess.exe` beside the Qt libraries. PyInstaller 6.16 or newer is what builds the 3.14 interpreter used for that package.
 
 ### Cut a release
 
@@ -471,10 +499,10 @@ Tests run on every pull request and every push to `main`: pytest on Ubuntu and W
    git push origin v1.1.0
    ```
 
-3. The **Windows release** workflow builds `ProlinkListener-<version>-win64.zip` and attaches it to the GitHub Release. The text after `v` has to match `__version__`, or the build stops.
+3. The **Release builds** workflow builds `ProlinkListener-<version>-win64.zip` and the macOS `ProlinkListener-<version>-macos-arm64` / `-macos-x86_64` `.zip` and `.dmg`, and attaches them all to the GitHub Release. The text after `v` has to match `__version__`, or the build stops.
 4. If the signing secrets below are set, the same workflow publishes signed update files on a release named `updates`. If they are not set, it prints a note and still publishes the zip.
 
-Pull requests also run the Windows build and upload the zip as an Actions artifact. Once signing is on, install the copy from the GitHub Release, not a pull-request artifact. The workflow’s tag-only jobs do not run on a pull request. That is expected.
+Pull requests also run the Windows and macOS builds and upload them as Actions artifacts. Signed update metadata covers the Windows zip only. Once signing is on, install the copy from the GitHub Release, not a pull-request artifact. The workflow’s tag-only jobs do not run on a pull request. That is expected.
 
 ### Signing secrets
 

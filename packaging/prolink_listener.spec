@@ -10,11 +10,16 @@ onedir, not onefile: QtWebEngineProcess has to be a real executable on disk.
 A onefile archive would unpack it on every launch and still break the relative
 paths WebEngine expects.
 
-Settings stay in ~/.prolink-monitor and the USB cache stays in ~/.prolink-cache.
-Nothing in this spec redirects those folders.
+Settings stay in ~/.prolink-monitor and the USB cache stays in ~/.prolink-cache
+(on macOS: ~/Library/Application Support/Prolink Listener and
+~/Library/Caches/Prolink Listener). On macOS a BUNDLE step wraps the onedir
+folder into ProlinkListener.app.
 """
 
 import os
+import sys
+
+IS_MAC = sys.platform == "darwin"
 
 spec_dir = os.path.dirname(os.path.abspath(SPEC))
 root = os.path.dirname(spec_dir)
@@ -162,6 +167,10 @@ exe = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
+    # macOS: build for the runner's own architecture unless asked otherwise
+    # (arm64 on macos-14, x86_64 on macos-13).
+    target_arch=os.environ.get("PROLINK_TARGET_ARCH") or None,
+    argv_emulation=False,
 )
 
 coll = COLLECT(
@@ -172,3 +181,33 @@ coll = COLLECT(
     upx=False,
     name="ProlinkListener",
 )
+
+if IS_MAC:
+    sys.path.insert(0, root)
+    from prolink import __version__ as _version
+
+    app = BUNDLE(
+        coll,
+        name="ProlinkListener.app",
+        icon=os.path.join(spec_dir, "macos", "ProlinkListener.icns"),
+        bundle_identifier="com.johnnycoombes.prolinklistener",
+        version=_version,
+        info_plist={
+            "CFBundleName": "Prolink Listener",
+            "CFBundleDisplayName": "Prolink Listener",
+            "CFBundleShortVersionString": _version,
+            "CFBundleVersion": _version,
+            "LSMinimumSystemVersion": "12.0",
+            "NSHighResolutionCapable": True,
+            "LSApplicationCategoryType": "public.app-category.music",
+            # macOS 14+ asks before an app may talk to the local network.
+            # Pro DJ Link (UDP 50000-50002 broadcasts, NFS and the remote
+            # database) needs this text or the prompt never appears.
+            "NSLocalNetworkUsageDescription": (
+                "Prolink Listener listens to Pioneer DJ players on your "
+                "network (Pro DJ Link) to show what each deck is playing."
+            ),
+            "NSBonjourServices": [],
+            "NSAppTransportSecurity": {"NSAllowsLocalNetworking": True},
+        },
+    )

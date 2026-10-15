@@ -17,9 +17,8 @@ _LAST = ""
 
 
 def log_path() -> str:
-    base = os.environ.get("PROLINK_CONFIG_DIR")
-    if not base:
-        base = os.path.join(os.path.expanduser("~"), ".prolink-monitor")
+    from prolink.paths import config_dir as _config_dir
+    base = _config_dir()
     return os.path.join(base, "prolink-monitor.log")
 
 
