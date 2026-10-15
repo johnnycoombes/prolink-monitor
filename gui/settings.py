@@ -22,6 +22,7 @@ DEFAULTS: dict[str, Any] = {
     "port": 8777,
     "http_bind": "0.0.0.0",        # 0.0.0.0 = reachable on LAN (phone); 127.0.0.1 = local only
     "number": 5,
+    "device_model": "auto",         # auto | a key of prolink.models.PROFILES
     "name": "monitor",
     "iface": "",
     "tshark": "",
@@ -228,7 +229,7 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     out = deepcopy(DEFAULTS)
     out["host"] = str(data.get("host") or "").strip()
     mode = str(data.get("mode") or "auto").lower()
-    out["mode"] = mode if mode in ("auto", "vcdj", "sniffer") else "auto"
+    out["mode"] = mode if mode in ("auto", "vcdj", "sniffer", "observe") else "auto"
     try:
         out["port"] = max(1, min(65535, int(data.get("port", 8777))))
     except (TypeError, ValueError):
@@ -236,9 +237,13 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     bind = str(data.get("http_bind") or "0.0.0.0").strip() or "0.0.0.0"
     out["http_bind"] = "127.0.0.1" if bind in ("127.0.0.1", "localhost") else "0.0.0.0"
     try:
-        out["number"] = max(1, min(6, int(data.get("number", 5))))
+        # 0 = automatic: listen first, then take a free number.
+        out["number"] = max(0, min(15, int(data.get("number", 5))))
     except (TypeError, ValueError):
         out["number"] = 5
+    from prolink.models import CHOICES as _MODEL_CHOICES
+    model = str(data.get("device_model") or "auto").lower()
+    out["device_model"] = model if model in _MODEL_CHOICES else "auto"
     out["name"] = (str(data.get("name") or "monitor").strip() or "monitor")[:20]
     out["iface"] = str(data.get("iface") or "").strip()
     out["tshark"] = str(data.get("tshark") or "").strip()
@@ -374,6 +379,7 @@ def as_namespace(data: dict[str, Any]):
         port=data["port"],
         http_host=data.get("http_bind") or "0.0.0.0",
         number=data["number"],
+        model=data.get("device_model") or "auto",
         name=data["name"],
         tshark=data["tshark"] or None,
         iface=data["iface"] or None,

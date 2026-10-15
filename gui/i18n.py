@@ -393,6 +393,26 @@ STRINGS = {
     "mode_auto": "Auto",
     "mode_vcdj": "Virtual device",
     "mode_sniffer": "Passive capture",
+    "mode_observe": "Observe only (USB link)",
+    "number_auto": "Auto",
+    "device_model": "Device model",
+    "device_model_auto": "Auto-detect",
+    "device_model_tip": (
+        "Which Pro DJ Link gear you use. Auto-detect reads the announced name. "
+        "The profile only switches off requests a model cannot answer "
+        "(e.g. dbserver on the Opus Quad); it never sends anything extra."
+    ),
+    "health_model": "Model",
+    "health_allinone": "All-in-one units",
+    "health_allinone_none": "None seen",
+    "health_observe": "Observe only",
+    "health_number": "Device number",
+    "health_xz_probe": "Export XZ probe report",
+    "health_xz_probe_tip": (
+        "Saves a read-only JSON report: adapters, packet types heard, NFS "
+        "exports, slot bytes, firmware and whether exportLibrary.db exists. "
+        "Nothing is sent to the player."
+    ),
     "about_body": (
         "Desktop front-end for this prolink-monitor fork.\n"
         "Talks to AlphaTheta / Pioneer DJ gear over Pro DJ Link.\n\n"

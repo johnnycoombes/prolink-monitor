@@ -87,7 +87,11 @@ class RemoteDbBrowser:
         with self._lock:
             self.close()
             port = wire.discover_db_port(self.host, timeout=self.timeout)
-            sock = socket.create_connection((self.host, port), timeout=self.timeout)
+            try:
+                sock = socket.create_connection((self.host, port), timeout=self.timeout)
+            except OSError:
+                wire.forget_db_port(self.host)   # the player may have restarted
+                raise
             sock.settimeout(self.timeout)
             sock.sendall(wire._num_field(wire.GREETING, 4))
             reply_tag, reply_val = wire.decode_field(_SockWrap(sock))

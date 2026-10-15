@@ -15,7 +15,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from app import Handler, Monitor, QuietServer, build_source, open_http_server  # noqa: E402
+from app import Handler, Monitor, QuietServer, build_source, observe_net, open_http_server  # noqa: E402
 from gui.settings import as_namespace, sessions_dir  # noqa: E402
 from prolink import link  # noqa: E402
 from prolink.web_server import close_http_server, start_http_thread  # noqa: E402
@@ -300,6 +300,16 @@ class Backend(QObject):
             return {"id": playlist_id, "host": host, "tracks": []}
         return mon.browse_playlist_tracks(playlist_id, host)
 
+    def xz_probe_report(self) -> dict:
+        with self._lock:
+            mon = self._monitor
+        if mon is None:
+            from prolink import allinone
+
+            return {"error": "not connected",
+                    "adapters": [a.as_dict() for a in allinone.list_adapters()]}
+        return mon.xz_probe_report()
+
     def library_diagnostics(self) -> dict:
         with self._lock:
             mon = self._monitor
@@ -404,7 +414,8 @@ class Backend(QObject):
             if gen != self._boot_gen:
                 return
 
-            net = link.local_net(host or "255.255.255.255")
+            net = (observe_net(host, args.iface) if args.mode == "observe" else None) \
+                or link.local_net(host or "255.255.255.255")
             source = build_source(args, net)
             monitor = Monitor(host, source, args.cache, local_ip=net.ip)
             monitor.configure_display(settings)

@@ -32,6 +32,7 @@ from prolink.bundle import bundle_root                    # noqa: E402
 from prolink.anlz_resolve import AnlzChoice               # noqa: E402
 from prolink.library import Library, Media                # noqa: E402
 from prolink import onelibrary                            # noqa: E402
+from prolink import models                                # noqa: E402
 from prolink import library_tree                          # noqa: E402
 from prolink import fields as _fields                     # noqa: E402
 from prolink import __version__ as _PROLINK_VERSION       # noqa: E402
@@ -50,6 +51,7 @@ from prolink.wnp import WnpPublisher  # noqa: E402
 from prolink.loopback_audio import LoopbackCapturer  # noqa: E402
 from prolink.db_recovery import STATS as _DB_STATS  # noqa: E402
 from prolink import applog  # noqa: E402
+from prolink import allinone  # noqa: E402
 from prolink.web_server import PanelServer, serve_sse  # noqa: E402
 
 
@@ -58,6 +60,21 @@ def _dbserver_health() -> dict:
     return _DB_STATS.snapshot()
 
 WEB_DIR = os.path.join(bundle_root(), "web")
+
+
+def all_in_one_rows(devices: dict) -> list[dict]:
+    """One row per all-in-one unit (grouped by IP) for Health and the probe report."""
+    by_ip: dict[str, dict] = {}
+    for ann in list((devices or {}).values()):
+        model = allinone.all_in_one_model(getattr(ann, "name", ""))
+        if not model:
+            continue
+        row = by_ip.setdefault(ann.ip, {"ip": ann.ip, "model": model, "devices": [],
+                                        "note": allinone.MODEL_NOTES.get(model, "")})
+        row["devices"].append(int(ann.device_number))
+    for row in by_ip.values():
+        row["devices"].sort()
+    return sorted(by_ip.values(), key=lambda r: r["ip"])
 
 
 def _az_mode_value(engine) -> str | None:
@@ -155,6 +172,7 @@ class Monitor:
                  local_ip: str | None = None):
         self.host = host
         self.local_ip = local_ip      # to ignore our own announcement
+        self.model_setting = "auto"   # prolink.models: "auto" or a profile key
         applog.configure()
         self.engine = link.ProLink(source)
         self.library = Library(cache_dir)
@@ -328,6 +346,11 @@ class Monitor:
         """
         if not host:
             return None
+        if getattr(getattr(self.engine, "source", None), "kind", "") == "observe":
+            # Observe only never opens TCP sessions to the player; NFS reads only.
+            return None
+        if not self._profile_for_host(host).get("dbserver", True):
+            return None    # e.g. Opus Quad: no dbserver (Beat Link #97)
         target = self._device_number_for_host(host)
         if target is None:
             target = 1
@@ -343,6 +366,33 @@ class Monitor:
             requesting_player=self._requesting_player_for_db(target),
             slot=int(slot),
         )
+
+    def set_model(self, setting: str | None) -> None:
+        setting = str(setting or "auto").lower()
+        self.model_setting = setting if setting in models.CHOICES else "auto"
+
+    def _announced_names(self, host: str | None = None) -> list[str]:
+        lock = getattr(self.engine, "lock", None)
+        if lock is None:
+            anns = list(getattr(self.engine, "devices", {}).values())
+        else:
+            with lock:
+                anns = list(self.engine.devices.values())
+        return [getattr(a, "name", "") for a in anns
+                if getattr(a, "name", "") and (host is None or getattr(a, "ip", None) == host)]
+
+    def model_info(self) -> dict:
+        """Chosen or detected model profile for Health and the probe report."""
+        res = models.resolve(getattr(self, "model_setting", "auto"), self._announced_names())
+        res["line"] = models.capability_line(res)
+        return res
+
+    def _profile_for_host(self, host: str) -> dict:
+        """Profile that decides what we ask ``host``. Unknown hosts allow everything."""
+        if getattr(self, "model_setting", "auto") in models.PROFILES:
+            return models.PROFILES[self.model_setting].as_dict()
+        res = models.resolve("auto", self._announced_names(host))
+        return res["profile"]
 
     def _cache_key(self, host: str, media, track_id: int, slot: str = "") -> tuple:
         fp = getattr(media, "_pdb_fingerprint", None)
@@ -417,6 +467,8 @@ class Monitor:
         from gui.settings import display_prefs_from
 
         self._display = display_prefs_from(prefs)
+        if prefs and prefs.get("device_model"):
+            self.set_model(prefs.get("device_model"))
         self._apply_pwv7_order((prefs or {}).get("pwv7_order"), (prefs or {}).get("pwv6_order"))
         self.show_phrases = bool(self._display.get("show_phrases", True))
         self.show_vocals = bool(self._display.get("show_vocals", True))
@@ -606,10 +658,10 @@ class Monitor:
         copied_src = ""
         choice: AnlzChoice | None = None
         if host and not remote_only:
-            media = self.library.get(host)
+            media = self.library.get(host, slot=slot)
             if media is None:
                 self.library.retry(host)
-                media = self.library.get(host)
+                media = self.library.get(host, slot=slot)
             if media is not None:
                 choice = self._choice_from_media(media, track_id, live)
                 if choice is not None:
@@ -942,7 +994,8 @@ class Monitor:
         host = key[0] if key else None
         if not host:
             return None, None
-        return host, self.library.get(host)
+        slot = key[3] if len(key) > 3 and isinstance(key[3], str) else None
+        return host, self.library.get(host, slot=slot)
 
     def _store_wave(self, key: tuple, bound_key: tuple | None,
                     payload: bytes, meta: dict) -> None:
@@ -1605,6 +1658,73 @@ class Monitor:
             return [], "exportLibrary.db", ol
         return [], "none", None
 
+    def xz_probe_report(self) -> dict:
+        """Read-only answers to the XDJ-XZ hardware questions.
+
+        Lists local adapters, what arrived per device and packet type, the
+        slot bytes and firmware the decks report, the NFS export names (mountd
+        EXPORT only, nothing is written) and whether exportLibrary.db exists.
+        Sends nothing to the player apart from what the running mode already does.
+        """
+        src = self.engine.source
+        report: dict[str, Any] = {
+            "generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "version": _prolink_version(),
+            "platform": sys.platform,
+            "mode": {
+                "kind": getattr(src, "kind", ""),
+                "description": getattr(src, "description", ""),
+                "device_number": getattr(src, "device_number", None),
+                "device_number_note": getattr(src, "number_note", ""),
+                "numbers_heard": sorted(getattr(src, "taken", set()) or []),
+                "local_ip": getattr(self, "local_ip", ""),
+            },
+            "observe": allinone.observe_health(
+                getattr(src, "kind", ""), getattr(self.engine, "census", None)),
+        }
+        try:
+            report["adapters"] = [a.as_dict() for a in allinone.list_adapters()]
+        except Exception as exc:
+            report["adapters_error"] = str(exc)
+        with self.engine.lock:
+            devices = dict(self.engine.devices)
+        report["devices"] = [
+            {"number": int(a.device_number), "name": a.name, "ip": a.ip, "mac": a.mac,
+             "kind": a.kind, "all_in_one": allinone.all_in_one_model(a.name) or ""}
+            for a in sorted(devices.values(), key=lambda a: int(a.device_number))
+        ]
+        report["all_in_one"] = all_in_one_rows(devices)
+        report["model"] = self.model_info()
+        census = getattr(self.engine, "census", None)
+        report["census"] = census.as_dict() if census is not None else {}
+        report["firmware"] = sorted({
+            v.get("firmware") for v in (report["census"].get("status_samples") or {}).values()
+            if v.get("firmware")})
+        media_rows = []
+        with self.library.lock:
+            media_list = list(self.library.media.items()) + list(
+                getattr(self.library, "slot_media", {}).items())
+        for key, media in media_list:
+            row: dict[str, Any] = {"key": key, "host": getattr(media, "host", key),
+                                   "export": getattr(media, "export", "")}
+            try:
+                row["exports"] = list(media.nfs.exports())
+            except Exception as exc:
+                row["exports_error"] = str(exc)
+            row["export_pdb"] = bool(getattr(media, "db", None) is not None)
+            row["pdb_error"] = getattr(media, "pdb_error", "") or ""
+            row["onelibrary_path"] = getattr(media, "onelibrary_path", "") or ""
+            ol = getattr(media, "onelibrary", None)
+            row["onelibrary_present"] = bool(getattr(ol, "present", False))
+            row["library_source"] = getattr(media, "library_source", "") or ""
+            media_rows.append(row)
+        report["media"] = media_rows
+        report["library_errors"] = dict(getattr(self.library, "errors", {}) or {})
+        report["dbserver"] = _dbserver_health()
+        report["remotedb_failures"] = {
+            str(k): str(v) for k, v in (getattr(self, "_remotedb_fail", None) or {}).items()}
+        return report
+
     def library_diagnostics(self, *, rows: int = 20) -> dict:
         """Read-only Library report: live dbserver vs NFS fallback, side by side.
 
@@ -2101,6 +2221,11 @@ class Monitor:
             "mode": getattr(self.engine.source, "description", ""),
             "mode_kind": getattr(self.engine.source, "kind", ""),
             "mode_detail": getattr(self.engine.source, "detail", ""),
+            "device_number_note": getattr(self.engine.source, "number_note", ""),
+            "all_in_one": all_in_one_rows(dict(self.engine.devices)),
+            "model": self.model_info(),
+            "observe": allinone.observe_health(
+                getattr(self.engine.source, "kind", ""), getattr(self.engine, "census", None)),
             "az_mode": _az_mode_value(self.engine),
             "host": self.host or "",
             "library": totals,
@@ -2361,6 +2486,12 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     offset = 0
                 return self._json(self.monitor.browse_tracks(q, limit=limit, offset=offset))
+            if path == "/api/xz-probe":
+                body = json.dumps(self.monitor.xz_probe_report(), indent=2, default=str)
+                return self._send(
+                    200, body.encode("utf-8"), "application/json; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="xz-probe-report.json"'},
+                )
             if path == "/api/library/diagnostics":
                 body = json.dumps(self.monitor.library_diagnostics(), indent=2, default=str)
                 return self._send(
@@ -2666,10 +2797,48 @@ def lan_urls(port: int, local_ip: str | None = None) -> list[str]:
 
 # -------------------------------------------------------------------- start-up
 
+def _ports_free() -> bool:
+    probe = link.socket.socket(link.socket.AF_INET, link.socket.SOCK_DGRAM)
+    probe.setsockopt(link.socket.SOL_SOCKET, link.socket.SO_REUSEADDR, 1)
+    try:
+        probe.bind(("0.0.0.0", proto.PORT_STATUS))
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
+def observe_net(host: str | None, iface: str | None = None) -> link.NetInfo | None:
+    """The XZ USB-link adapter for observe-only mode, or None to route as usual.
+
+    With a known player address the normal routing lookup is right. Without
+    one, the best link-local / USB adapter wins, or the one named by ``iface``.
+    """
+    if host:
+        return None
+    adapters = allinone.list_adapters()
+    if iface:
+        for a in adapters:
+            if a.name == iface or a.description == iface:
+                return link.NetInfo(a.ip, a.prefix, a.name)
+    found = allinone.usb_link_candidates(adapters)
+    if found:
+        a = found[0]
+        return link.NetInfo(a.ip, a.prefix, a.name)
+    return None
+
+
 def build_source(args, net: link.NetInfo):
     """Pick the packet source according to the requested mode."""
     if args.mode == "sniffer":
         return link.SnifferSource(net, args.tshark, args.iface)
+    if args.mode == "observe":
+        src = link.ObserveSource(net, args.name)
+        if _ports_free():
+            return src
+        # rekordbox (or another app) holds the ports: capture on that adapter instead.
+        return link.SnifferSource(net, args.tshark, args.iface or net.alias or None)
     if args.mode == "vcdj":
         return link.SocketSource(net, args.number, args.name)
     # auto: prefer the virtual device; fall back to passive capture when the
@@ -2694,12 +2863,16 @@ def main() -> int:
     p.add_argument("--host", default=None,
                    help="player address to read the library from "
                         "(auto-detected from the network when omitted)")
-    p.add_argument("--mode", choices=["auto", "vcdj", "sniffer"], default="auto")
+    p.add_argument("--mode", choices=["auto", "vcdj", "sniffer", "observe"], default="auto",
+                   help="observe = listen only, never announce (XDJ-XZ USB-B link)")
     p.add_argument("--port", type=int, default=8777, help="web server port")
     p.add_argument("--http-host", default="0.0.0.0",
                    help="HTTP bind address (0.0.0.0 = LAN; 127.0.0.1 = local only)")
     p.add_argument("--number", type=int, default=5,
-                   help="virtual device number (1-6, avoid the ones in use)")
+                   help="virtual device number; 0 = automatic. A number another "
+                        "device already announces is never used")
+    p.add_argument("--model", default="auto", choices=list(models.CHOICES),
+                   help="device model profile (auto = from announced names)")
     p.add_argument("--name", default="monitor", help="name to announce ourselves with")
     p.add_argument("--tshark", default=None, help="path to tshark")
     p.add_argument("--iface", default=None,
@@ -2729,7 +2902,8 @@ def main() -> int:
         else:
             print("  ! no player answered. Pass --host if auto-detection misses it.")
     args.iface = iface
-    net = link.local_net(host or "255.255.255.255")
+    net = (observe_net(host, iface) if args.mode == "observe" else None) \
+        or link.local_net(host or "255.255.255.255")
     print(f"  local network: {net.ip}/{net.prefix} via \"{net.alias}\" "
           f"(broadcast {net.broadcast})")
 
@@ -2746,6 +2920,7 @@ def main() -> int:
         monitor.configure_display(load_settings())
     except Exception:
         pass
+    monitor.set_model(args.model)
     Handler.monitor = monitor
     try:
         monitor.start()

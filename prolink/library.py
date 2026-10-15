@@ -18,7 +18,7 @@ import threading
 import time
 from collections import OrderedDict
 
-from . import anlz, applog, onelibrary, pdb
+from . import allinone, anlz, applog, onelibrary, pdb
 from .anlz_resolve import AnlzChoice, choose_by_id, match_by_title
 from .paths import cache_dir as _cache_root
 from .nfs import NfsClient
@@ -525,11 +525,63 @@ class Library:
     def __init__(self, cache_dir: str | None = None):
         self.cache_dir = cache_dir
         self.media: dict[str, Media] = {}
+        # Extra media for a deck whose slot maps to another export on the same
+        # IP (XDJ-XZ: SD and USB on one unit). Keyed "host|export".
+        self.slot_media: dict[str, Media] = {}
         self.errors: dict[str, str] = {}
         self._error_at: dict[str, float] = {}
         self.lock = threading.RLock()
 
-    def get(self, host: str) -> Media | None:
+    def get(self, host: str, slot: str | None = None) -> Media | None:
+        """Medium for ``host``; with ``slot``, the export that slot lives on.
+
+        Hosts with a single export (XDJ-AZ, one-stick CDJs) always get the
+        base medium, so their behaviour does not change.
+        """
+        base = self._get_base(host)
+        if base is None or not slot:
+            return base
+        exports = getattr(base, "_export_list", None)
+        if exports is None:
+            try:
+                exports = list(base.nfs.exports())
+            except Exception:
+                exports = []
+            base._export_list = exports
+        if len(exports) < 2:
+            return base
+        target = allinone.export_for_slot(exports, slot)
+        if not target or target == base.export:
+            return base
+        key = f"{host}|{target}"
+        with self.lock:
+            media = self.slot_media.get(key)
+            if media is not None and not media.is_stale():
+                return media
+            stale = self.slot_media.pop(key, None)
+        if stale is not None:
+            try:
+                stale.close()
+            except Exception:
+                pass
+        try:
+            media = Media(host, export=target, cache_dir=self.cache_dir)
+            try:
+                media.load_database()
+            except Exception as e:
+                media.db = None
+                media.pdb_error = media.pdb_error or f"export.pdb: {e}"
+                try:
+                    media._load_onelibrary()
+                except Exception:
+                    pass
+        except Exception:
+            return base       # fall back to the shared medium rather than nothing
+        with self.lock:
+            self.slot_media[key] = media
+        return media
+
+    def _get_base(self, host: str) -> Media | None:
         with self.lock:
             if host in self.media:
                 media = self.media[host]
@@ -583,16 +635,20 @@ class Library:
         """Close and forget a medium (e.g. after an unmount / stick swap)."""
         with self.lock:
             media = self.media.pop(host, None)
+            extra = [self.slot_media.pop(k) for k in list(self.slot_media)
+                     if k.split("|", 1)[0] == host]
             self.errors.pop(host, None)
             self._error_at.pop(host, None)
-        if media is not None:
+        for item in [media, *extra]:
+            if item is None:
+                continue
             try:
-                media.close()
+                item.close()
             except Exception:
                 pass
 
     def close(self) -> None:
         with self.lock:
-            hosts = list(self.media.keys())
+            hosts = set(self.media.keys()) | {k.split("|", 1)[0] for k in self.slot_media}
         for host in hosts:
             self.drop(host)

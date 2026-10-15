@@ -814,6 +814,23 @@ class HealthPage(Page):
         self._az_val.setToolTip(i18n.t("health_az_hint"))
         ov_l.addWidget(self._az_lbl)
         ov_l.addWidget(self._az_val)
+        self._aio_val = QLabel(i18n.t("health_allinone") + ": " + i18n.t("health_allinone_none"))
+        self._aio_val.setWordWrap(True)
+        self._aio_val.setStyleSheet(f"color:{COLORS['dim']}; font-size:12px;")
+        self._observe_val = QLabel("")
+        self._observe_val.setWordWrap(True)
+        self._observe_val.setVisible(False)
+        self._number_val = QLabel("")
+        self._number_val.setStyleSheet(f"color:{COLORS['dim']}; font-size:12px;")
+        self._probe_btn = QPushButton(i18n.t("health_xz_probe"))
+        self._probe_btn.setCursor(Qt.PointingHandCursor)
+        self._probe_btn.setToolTip(i18n.t("health_xz_probe_tip"))
+        self._probe_btn.clicked.connect(self._export_xz_probe)
+        self._model_val = QLabel("")
+        self._model_val.setWordWrap(True)
+        self._model_val.setStyleSheet("font-size:12px;")
+        for w in (self._model_val, self._aio_val, self._observe_val, self._number_val, self._probe_btn):
+            ov_l.addWidget(w)
         self.layout_root.addWidget(overview)
 
         self.link_panel = LinkHealthPanel(i18n)
@@ -1159,6 +1176,61 @@ class HealthPage(Page):
             return "—"
         return f"{ms:.1f}"
 
+    def _update_xz(self, state: dict) -> None:
+        rows = state.get("all_in_one") or []
+        t = self._i18n.t
+        model = state.get("model") or {}
+        line = model.get("line") or ""
+        prof = model.get("profile") or {}
+        extra = " ".join(x for x in (prof.get("notes") or "", prof.get("connection") or "") if x)
+        self._model_val.setText((t("health_model") + ": " + line) if line else "")
+        self._model_val.setToolTip(extra)
+        if rows:
+            parts = []
+            for r in rows:
+                decks = ", ".join(str(n) for n in r.get("devices") or [])
+                parts.append(f"{r.get('model', '?')} @ {r.get('ip', '?')} (#{decks})"
+                             + (f" — {r['note']}" if r.get("note") else ""))
+            self._aio_val.setText(t("health_allinone") + ": " + "; ".join(parts))
+        else:
+            self._aio_val.setText(t("health_allinone") + ": " + t("health_allinone_none"))
+        obs = state.get("observe") or {}
+        if obs:
+            colour = {"ok": "ok", "waiting": "dim"}.get(obs.get("state"), "warn")
+            self._observe_val.setStyleSheet(
+                f"color:{COLORS.get(colour, COLORS['dim'])}; font-size:12px;")
+            self._observe_val.setText(t("health_observe") + ": " + str(obs.get("text") or ""))
+            self._observe_val.setVisible(True)
+        else:
+            self._observe_val.setVisible(False)
+        note = state.get("device_number_note") or ""
+        self._number_val.setText((t("health_number") + ": " + note) if note else "")
+
+    def _export_xz_probe(self) -> None:
+        """Save the read-only XZ probe report as JSON."""
+        backend = self._backend
+        if backend is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, self._i18n.t("health_xz_probe"),
+            "xz-probe-report.json", "JSON (*.json)")
+        if not path:
+            return
+
+        def work() -> None:
+            import json
+            try:
+                data = backend.xz_probe_report()
+            except Exception as exc:  # pragma: no cover - UI path
+                data = {"error": str(exc)}
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2, default=str)
+            except OSError:
+                pass
+
+        threading.Thread(target=work, name="xz-probe", daemon=True).start()
+
     def update_state(self, state: dict) -> None:
         now = float(state.get("t") or time.time())
         packets = int(state.get("packets") or 0)
@@ -1167,6 +1239,7 @@ class HealthPage(Page):
         self._mode_val.setText(str(mode))
         self._host_val.setText(str(host))
         self._az_val.setText(az_mode_label(self._i18n, state.get("az_mode")))
+        self._update_xz(state)
         self._pkts_val.setText(f"{packets:,}")
 
         rate: float | None = None
@@ -2328,10 +2401,18 @@ class SettingsPage(Page):
         self.mode.addItem(i18n.t("mode_auto"), "auto")
         self.mode.addItem(i18n.t("mode_vcdj"), "vcdj")
         self.mode.addItem(i18n.t("mode_sniffer"), "sniffer")
+        self.mode.addItem(i18n.t("mode_observe"), "observe")
         self.host = QLineEdit()
         self.host.setPlaceholderText(i18n.t("host_hint"))
+        from prolink.models import PROFILES as _PROFILES
+        self.device_model = QComboBox()
+        self.device_model.addItem(i18n.t("device_model_auto"), "auto")
+        for _key, _prof in _PROFILES.items():
+            self.device_model.addItem(_prof.name + ("" if _prof.verified else " *"), _key)
+        self.device_model.setToolTip(i18n.t("device_model_tip"))
         self.number = QSpinBox()
-        self.number.setRange(1, 6)
+        self.number.setRange(0, 15)
+        self.number.setSpecialValueText(i18n.t("number_auto"))
         self.name = QLineEdit()
         self.port = QSpinBox()
         self.port.setRange(1, 65535)
@@ -2345,6 +2426,7 @@ class SettingsPage(Page):
         self.local_music_root.setPlaceholderText("/path/to/rekordbox/USB mirror")
         self.local_music_root.setToolTip(i18n.t("local_music_root_tip"))
         conn.addRow(i18n.t("mode"), self.mode)
+        conn.addRow(i18n.t("device_model"), self.device_model)
         conn.addRow(i18n.t("host"), self.host)
         conn.addRow(i18n.t("device_number"), self.number)
         conn.addRow(i18n.t("device_name"), self.name)
@@ -2639,6 +2721,8 @@ class SettingsPage(Page):
         self.mode.setCurrentIndex(max(0, idx))
         self.host.setText(data.get("host") or "")
         self.number.setValue(int(data.get("number", 5)))
+        self.device_model.setCurrentIndex(
+            max(0, self.device_model.findData(data.get("device_model", "auto"))))
         self.name.setText(data.get("name") or "monitor")
         self.port.setValue(int(data.get("port", 8777)))
         self.http_bind.setChecked(str(data.get("http_bind") or "0.0.0.0") != "127.0.0.1")
@@ -2723,6 +2807,7 @@ class SettingsPage(Page):
             "mode": self.mode.currentData(),
             "host": self.host.text().strip(),
             "number": self.number.value(),
+            "device_model": self.device_model.currentData() or "auto",
             "name": self.name.text().strip() or "monitor",
             "port": self.port.value(),
             "http_bind": "0.0.0.0" if self.http_bind.isChecked() else "127.0.0.1",

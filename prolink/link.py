@@ -210,23 +210,57 @@ def discover_by_capture(tshark: str | None = None,
 # --------------------------------------------------------------- packet sources
 
 class SocketSource:
-    """Virtual device: opens the ports and announces itself on the network."""
+    """Virtual device: opens the ports and announces itself on the network.
+
+    It listens for ``listen_first`` seconds before the first keep-alive and
+    never announces a number another device already uses. An XDJ-XZ on its
+    laptop port says "go ahead" to any number, even its own decks 1 and 2,
+    and never defends them, so the check has to happen on our side.
+    ``device_number`` 0 means automatic.
+    """
+
+    announce = True
 
     def __init__(self, net: NetInfo, device_number: int = 5,
-                 device_name: str = "monitor", announce_interval: float = 1.5):
+                 device_name: str = "monitor", announce_interval: float = 1.5,
+                 listen_first: float = 2.5):
         self.net = net
-        self.device_number = device_number
+        self.requested_number = int(device_number or 0)
+        self.device_number = self.requested_number or 5
         self.device_name = device_name
         self.announce_interval = announce_interval
+        self.listen_first = max(0.0, float(listen_first))
+        self.number_note = ""
+        self.taken: set[int] = set()
         self._socks: list[socket.socket] = []
         self._threads: list[threading.Thread] = []
         self._running = False
         self._stop = threading.Event()
         self.kind = "vcdj"
-        self.detail = f"#{device_number} \"{device_name}\""
+        self._describe()
+
+    def _describe(self) -> None:
+        self.detail = f"#{self.device_number} \"{self.device_name}\""
         self.description = f"virtual device {self.detail}"
 
+    def _note_announce(self, data: bytes, src_ip: str) -> None:
+        """Remember the numbers other devices announce (not our own packets)."""
+        if len(data) < 0x25 or data[0x0A] != proto.TYPE_KEEPALIVE:
+            return
+        if src_ip == self.net.ip and data[0x24] == self.device_number:
+            return
+        self.taken.add(int(data[0x24]))
+
     def start(self, on_packet: Handler) -> None:
+        user_handler = on_packet
+
+        def on_packet(data: bytes, src: str, now: float) -> None:  # noqa: F811
+            try:
+                self._note_announce(data, src)
+            except Exception:
+                pass
+            user_handler(data, src, now)
+
         self._running = True
         for port in (proto.PORT_ANNOUNCE, proto.PORT_BEAT, proto.PORT_STATUS):
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -254,9 +288,19 @@ class SocketSource:
             t.start()
             self._threads.append(t)
 
+        if not self.announce:
+            return
         t = threading.Thread(target=self._announce_loop, daemon=True, name="prolink-announce")
         t.start()
         self._threads.append(t)
+
+    def _pick_number(self) -> None:
+        from .allinone import choose_device_number
+
+        number, note = choose_device_number(self.requested_number, self.taken)
+        self.device_number = number
+        self.number_note = note
+        self._describe()
 
     def _recv_loop(self, sock: socket.socket, on_packet: Handler) -> None:
         while self._running:
@@ -269,6 +313,14 @@ class SocketSource:
             on_packet(data, addr[0], time.monotonic())
 
     def _announce_loop(self) -> None:
+        # Listen first, then claim a number nobody announced.
+        if self.listen_first and self._stop.wait(self.listen_first):
+            return
+        try:
+            self._pick_number()
+        except RuntimeError:
+            self.number_note = "no free device number; not announcing"
+            return
         pkt = proto.build_keepalive(self.device_name, self.device_number,
                                     local_mac(), self.net.ip)
         out = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -297,6 +349,28 @@ class SocketSource:
             if thread.is_alive() and thread is not threading.current_thread():
                 thread.join(0.8)
         self._threads.clear()
+
+
+class ObserveSource(SocketSource):
+    """Observe only: opens UDP 50000-50002 and never sends a packet.
+
+    Meant for the network adapter an XDJ-XZ (or Opus Quad) exposes over its
+    USB-B cable, which carries the unit's own Pro DJ Link traffic. Whether
+    per-player status packets reach a silent listener there is what the Health
+    line and the XZ probe report show.
+    """
+
+    announce = False
+
+    def __init__(self, net: NetInfo, device_name: str = "monitor"):
+        super().__init__(net, 0, device_name, listen_first=0.0)
+        self.kind = "observe"
+        self.device_number = 0
+        self.detail = f"{net.alias or net.ip}"
+        self.description = f"observe only on \"{self.detail}\" (not announcing)"
+
+    def _describe(self) -> None:
+        pass
 
 
 class SnifferSource:
@@ -351,6 +425,9 @@ class SnifferSource:
                 continue
             number, _device, friendly = m.groups()
             if alias and friendly and friendly.strip().lower() == alias.lower():
+                return number
+            # macOS and Linux list the BSD name (en15) as the device itself.
+            if alias and _device.strip().lower() == alias.lower():
                 return number
         raise RuntimeError(
             f"could not find interface \"{alias}\" among the ones tshark lists. "
@@ -798,6 +875,9 @@ class ProLink:
         # Health diagnostics. Both only look at packets already received.
         self.link_timing = LinkTiming()
         self.capture = PacketCapture()
+        from .allinone import Census
+
+        self.census = Census()
         self.playhead_smoothing = "normal"
         self._saw_az = False
         self._az_on_air_at: float | None = None
@@ -822,6 +902,10 @@ class ProLink:
         # Capture is listen-only: it records this datagram and sends nothing.
         self.capture.observe(data, src_ip, now)
         pkt = proto.parse(data)
+        try:
+            self.census.observe(data, src_ip, pkt, now)
+        except Exception:
+            pass
         if pkt is None:
             return
         with self.lock:
