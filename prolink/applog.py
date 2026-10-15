@@ -17,8 +17,10 @@ _LAST = ""
 
 
 def log_path() -> str:
-    from prolink.paths import config_dir as _config_dir
-    base = _config_dir()
+    base = os.environ.get("PROLINK_CONFIG_DIR")
+    if not base:
+        from prolink.paths import default_config_dir
+        base = default_config_dir()
     return os.path.join(base, "prolink-monitor.log")
 
 

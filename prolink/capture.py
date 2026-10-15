@@ -65,8 +65,10 @@ def clamp_duration(seconds: float) -> float:
 
 def captures_dir() -> str:
     """Directory for diagnostic captures. Created on demand."""
-    from prolink.paths import config_dir as _config_dir
-    base = _config_dir()
+    base = os.environ.get("PROLINK_CONFIG_DIR")
+    if not base:
+        from prolink.paths import default_config_dir
+        base = default_config_dir()
     path = os.path.join(base, "captures")
     os.makedirs(path, exist_ok=True)
     return path

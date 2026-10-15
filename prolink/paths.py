@@ -28,6 +28,7 @@ def default_config_dir(platform: str | None = None) -> str:
 
 
 def config_dir(platform: str | None = None) -> str:
+    """Settings folder, honouring ``PROLINK_CONFIG_DIR``."""
     return os.environ.get("PROLINK_CONFIG_DIR") or default_config_dir(platform)
 
 

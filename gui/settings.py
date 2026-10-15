@@ -173,8 +173,10 @@ def display_prefs_from(data: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def settings_path() -> str:
-    from prolink.paths import config_dir as _config_dir
-    base = _config_dir()
+    base = os.environ.get("PROLINK_CONFIG_DIR")
+    if not base:
+        from prolink.paths import default_config_dir
+        base = default_config_dir()
     return os.path.join(base, "settings.json")
 
 
@@ -184,8 +186,10 @@ def sessions_dir(data: dict[str, Any] | None = None) -> str:
     custom = str(src.get("session_autosave_dir") or "").strip()
     if custom:
         return os.path.expanduser(custom)
-    from prolink.paths import config_dir as _config_dir
-    base = _config_dir()
+    base = os.environ.get("PROLINK_CONFIG_DIR")
+    if not base:
+        from prolink.paths import default_config_dir
+        base = default_config_dir()
     return os.path.join(base, "sessions")
 
 

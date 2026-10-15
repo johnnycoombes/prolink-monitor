@@ -45,9 +45,12 @@ def trusted_root_in_source() -> Path:
 
 def config_dir() -> Path:
     """Same folder as ``settings.json`` (``~/.prolink-monitor`` by default)."""
-    from prolink.paths import config_dir as _config_dir
+    base = os.environ.get("PROLINK_CONFIG_DIR")
+    if base:
+        return Path(base)
+    from prolink.paths import default_config_dir
 
-    return Path(_config_dir())
+    return Path(default_config_dir())
 
 
 def library_cache_dir() -> Path:
