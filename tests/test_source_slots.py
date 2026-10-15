@@ -313,7 +313,7 @@ class AzModeTests(unittest.TestCase):
 
         i18n = I18n()
         self.assertEqual(az_mode_label(i18n, "pro_dj_link"), "Pro DJ Link")
-        self.assertEqual(az_mode_label(i18n, "four_deck"), "4-deck")
+        self.assertEqual(az_mode_label(i18n, "four_deck"), "4-deck / rekordbox lighting")
         self.assertEqual(az_mode_label(i18n, None), "—")
 
 

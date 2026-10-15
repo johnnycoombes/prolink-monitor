@@ -41,3 +41,15 @@ def pytest_sessionfinish(session, exitstatus):
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(0)
+
+
+import pytest as _pytest
+
+
+@_pytest.fixture(autouse=True)
+def _fresh_dbserver_port_cache():
+    """Fake dbservers reuse 127.0.0.1; never let one test's port leak into another."""
+    from prolink import remotedb
+    remotedb._PORT_CACHE.clear()
+    yield
+    remotedb._PORT_CACHE.clear()

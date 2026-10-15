@@ -124,12 +124,36 @@ TAG_STR = 0x02
 TAG_BLOB = 0x03
 
 
+# One discovery answer per IP. An all-in-one (XDJ-XZ, XDJ-AZ) serves every
+# deck from one address, so asking once per deck only hammers it (Beat Link #90).
+_PORT_CACHE: dict[str, tuple[int, float]] = {}
+PORT_CACHE_SECONDS = 120.0
+
+
+def forget_db_port(host: str) -> None:
+    for key in [k for k in _PORT_CACHE if k.rsplit(":", 1)[0] == str(host)]:
+        _PORT_CACHE.pop(key, None)
+
+
 def discover_db_port(host: str, *, timeout: float = 3.0) -> int:
     """Ask the port-discovery service on TCP 12523 which port dbserver is on.
 
     The reply is two bytes, high byte then low byte. Do not assume 1051.
-    The next connection is to the port this service returns.
+    The next connection is to the port this service returns. The answer is
+    reused for the same IP for ``PORT_CACHE_SECONDS``.
     """
+    import time as _time
+
+    key = f"{host}:{REMOTE_DB_DISCOVERY_PORT}"
+    cached = _PORT_CACHE.get(key)
+    if cached and _time.monotonic() - cached[1] < PORT_CACHE_SECONDS:
+        return cached[0]
+    port = _discover_db_port(host, timeout=timeout)
+    _PORT_CACHE[key] = (port, _time.monotonic())
+    return port
+
+
+def _discover_db_port(host: str, *, timeout: float = 3.0) -> int:
     try:
         with socket.create_connection((host, REMOTE_DB_DISCOVERY_PORT), timeout=timeout) as sock:
             sock.settimeout(timeout)

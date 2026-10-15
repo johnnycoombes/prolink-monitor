@@ -18,6 +18,25 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 
 ## What's new
 
+**1.0.15.** XDJ-XZ support (untested on hardware yet), a device-model setting, and a safer device number.
+
+- **Device model setting.** Settings → Connection → **Device model**: *Auto-detect* (default) or a fixed model — XDJ-AZ, XDJ-XZ, CDJ-3000, CDJ-3000X, CDJ-2000/NXS/NXS2, CDJ-900/NXS, XDJ-1000/MK2, XDJ-700, XDJ-RX/RX2/RX3, XDJ-RR, Opus Quad, OMNIS-DUO, DJM mixers or rekordbox. CLI: `--model xdj-xz` (see `prolink/models.py` for the keys). See [Device model profiles](#device-model-profiles).
+- **All-in-ones on Health.** Units whose decks and mixer share one IP (XDJ-XZ, XDJ-AZ, Opus Quad, XDJ-RX3, OMNIS-DUO) get their own line, e.g. `XDJ-XZ @ 169.254.12.3 (#1, 2, 33)`.
+- **Listen before announcing.** The virtual device waits 2.5 s, notes every number other gear announces, and never claims one already in use. The XZ says "go ahead" to any number and never defends its own, so this matters there. **Device number** now goes 0–15; **Auto** (0) picks the first free of 5, 6, 4, 3, 7…15. The default stays 5 and is kept when free, so an XDJ-AZ behaves as before apart from the 2.5 s wait.
+- **Observe only (USB link) mode.** Listens on UDP 50000–50002 and sends nothing. It picks the network adapter the XZ's USB-B cable creates (usually `169.254.x.x`), falls back to tshark when another program holds the ports, and Health explains when no status packets arrive. It never opens dbserver sessions; tracks come from NFS only.
+- **One library per export.** On a unit with SD and USB on the same IP, each deck's library comes from the export its slot maps to (`/B/` = SD, `/C/` = USB). Units with one export are unchanged.
+- **dbserver.** Port discovery (TCP 12523) runs once per IP and is reused for 2 minutes; the client number never matches a deck or mixer number seen on the link; models without dbserver (Opus Quad, XDJ-RR, mixers) are not asked.
+- **Ideas from [SuperTimecodeConverter](https://github.com/fiverecords/SuperTimecodeConverter)** (MIT), re-implemented in Python: the dbserver client number never matches a device at the target's IP (an XZ ignores requests claiming to be its own deck), taking the highest free number from 4 down to 1; number-claim packets (stages `0x00`, `0x02`, `0x04`) never count as a player, so no ghost decks; listening sockets bind to `0.0.0.0` (on macOS binding to the interface address silently drops `0x28` beat packets); keep-alives go to each address once.
+- **Beat Link review fixes** (ideas re-implemented; no EPL code copied):
+  - The Opus Quad reports its decks as 9–12; they are shown as 1–4, and 9–12 are never taken automatically.
+  - The virtual device listens for a full 3 s discovery window (CDJs send a keep-alive every ~2 s) before announcing, and moves to another number if a final-stage claim or a "number in use" defence names ours (beat-link #91).
+  - XDJ-AZ Pro DJ Link mode vs rekordbox lighting / 4-deck mode (a Channels On-Air packet from the AZ within 1 s) is shown on Health and in the detected model line.
+  - Slot code 7 (USB 2) reads from the second USB export.
+  - Unanalysed files (track type 2) skip the USB database lookup, which would match the wrong track, and are cached separately. Waveforms and beat grids that are not ready at load are retried after 3, 8 and 20 s.
+  - Play state `0x12` (emergency loop) counts as playing; ShowKontrol (`TCS-SHOWKONTROL`) packets are ignored; the keep-alive peer count (byte `0x30`) is parsed.
+- The XZ's "does not defend device numbers" note is now marked unconfirmed. Checked against dysentery #75 (CDJ-2000NXS captures): this app does not classify devices by keep-alive byte `0x25`, by status-packet length or by media-slot broadcasts, so none of its corrections needed a parsing change.
+- **XZ probe report.** Health → **Export XZ probe report** saves a read-only JSON file (also `GET /api/xz-probe`): adapters, packet types heard per IP and device, device names, NFS exports, slot bytes, firmware, whether `exportLibrary.db` is present, dbserver and library errors. Nothing is sent to the player.
+
 **1.0.14.** A macOS build, working zoom buttons with a 32-bar step, and the overview strip in the panel and bar overlays.
 
 - **Prolink Listener for Mac.** Releases now include `ProlinkListener-<version>-macos-arm64` (Apple Silicon) and `-macos-x86_64` (Intel), each as a `.dmg` and a `.zip`, built with PyInstaller on GitHub's macOS runners. See [macOS, from the GitHub Release](#macos-from-the-github-release). The app is not signed or notarised, and it does not update itself: when a new version is out it says so and opens the Releases page.
@@ -101,6 +120,19 @@ Field offsets, NFS, and waveform decoding were checked against an **AlphaTheta X
 - **Source slots** in the status packet: 0 empty, 1 CD, 2 SD, 3 USB, 4 rekordbox, 6 Streaming Direct Play, 7 USB 2 (AZ 4-deck), 9 Beatport LINK. Bytes 5 and 8 are only documented as a streaming service. They are not labelled Apple Music, TIDAL, or SoundCloud.
 - **OneLibrary.** The status track id is the rekordbox id. `export.pdb` is read first because that row holds the ANLZ path. `exportLibrary.db` is used when it has the same id. A readable OneLibrary file with no content rows must not hide the `export.pdb` row (that used to blank every waveform on the AZ). A title match can choose between the two when they disagree. The Library reads the player’s dbserver first, as soon as the player address is known, including while `export.pdb` is still loading. That session asks the port-discovery service on TCP **12523** for the dbserver port, then connects to the port the player returns (it is often not 1051). The client number is the virtual device this app announced (default **5**), so it does not take deck 3 on an AZ that already uses 1–4. If the decks have not announced yet, the app still opens that TCP session and targets deck 1 until a player number arrives. The NFS cache is the fallback. A bad `export.pdb` does not drop the mount or skip OneLibrary. Nothing is written back. The Windows zip includes `pyrekordbox`, `sqlcipher3`, and `sqlite3` as real files under `_internal`. A source checkout still installs OneLibrary from `requirements-onelibrary.txt`.
 - **Unverified on the AZ:** Absolute Position packets (type `0x0b`). Health shows `absolute_packets` and whether the playhead is using Absolute Position or the beat grid, so a capture answers it. Some AZ builds put track length in milliseconds in that packet; CDJ-3000 uses seconds. Also unverified: the settings block at `0xD0` (waveform colour at `0xDA`, playhead at `0xDD`). Auto playhead still falls back to **Left** for an AZ (and for Opus Quad) when that byte is missing.
+
+**XDJ-XZ** (not yet tested on hardware; please send a probe report)
+
+The XZ shows decks 1 and 2 and its mixer (33) on one IP. It has a dbserver and serves SD and USB over NFS. There are two ways to connect:
+
+1. **USB-B cable (simplest).** Plug the XZ's USB-B (rekordbox) port into the computer. Windows and macOS show a new wired network adapter, normally with a `169.254.x.x` address; wait up to a minute for it. In Settings set **Mode → Observe only (USB link)**, **Device model → XDJ-XZ** (or Auto-detect), leave **Interface** empty so the adapter is found automatically, and press Apply. Health should list `XDJ-XZ @ 169.254…` and say *player status packets are arriving*. If it says *keep-alives arrive but no player status packets*, that link only carries broadcasts: use the LINK port instead.
+2. **LINK / LAN port.** Ethernet from the XZ's LINK port to the computer or a switch. Set **Mode → Virtual device**, **Device number → Auto**, **Device model → XDJ-XZ** or Auto-detect. Health → Device number shows which number was taken (never 1, 2 or 33).
+
+Then load a track from USB on deck 1 and SD on deck 2 and check title, waveform and Library. Export the probe report from Health whatever the result. Known gaps: the export name for a second USB slot is not known; the XZ sends no media-slot broadcasts, so slots are learned from status packets; whether status reaches a computer that does not announce itself is unknown.
+
+**Device model profiles**
+
+`prolink/models.py` holds a profile per model: deck count, the device numbers it uses, whether it is an all-in-one, whether it runs dbserver, serves NFS, sends beat and precise-position packets, which waveform colours it stores (3-band only on CDJ-3000/3000X, XDJ-AZ, Opus Quad and OMNIS-DUO), and how a laptop connects. Auto-detect uses the announced names (an all-in-one or player before a mixer, rekordbox last). Health shows the chosen or detected model, where it came from and its capabilities; hover for the connection advice. A profile only switches off requests a model cannot answer (for example dbserver on the Opus Quad); it never sends anything extra. An unknown name gets a generic profile with everything allowed, so missing features simply stay empty. Profiles marked `*` in the list are from documentation only.
 
 **CDJ-3000 family**
 
@@ -545,6 +577,8 @@ Use this when the versioned zip is already on GitHub and only the signed metadat
 ## Credits
 
 Fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor) by [@fidow](https://github.com/fidow). The Pro DJ Link engine, NFS library access, web panel, console monitor, and protocol probe started there.
+
+- [SuperTimecodeConverter](https://github.com/fiverecords/SuperTimecodeConverter) (MIT): ideas for the XZ dbserver client number, number-claim stages, macOS socket binding and keep-alive targets (re-implemented, no code copied).
 
 Ideas and small pieces adapted under their own licences:
 
