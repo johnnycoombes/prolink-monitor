@@ -246,3 +246,58 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(settings._sanitize({"device_model": "xdj-xz"})["device_model"], "xdj-xz")
         self.assertEqual(settings._sanitize({"number": 0})["number"], 0)
         self.assertEqual(settings._sanitize({"mode": "observe"})["mode"], "observe")
+
+
+class StcIdeaTests(unittest.TestCase):
+    """Ideas from SuperTimecodeConverter (MIT), re-implemented here."""
+
+    def test_db_player_never_at_target_ip(self):
+        from prolink.remotedb_client import choose_requesting_player
+        n = choose_requesting_player(5, target_player=1, taken={1, 2, 33}, same_ip={1, 2, 33})
+        self.assertEqual(n, 4)
+        n = choose_requesting_player(5, target_player=1, taken={1, 2, 33, 4},
+                                     same_ip={1, 2, 33})
+        self.assertEqual(n, 3)
+
+    def test_az_keeps_announced_number(self):
+        from prolink.remotedb_client import choose_requesting_player
+        self.assertEqual(choose_requesting_player(
+            5, target_player=1, taken={1, 2, 3, 4, 33}, same_ip={1, 2, 3, 4, 33}), 5)
+
+    def test_monitor_passes_same_ip(self):
+        import threading
+        import app
+        mon = app.Monitor.__new__(app.Monitor)
+        mon.local_ip = "169.254.0.9"
+        devs = {n: SimpleNamespace(name="XDJ-XZ", ip="169.254.0.2", device_number=n)
+                for n in (1, 2, 33)}
+        mon.engine = SimpleNamespace(lock=threading.RLock(), devices=devs,
+                                     source=SimpleNamespace(device_number=5))
+        self.assertEqual(mon._requesting_player_for_db(1), 4)
+
+    def test_claim_stages_are_not_players(self):
+        base = bytearray(keepalive("CDJ-3000", 3))
+        for stage, off in ((0x00, None), (0x02, 0x2E), (0x04, 0x24)):
+            pkt = bytearray(base)
+            pkt[10] = stage
+            if off:
+                pkt[off] = 3
+            self.assertIsNone(proto.parse(bytes(pkt)))
+            self.assertEqual(proto.claim_stage(bytes(pkt))[0], stage)
+        src = SocketSource(NetInfo("169.254.10.99", 16, "en15"), device_number=3)
+        two = bytearray(base); two[10] = 0x02; two[0x2E] = 3
+        src._note_announce(bytes(two), "169.254.10.20")
+        self.assertNotIn(3, src.taken)
+        four = bytearray(base); four[10] = 0x04
+        src._note_announce(bytes(four), "169.254.10.20")
+        self.assertIn(3, src.taken)
+
+    def test_mac_binds_wildcard(self):
+        from prolink.link import bind_address
+        self.assertEqual(bind_address("169.254.3.3", "darwin"), "0.0.0.0")
+        self.assertEqual(bind_address("192.168.1.2", "win32"), "0.0.0.0")
+
+    def test_keepalive_targets_deduplicated(self):
+        from prolink.link import keepalive_targets
+        t = keepalive_targets("169.254.255.255", ["169.254.0.2", "169.254.0.2", "169.254.0.2"])
+        self.assertEqual(t, ["169.254.255.255", "255.255.255.255", "169.254.0.2"])

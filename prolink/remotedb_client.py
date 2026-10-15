@@ -26,6 +26,7 @@ def choose_requesting_player(
     target_player: int | None = None,
     taken: set[int] | None = None,
     fallback: int = 5,
+    same_ip: set[int] | None = None,
 ) -> int:
     """Client number for the dbserver setup packet.
 
@@ -36,6 +37,20 @@ def choose_requesting_player(
     that is the number we announced and it is free.
     """
     occupied = {int(n) for n in (taken or set())}
+    if same_ip:
+        # All-in-one target (XDJ-XZ/AZ: decks and mixer on one IP). Idea from
+        # SuperTimecodeConverter (MIT, suggestDbPlayerNumber), re-implemented:
+        # never claim a number that lives at the target's IP (the XZ ignores a
+        # request that says it comes from its own deck B), then take the
+        # highest free number from 4 down to 1. An XDJ-AZ holds 1-4, so it
+        # still gets the announced number as before.
+        blocked = occupied | {int(n) for n in same_ip}
+        if target_player:
+            blocked.add(int(target_player))
+        for candidate in (4, 3, 2, 1):
+            if candidate not in blocked:
+                return candidate
+        occupied |= {int(n) for n in same_ip}
     if target_player:
         occupied.add(int(target_player))
 

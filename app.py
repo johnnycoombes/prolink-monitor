@@ -238,8 +238,15 @@ class Monitor:
         except (TypeError, ValueError):
             announced = None
         taken: set[int] = set()
+        same_ip: set[int] = set()
         local = getattr(self, "local_ip", None)
         with self.engine.lock:
+            target_ip = next((a.ip for a in self.engine.devices.values()
+                              if target is not None and int(a.device_number) == int(target)),
+                             None)
+            if target_ip:
+                same_ip = {int(a.device_number) for a in self.engine.devices.values()
+                           if a.ip == target_ip}
             for ann in self.engine.devices.values():
                 number = int(ann.device_number)
                 if announced is not None and number == announced:
@@ -248,7 +255,8 @@ class Monitor:
                     continue
                 taken.add(number)
         return choose_requesting_player(
-            announced, target_player=target, taken=taken)
+            announced, target_player=target, taken=taken,
+            same_ip=same_ip if len(same_ip) > 1 else None)
 
     def _db_unavailable_reason(self, host: str) -> str:
         with self.engine.lock:

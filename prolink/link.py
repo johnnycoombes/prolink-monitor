@@ -52,6 +52,28 @@ class NetInfo:
         return str(net.broadcast_address)
 
 
+def bind_address(interface_ip: str | None, platform: str | None = None) -> str:
+    """Address the Pro DJ Link listening sockets bind to.
+
+    Always the wildcard. On macOS a socket bound to the interface address does
+    not receive broadcasts, so beat packets (0x28) vanish without an error
+    (noted by SuperTimecodeConverter, MIT). Windows and Linux have always used
+    the wildcard here and that is what the XDJ-AZ was verified with, so the
+    interface is chosen for sending, not for binding.
+    """
+    return "0.0.0.0"
+
+
+def keepalive_targets(broadcast: str, unicast_ips=()) -> list[str]:
+    """Where keep-alives go: each address once (an all-in-one has 3 devices
+    on one IP but must get one copy). Idea from SuperTimecodeConverter (MIT)."""
+    seen: list[str] = []
+    for ip in (broadcast, "255.255.255.255", *unicast_ips):
+        if ip and ip not in seen:
+            seen.append(ip)
+    return seen
+
+
 def local_net(target: str) -> NetInfo:
     """Work out which local interface reaches the player, with mask and name."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -244,7 +266,17 @@ class SocketSource:
         self.description = f"virtual device {self.detail}"
 
     def _note_announce(self, data: bytes, src_ip: str) -> None:
-        """Remember the numbers other devices announce (not our own packets)."""
+        """Remember the numbers other devices announce (not our own packets).
+
+        A final claim (stage 0x04) also reserves its number, so we never pick
+        one a device is about to take. Stage 0x00/0x02 are ignored.
+        """
+        claim = proto.claim_stage(data)
+        if claim is not None:
+            stage, number = claim
+            if stage == 0x04 and number and src_ip != self.net.ip:
+                self.taken.add(int(number))
+            return
         if len(data) < 0x25 or data[0x0A] != proto.TYPE_KEEPALIVE:
             return
         if src_ip == self.net.ip and data[0x24] == self.device_number:
@@ -268,7 +300,7 @@ class SocketSource:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
             try:
-                s.bind(("0.0.0.0", port))
+                s.bind((bind_address(self.net.ip), port))
             except OSError as e:
                 for done in self._socks:
                     done.close()
@@ -325,7 +357,7 @@ class SocketSource:
                                     local_mac(), self.net.ip)
         out = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         out.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        targets = {self.net.broadcast, "255.255.255.255"}
+        targets = keepalive_targets(self.net.broadcast)
         while self._running:
             for dst in targets:
                 try:

@@ -356,6 +356,26 @@ def parse(data: bytes) -> Announce | Beat | AbsolutePosition | Status | Channels
     return None
 
 
+# Device-number claim on UDP 50000 (djl-analysis "startup"; the stage split
+# follows SuperTimecodeConverter, MIT): 0x00 first stage, 0x02 second stage
+# with the wanted number at 0x2E, 0x04 final claim with it at 0x24. These are
+# not keep-alives and must never be read as a device being present: a stage-2
+# packet would otherwise show up as a ghost player.
+CLAIM_STAGES = {0x00: 0x00, 0x02: 0x2E, 0x04: 0x24}
+
+
+def claim_stage(data: bytes) -> tuple[int, int] | None:
+    """(stage, number) for a number-claim packet, else None. Not discovery."""
+    if len(data) < 0x25 or not data.startswith(MAGIC):
+        return None
+    stage = data[10]
+    off = CLAIM_STAGES.get(stage)
+    if off is None:
+        return None
+    number = data[off] if off and len(data) > off else 0
+    return stage, number
+
+
 def _parse_announce(data: bytes) -> Announce | None:
     if len(data) < 0x36:
         return None
