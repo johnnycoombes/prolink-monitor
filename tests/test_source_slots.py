@@ -296,11 +296,26 @@ class AzModeTests(unittest.TestCase):
     def test_recent_on_air_is_pro_dj_link(self):
         engine = link.ProLink(source=MagicMock())
         self.assertIsNone(engine.az_mode(now=0))
-        engine._note_player_name("XDJ-AZ")
+        engine._note_player_name("XDJ-AZ", 0.0)
+        self.assertEqual(engine.az_mode(now=2), "unknown")      # no evidence yet
         self.assertEqual(engine.az_mode(now=5), "four_deck")
         engine._on_packet(_on_air(), "10.0.0.8", 10.0)
         self.assertEqual(engine.az_mode(now=10.9), "pro_dj_link")
         self.assertEqual(engine.az_mode(now=11.0), "four_deck")
+
+    def test_az_deck_status_means_pro_dj_link(self):
+        """Live over dbserver without on-air packets must not read as lighting mode."""
+        engine = link.ProLink(source=MagicMock())
+        engine._note_player_name("XDJ-AZ", 0.0)
+        engine._az_status_at = 8.0          # what a status packet from deck 1-4 sets
+        self.assertEqual(engine.az_mode(now=10.0), "pro_dj_link")
+        self.assertEqual(engine.az_mode(now=13.5), "four_deck")
+        self.assertEqual(proto.az_link_mode(True, None, 3.0, None, 0.0), "unknown")
+
+    def test_status_packet_from_az_deck_sets_pro_dj_link(self):
+        engine = link.ProLink(source=MagicMock())
+        engine._on_packet(_status(3), "10.0.0.8", 20.0)
+        self.assertEqual(engine.az_mode(now=21.0), "pro_dj_link")
 
     def test_other_mixer_on_air_does_not_count(self):
         engine = link.ProLink(source=MagicMock())

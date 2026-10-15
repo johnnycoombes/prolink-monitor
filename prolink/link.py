@@ -949,6 +949,8 @@ class ProLink:
         self.census = Census()
         self.playhead_smoothing = "normal"
         self._saw_az = False
+        self._az_first_seen: float | None = None
+        self._az_status_at: float | None = None
         self._az_on_air_at: float | None = None
 
     def start(self) -> None:
@@ -991,7 +993,9 @@ class ProLink:
             elif isinstance(pkt, proto.ChannelsOnAir):
                 self._note_channels_on_air(pkt, now)
             elif isinstance(pkt, proto.Status):
-                self._note_player_name(pkt.name)
+                self._note_player_name(pkt.name, now)
+                if proto.is_xdj_az(pkt.name) and 1 <= pkt.device_number <= 4:
+                    self._az_status_at = now
                 deck = self._deck(pkt.device_number)
                 deck.on_status(pkt, now)
                 self.link_timing.observe(
@@ -1007,22 +1011,27 @@ class ProLink:
                             name="prolink-track",
                         ).start()
 
-    def _note_player_name(self, name: str) -> None:
+    def _note_player_name(self, name: str, now: float | None = None) -> None:
         if proto.is_xdj_az(name):
             self._saw_az = True
+            if self._az_first_seen is None:
+                self._az_first_seen = time.monotonic() if now is None else now
 
     def _note_channels_on_air(self, pkt: proto.ChannelsOnAir, now: float) -> None:
         """An XDJ-AZ only emits this while it is in Pro DJ Link mode."""
         if not proto.is_xdj_az(pkt.name):
             return
         self._saw_az = True
+        if self._az_first_seen is None:
+            self._az_first_seen = now
         self._az_on_air_at = now
 
     def az_mode(self, now: float | None = None) -> str | None:
-        """``pro_dj_link``, ``four_deck``, or None when no XDJ-AZ is on the network."""
+        """``pro_dj_link``, ``four_deck``, ``unknown``, or None (no XDJ-AZ)."""
         when = time.monotonic() if now is None else now
         with self.lock:
-            return proto.az_link_mode(self._saw_az, self._az_on_air_at, when)
+            return proto.az_link_mode(self._saw_az, self._az_on_air_at, when,
+                                      self._az_status_at, self._az_first_seen)
 
     def active_decks(self, timeout: float = 5.0) -> list[Deck]:
         """Decks we have heard from recently, ordered by number."""

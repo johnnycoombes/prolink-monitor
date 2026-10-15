@@ -294,16 +294,32 @@ def is_xdj_az(name: str) -> bool:
     return compact == "xdjaz" or compact.startswith("xdjaz")
 
 
-def az_link_mode(seen_az: bool, last_on_air_at: float | None, now: float) -> str | None:
-    """``pro_dj_link`` if an XDJ-AZ sent Channels On-Air within the last second.
+AZ_STATUS_WINDOW_S = 5.0     # status from an AZ deck this recent = Pro DJ Link
+AZ_EVIDENCE_WINDOW_S = 5.0   # how long to watch before calling it lighting mode
 
-    ``four_deck`` when an AZ is present but that packet has gone quiet.
-    ``None`` when no XDJ-AZ has been seen.
+
+def az_link_mode(seen_az: bool, last_on_air_at: float | None, now: float,
+                 last_status_at: float | None = None,
+                 first_seen_at: float | None = None) -> str | None:
+    """XDJ-AZ link mode for Health, or None when no XDJ-AZ has been seen.
+
+    ``pro_dj_link``: a Channels On-Air packet from the AZ in the last second,
+    or a CDJ status packet from one of its decks (1-4) in the last 5 s. The
+    on-air packet alone was not enough: it is not always seen (for example
+    away from the mixer port) while status and dbserver work fine, which
+    made 1.0.15 say "rekordbox lighting" on a live Pro DJ Link session.
+
+    ``four_deck`` (4-deck / rekordbox lighting): the AZ has been visible for
+    5 s with neither of those. ``unknown`` until then.
     """
     if not seen_az:
         return None
     if last_on_air_at is not None and (now - last_on_air_at) < AZ_ON_AIR_WINDOW_S:
         return "pro_dj_link"
+    if last_status_at is not None and (now - last_status_at) < AZ_STATUS_WINDOW_S:
+        return "pro_dj_link"
+    if first_seen_at is not None and (now - first_seen_at) < AZ_EVIDENCE_WINDOW_S:
+        return "unknown"
     return "four_deck"
 
 
