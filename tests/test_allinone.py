@@ -301,3 +301,153 @@ class StcIdeaTests(unittest.TestCase):
         from prolink.link import keepalive_targets
         t = keepalive_targets("169.254.255.255", ["169.254.0.2", "169.254.0.2", "169.254.0.2"])
         self.assertEqual(t, ["169.254.255.255", "255.255.255.255", "169.254.0.2"])
+
+
+def _status(name, number, *, loaded_from=None, play_state=0x03, track_type=1, slot=3):
+    import struct
+    pkt = bytearray(0x200)
+    pkt[:10] = proto.MAGIC
+    pkt[10] = 0x0A
+    pkt[0x0B:0x0B + len(name)] = name.encode()
+    pkt[0x21] = number
+    pkt[0x28] = number if loaded_from is None else loaded_from
+    pkt[0x29] = slot
+    pkt[0x2A] = track_type
+    struct.pack_into(">I", pkt, 0x2C, 42)
+    struct.pack_into(">I", pkt, 0x78, play_state)
+    return bytes(pkt)
+
+
+class BeatLinkReviewTests(unittest.TestCase):
+    """Beat Link review findings (ideas re-implemented, EPL code not copied)."""
+
+    def test_opus_numbers_translate(self):
+        s = proto.parse(_status("OPUS-QUAD", 10))
+        self.assertEqual(s.device_number, 2)
+        self.assertEqual(s.loaded_from, 2)
+        self.assertEqual(proto.parse(_status("CDJ-3000", 10)).device_number, 10)
+        ka = bytearray(keepalive("OPUS-QUAD", 11))
+        self.assertEqual(proto.parse(bytes(ka)).device_number, 3)
+        from prolink import models
+        self.assertEqual(models.PROFILES["opus-quad"].numbers[:4], (9, 10, 11, 12))
+
+    def test_never_auto_claim_opus_numbers(self):
+        for want in (0, 9, 12):
+            n, _ = allinone.choose_device_number(want, {5, 6, 4, 3, 7, 8})
+            self.assertNotIn(n, range(9, 13))
+
+    def test_xz_defence_note_unconfirmed(self):
+        from prolink import models
+        self.assertIn("unconfirmed", models.PROFILES["xdj-xz"].notes)
+        self.assertIn("unconfirmed", allinone.MODEL_NOTES["XDJ-XZ"])
+
+    def test_full_discovery_window(self):
+        from prolink.link import DISCOVERY_WINDOW
+        src = SocketSource(NetInfo("10.0.0.9", 24, "eth0"))
+        self.assertGreaterEqual(src.listen_first, 2.1)   # CDJ keep-alive ~2.0 s
+        self.assertEqual(src.listen_first, DISCOVERY_WINDOW)
+
+    def test_claim_or_defence_of_our_number_moves_us(self):
+        src = SocketSource(NetInfo("10.0.0.9", 24, "eth0"), device_number=5, listen_first=0)
+        src._announcing = True
+        stage3 = bytearray(keepalive("CDJ-3000", 5, "10.0.0.2")); stage3[10] = 0x04
+        src._note_announce(bytes(stage3), "10.0.0.2")
+        self.assertTrue(src._conflict.is_set())
+        src._conflict.clear()
+        defend = bytearray(keepalive("CDJ-3000", 5, "10.0.0.2")); defend[10] = 0x08
+        src._note_announce(bytes(defend), "10.0.0.2")
+        self.assertTrue(src._conflict.is_set())
+        # the announce loop then picks another number
+        src.taken.add(src.device_number)
+        src._pick_number()
+        self.assertNotEqual(src.device_number, 5)
+
+    def test_announce_loop_reacts_to_conflict(self):
+        src = SocketSource(NetInfo("127.0.0.1", 8, "lo"), device_number=5, listen_first=0,
+                           announce_interval=0.01)
+        src._running = True
+        sent = []
+
+        class FakeSock:
+            def setsockopt(self, *a):
+                pass
+
+            def sendto(self, pkt, dst):
+                sent.append(pkt[0x24])
+                if len(sent) == 2:
+                    src._conflict.set()
+                if len(sent) > 6:
+                    src._running = False
+
+            def close(self):
+                pass
+
+        with mock.patch("prolink.link.socket.socket", lambda *a: FakeSock()):
+            src._announce_loop()
+        self.assertEqual(sent[0], 5)
+        self.assertNotEqual(sent[-1], 5)
+        self.assertIn("moved from #5", src.number_note)
+
+    def test_az_lighting_mode_in_model_line(self):
+        import app
+        mon = app.Monitor.__new__(app.Monitor)
+        mon.model_setting = "auto"
+        import threading
+        mon.engine = SimpleNamespace(
+            lock=threading.RLock(),
+            devices={1: SimpleNamespace(name="XDJ-AZ", ip="10.0.0.2", device_number=1)},
+            az_mode=lambda: "four_deck")
+        info = mon.model_info()
+        self.assertEqual(info["az_mode"], "four_deck")
+        self.assertIn("lighting", info["line"])
+        self.assertEqual(proto.az_link_mode(True, 10.0, 10.5), "pro_dj_link")
+        self.assertEqual(proto.az_link_mode(True, 10.0, 11.2), "four_deck")
+
+    def test_usb2_slot_uses_second_usb_export(self):
+        self.assertEqual(proto.SLOTS[7], "usb2")
+        ex = ["/B/", "/C/", "/USB-B/"]
+        self.assertEqual(allinone.export_for_slot(ex, "usb"), "/C/")
+        self.assertEqual(allinone.export_for_slot(ex, "usb2"), "/USB-B/")
+        self.assertEqual(allinone.export_for_slot(["/C/", "/D/"], "usb2#file"), "/D/")
+
+    def test_unanalysed_key_differs(self):
+        import app
+        mon = app.Monitor.__new__(app.Monitor)
+        a = mon._key_for("10.0.0.2", None, 42, "usb")
+        b = mon._key_for("10.0.0.2", None, 42, "usb", "file")
+        self.assertNotEqual(a, b)
+        self.assertEqual(mon._key_for("10.0.0.2", None, 42, "usb", "rekordbox"), a)
+
+    def test_late_retry_scheduled_and_bounded(self):
+        import app
+        mon = app.Monitor.__new__(app.Monitor)
+        deck = SimpleNamespace(number=1)
+        timers = []
+
+        class FakeTimer:
+            def __init__(self, delay, fn):
+                timers.append(delay)
+                self.daemon = False
+
+            def start(self):
+                pass
+
+        with mock.patch("app.threading.Timer", FakeTimer):
+            for _ in range(5):
+                mon._schedule_late_retry(deck, 42, None)
+        self.assertEqual(timers, list(app.Monitor.LATE_RETRY_DELAYS))
+
+    def test_emergency_loop_and_showkontrol_and_peers(self):
+        s = proto.parse(_status("CDJ-3000", 2, play_state=0x12))
+        self.assertEqual(s.play_state_raw, 0x12)
+        self.assertIn(0x12, proto.PLAYING_STATES)
+        self.assertTrue(proto.is_ignored_device("TCS-SHOWKONTROL"))
+        ka = bytearray(keepalive("CDJ-3000", 2)); ka[0x30] = 4
+        self.assertEqual(proto.parse(bytes(ka)).peers, 4)
+        from prolink.link import ProLink
+        eng = ProLink.__new__(ProLink)
+        eng.capture = SimpleNamespace(observe=lambda *a: None)
+        eng.census = allinone.Census()
+        eng.packets = 0
+        eng._on_packet(keepalive("TCS-SHOWKONTROL", 3), "10.0.0.7", 1.0)
+        self.assertEqual(eng.packets, 0)

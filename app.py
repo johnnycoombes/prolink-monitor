@@ -393,6 +393,12 @@ class Monitor:
         """Chosen or detected model profile for Health and the probe report."""
         res = models.resolve(getattr(self, "model_setting", "auto"), self._announced_names())
         res["line"] = models.capability_line(res)
+        # XDJ-AZ: Pro DJ Link vs rekordbox-lighting mode (Channels On-Air in 1 s).
+        az = _az_mode_value(self.engine) if hasattr(self, "engine") else None
+        res["az_mode"] = az
+        if az and (res["profile"] or {}).get("name") == "XDJ-AZ":
+            res["line"] += ("; Pro DJ Link mode" if az == "pro_dj_link"
+                            else "; rekordbox lighting / 4-deck mode")
         return res
 
     def _profile_for_host(self, host: str) -> dict:
@@ -661,6 +667,12 @@ class Monitor:
         self._note_live_duration(deck, live)
 
         remote_only = slot in ("rekordbox", "beatport", "direct_play", "streaming")
+        # Unanalysed file (track type 2): its id is not a rekordbox id, so the
+        # USB's export.pdb / OneLibrary would give the wrong track. Use the
+        # player's own metadata only.
+        unanalysed = type_raw == 2
+        if unanalysed:
+            remote_only = True
         media = None
         copied = None
         copied_src = ""
@@ -679,7 +691,7 @@ class Monitor:
                     copied, copied_src = media.copied_track(
                         track_id, prefer_onelibrary=proto.is_xdj_az(player_name))
 
-        key = self._key_for(host, media, track_id, slot)
+        key = self._key_for(host, media, track_id, slot, type_name if unanalysed else "")
         # The dbserver query above can outlive the track. Only bind the deck
         # when it is still on this id; the cache entry is kept either way.
         if self._deck_still_on(deck, track_id):
@@ -714,6 +726,8 @@ class Monitor:
             fetched=bool(analysis is not None and _analysis_has_wave(analysis)),
             pending=media is None and not remote_only,
         )
+        if not unanalysed and not remote_only:
+            self._schedule_late_retry(deck, track_id, analysis)
         if analysis is not None and copied is not None and media is not None:
             if self._deck_still_on(deck, track_id) and analysis.beats:
                 length = analysis.duration_ms or ((copied.duration * 1000) if copied else 0)
@@ -739,6 +753,38 @@ class Monitor:
         self._publish_basic(
             key, track_id, fields, slot=slot, track_type=type_name,
             fallback_source=copied_src if not live else "remotedb")
+
+    LATE_RETRY_DELAYS = (3.0, 8.0, 20.0)
+
+    def _schedule_late_retry(self, deck, track_id: int, analysis, attempt: int = 0) -> None:
+        """Waveforms and beat grids can appear after the load (NFS not up yet,
+        the player still analysing). Try again a few times while the deck
+        still holds the same track and nothing usable arrived."""
+        if analysis is not None and _analysis_has_wave(analysis) and analysis.beats:
+            return
+        retries = getattr(self, "_late_retries", None)
+        if retries is None:
+            retries = self._late_retries = {}
+        token = (getattr(deck, "number", 0), track_id)
+        attempt = max(attempt, retries.get(token, -1) + 1)
+        if attempt >= len(self.LATE_RETRY_DELAYS):
+            return
+        retries[token] = attempt
+
+        def run() -> None:
+            if not self._deck_still_on(deck, track_id):
+                return
+            key = self._resolve_key(track_id, getattr(deck, "number", None))
+            with self._lock:
+                wave = self._waveforms.get(key) if key is not None else None
+            has_grid = bool(getattr(deck, "_beat_times", None))
+            if _wave_has_detail(wave) and has_grid:
+                return
+            self._on_track_change(deck, track_id)
+
+        timer = threading.Timer(self.LATE_RETRY_DELAYS[attempt], run)
+        timer.daemon = True
+        timer.start()
 
     def _anlz_store(self) -> dict:
         store = getattr(self, "_anlz_by_deck", None)
@@ -840,7 +886,12 @@ class Monitor:
         current = getattr(deck, "status", None)
         return current is not None and getattr(current, "track_id", None) == track_id
 
-    def _key_for(self, host: str, media, track_id: int, slot: str) -> tuple:
+    def _key_for(self, host: str, media, track_id: int, slot: str,
+                 track_type: str = "") -> tuple:
+        # An unanalysed file and a rekordbox track can share an id on one
+        # slot; the track type keeps their cache entries apart.
+        if track_type and track_type not in ("rekordbox", "unknown"):
+            slot = f"{slot}#{track_type}"
         if media is not None:
             return self._cache_key(host, media, track_id, slot)
         return track_cache_key(host or "", "", None, slot, track_id)

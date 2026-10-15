@@ -55,8 +55,8 @@ PROFILES: dict[str, ModelProfile] = {p.key: p for p in (
        waveforms=("blue", "rgb"),
        connection="USB-B cable (Observe only) or the LINK port (Virtual device, automatic number)",
        recommended_mode="observe",
-       notes="Decks 1, 2 and mixer 33 on one IP. Does not defend device numbers and sends "
-             "no media-slot broadcasts."),
+       notes="Decks 1, 2 and mixer 33 on one IP. Sends no media-slot broadcasts. "
+             "Reported (unconfirmed) not to defend device numbers on the LINK port."),
     _P("cdj-3000x", "CDJ-3000X", precise_position=True,
        waveforms=("blue", "rgb", "3band"), aliases=("cdj3000x",)),
     _P("cdj-3000", "CDJ-3000", precise_position=True,
@@ -78,10 +78,11 @@ PROFILES: dict[str, ModelProfile] = {p.key: p for p in (
     _P("xdj-rr", "XDJ-RR", "all-in-one", 2, (1, 2, 33), True, dbserver=False, nfs=False,
        connection="No Pro DJ Link port for players; monitoring is not expected to work",
        recommended_mode="sniffer", notes="Limited: no media sharing over the link."),
-    _P("opus-quad", "OPUS-QUAD", "all-in-one", 4, (1, 2, 3, 4, 33), True,
+    _P("opus-quad", "OPUS-QUAD", "all-in-one", 4, (9, 10, 11, 12, 33), True,
        dbserver=False, beat_packets=False, waveforms=("blue", "rgb", "3band"),
        connection="LINK port; Observe only", recommended_mode="observe",
-       notes="Limited: no dbserver and no beat packets; track metadata is not available."),
+       notes="Limited: no dbserver and no beat packets; track metadata is not available. "
+             "Reports decks as 9-12; shown as 1-4."),
     _P("omnis-duo", "OMNIS-DUO", "all-in-one", 2, (1, 2, 33), True,
        waveforms=("blue", "rgb", "3band"), recommended_mode="observe",
        notes="Decks share one player number. Untested."),

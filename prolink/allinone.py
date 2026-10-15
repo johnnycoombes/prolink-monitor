@@ -31,7 +31,7 @@ ALL_IN_ONE_MODELS = {
 # Notes shown on Health next to the model.
 MODEL_NOTES = {
     "XDJ-XZ": "2 decks (1, 2) + mixer (33) on one IP; no media-slot broadcasts; "
-              "does not defend device numbers on the laptop port",
+              "reported (unconfirmed) not to defend device numbers on the laptop port",
     "XDJ-AZ": "decks 1-4 + mixer (33) on one IP",
     "OPUS-QUAD": "no dbserver and no beat packets; metadata needs a USB archive (not supported)",
     "XDJ-RX3": "untested",
@@ -39,9 +39,10 @@ MODEL_NOTES = {
 }
 
 # Numbers that are never ours: 17 rekordbox, 25 Kuvo/NXS-GW, 33+ mixers.
-_RESERVED = {0, 17, 25} | set(range(33, 48))
+# 9-12 are the Opus Quad's reported deck numbers, so never auto-claim them.
+_RESERVED = {0, 17, 25} | set(range(9, 13)) | set(range(33, 48))
 # Preference when choosing automatically: the usual virtual-CDJ numbers first.
-AUTO_ORDER = (5, 6, 4, 3, 7, 8, 9, 10, 11, 12, 13, 14, 15)
+AUTO_ORDER = (5, 6, 4, 3, 7, 8, 13, 14, 15)
 
 
 def compact(name: str | None) -> str:
@@ -202,13 +203,25 @@ _SLOT_EXPORTS = {
 }
 
 
+def _looks_usb(export: str) -> bool:
+    low = export.lower().rstrip("/") + "/"
+    return "usb" in low or low.startswith(("/c/", "/d/"))
+
+
 def export_for_slot(exports: list[str], slot: str | None) -> str | None:
     """The NFS export that holds the given slot's medium, or None if unknown."""
     if not exports or not slot:
         return None
+    slot = str(slot).split("#", 1)[0].lower()     # cache keys may carry "#<type>"
     if len(exports) == 1:
         return exports[0]
-    hints = _SLOT_EXPORTS.get(str(slot).lower())
+    if slot in ("usb", "usb2"):
+        # Slot code 7 is USB 2. With two USB-looking exports, the first is USB 1
+        # and the second USB 2, whatever they are called.
+        usbs = [e for e in exports if _looks_usb(e)]
+        if len(usbs) >= 2:
+            return usbs[0] if slot == "usb" else usbs[1]
+    hints = _SLOT_EXPORTS.get(slot)
     if not hints:
         return None
     lowered = [(e, e.lower().rstrip("/") + "/") for e in exports]

@@ -52,6 +52,9 @@ class NetInfo:
         return str(net.broadcast_address)
 
 
+DISCOVERY_WINDOW = 3.0
+
+
 def bind_address(interface_ip: str | None, platform: str | None = None) -> str:
     """Address the Pro DJ Link listening sockets bind to.
 
@@ -245,13 +248,18 @@ class SocketSource:
 
     def __init__(self, net: NetInfo, device_number: int = 5,
                  device_name: str = "monitor", announce_interval: float = 1.5,
-                 listen_first: float = 2.5):
+                 listen_first: float | None = None):
         self.net = net
         self.requested_number = int(device_number or 0)
         self.device_number = self.requested_number or 5
         self.device_name = device_name
         self.announce_interval = announce_interval
-        self.listen_first = max(0.0, float(listen_first))
+        # A full discovery window: CDJs send a keep-alive every ~2.0 s
+        # (dysentery #75) and mixers every 1.5 s, so 3 s hears everyone once.
+        self.listen_first = max(0.0, float(
+            DISCOVERY_WINDOW if listen_first is None else listen_first))
+        self._announcing = False
+        self._conflict = threading.Event()
         self.number_note = ""
         self.taken: set[int] = set()
         self._socks: list[socket.socket] = []
@@ -271,17 +279,32 @@ class SocketSource:
         A final claim (stage 0x04) also reserves its number, so we never pick
         one a device is about to take. Stage 0x00/0x02 are ignored.
         """
+        if src_ip == self.net.ip:
+            return              # our own broadcast coming back
         claim = proto.claim_stage(data)
         if claim is not None:
             stage, number = claim
-            if stage == 0x04 and number and src_ip != self.net.ip:
+            if stage == 0x04 and number:
                 self.taken.add(int(number))
+                self._check_conflict(int(number))
+            return
+        if len(data) > 0x24 and data.startswith(proto.MAGIC) \
+                and data[0x0A] == proto.TYPE_NUMBER_IN_USE:
+            # Another device defends a number (beat-link #91 claim race).
+            number = int(data[0x24])
+            if number:
+                self.taken.add(number)
+                self._check_conflict(number)
             return
         if len(data) < 0x25 or data[0x0A] != proto.TYPE_KEEPALIVE:
             return
-        if src_ip == self.net.ip and data[0x24] == self.device_number:
-            return
-        self.taken.add(int(data[0x24]))
+        number = int(data[0x24])
+        self.taken.add(number)
+        self._check_conflict(number)
+
+    def _check_conflict(self, number: int) -> None:
+        if self._announcing and number == self.device_number:
+            self._conflict.set()
 
     def start(self, on_packet: Handler) -> None:
         user_handler = on_packet
@@ -355,10 +378,24 @@ class SocketSource:
             return
         pkt = proto.build_keepalive(self.device_name, self.device_number,
                                     local_mac(), self.net.ip)
+        self._announcing = True
         out = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         out.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         targets = keepalive_targets(self.net.broadcast)
         while self._running:
+            if self._conflict.is_set():
+                # Someone claimed or defended our number: stop using it.
+                self._conflict.clear()
+                self.taken.add(self.device_number)
+                old = self.device_number
+                try:
+                    self._pick_number()
+                except RuntimeError:
+                    self.number_note = "no free device number; stopped announcing"
+                    break
+                self.number_note += f" (moved from #{old}: another device claimed it)"
+                pkt = proto.build_keepalive(self.device_name, self.device_number,
+                                            local_mac(), self.net.ip)
             for dst in targets:
                 try:
                     out.sendto(pkt, (dst, proto.PORT_ANNOUNCE))
@@ -940,6 +977,8 @@ class ProLink:
             pass
         if pkt is None:
             return
+        if proto.is_ignored_device(getattr(pkt, "name", "")):
+            return      # ShowKontrol (TCS) shares the ports but is not DJ gear
         with self.lock:
             self.packets += 1
             if isinstance(pkt, proto.Announce):

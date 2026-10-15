@@ -27,6 +27,14 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 - **One library per export.** On a unit with SD and USB on the same IP, each deck's library comes from the export its slot maps to (`/B/` = SD, `/C/` = USB). Units with one export are unchanged.
 - **dbserver.** Port discovery (TCP 12523) runs once per IP and is reused for 2 minutes; the client number never matches a deck or mixer number seen on the link; models without dbserver (Opus Quad, XDJ-RR, mixers) are not asked.
 - **Ideas from [SuperTimecodeConverter](https://github.com/fiverecords/SuperTimecodeConverter)** (MIT), re-implemented in Python: the dbserver client number never matches a device at the target's IP (an XZ ignores requests claiming to be its own deck), taking the highest free number from 4 down to 1; number-claim packets (stages `0x00`, `0x02`, `0x04`) never count as a player, so no ghost decks; listening sockets bind to `0.0.0.0` (on macOS binding to the interface address silently drops `0x28` beat packets); keep-alives go to each address once.
+- **Beat Link review fixes** (ideas re-implemented; no EPL code copied):
+  - The Opus Quad reports its decks as 9–12; they are shown as 1–4, and 9–12 are never taken automatically.
+  - The virtual device listens for a full 3 s discovery window (CDJs send a keep-alive every ~2 s) before announcing, and moves to another number if a final-stage claim or a "number in use" defence names ours (beat-link #91).
+  - XDJ-AZ Pro DJ Link mode vs rekordbox lighting / 4-deck mode (a Channels On-Air packet from the AZ within 1 s) is shown on Health and in the detected model line.
+  - Slot code 7 (USB 2) reads from the second USB export.
+  - Unanalysed files (track type 2) skip the USB database lookup, which would match the wrong track, and are cached separately. Waveforms and beat grids that are not ready at load are retried after 3, 8 and 20 s.
+  - Play state `0x12` (emergency loop) counts as playing; ShowKontrol (`TCS-SHOWKONTROL`) packets are ignored; the keep-alive peer count (byte `0x30`) is parsed.
+- The XZ's "does not defend device numbers" note is now marked unconfirmed. Checked against dysentery #75 (CDJ-2000NXS captures): this app does not classify devices by keep-alive byte `0x25`, by status-packet length or by media-slot broadcasts, so none of its corrections needed a parsing change.
 - **XZ probe report.** Health → **Export XZ probe report** saves a read-only JSON file (also `GET /api/xz-probe`): adapters, packet types heard per IP and device, device names, NFS exports, slot bytes, firmware, whether `exportLibrary.db` is present, dbserver and library errors. Nothing is sent to the player.
 
 **1.0.14.** A macOS build, working zoom buttons with a 32-bar step, and the overview strip in the panel and bar overlays.

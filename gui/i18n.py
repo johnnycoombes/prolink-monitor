@@ -291,11 +291,12 @@ STRINGS = {
     "health_host": "Player",
     "health_az_mode": "XDJ-AZ",
     "health_az_pro": "Pro DJ Link",
-    "health_az_four": "4-deck",
+    "health_az_four": "4-deck / rekordbox lighting",
     "health_az_none": "—",
     "health_az_hint": (
         "Pro DJ Link while the XDJ-AZ has sent a Channels On-Air packet in the "
-        "last second. Otherwise 4-deck. Blank when no XDJ-AZ is on the network."
+        "last second. Otherwise 4-deck / rekordbox lighting mode (no Channels "
+        "On-Air). Blank when no XDJ-AZ is on the network."
     ),
     "health_no_decks": "No active decks yet — connect and load a track.",
     "health_no_nfs": "No NFS mounts yet — metadata loads when a track is on a deck.",

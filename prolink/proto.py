@@ -11,6 +11,7 @@ Field offsets are verified against real captures from an XDJ-AZ (firmware 1.30).
 
 from __future__ import annotations
 
+import re
 import socket
 import struct
 from dataclasses import dataclass, field
@@ -24,6 +25,7 @@ PORT_MIXER = 50004
 
 # Packet types (byte 0x0a)
 TYPE_KEEPALIVE = 0x06
+TYPE_NUMBER_IN_USE = 0x08    # device-number defence, number at 0x24
 TYPE_BEAT = 0x28
 TYPE_ABSOLUTE_POSITION = 0x0B
 # 0x03 on the beat port (50001) is Channels On-Air. An XDJ-AZ sends it
@@ -78,9 +80,9 @@ PLAY_STATES = {
     0x00: "no_track", 0x02: "loading", 0x03: "playing", 0x04: "looping",
     0x05: "paused", 0x06: "cued", 0x07: "cue_play", 0x08: "cue_scratch",
     0x09: "searching", 0x0E: "unplayable", 0x11: "end_of_track",
-    0x12: "emergency",
+    0x12: "emergency",       # emergency loop after a media read error
 }
-PLAYING_STATES = {0x03, 0x04, 0x07}
+PLAYING_STATES = {0x03, 0x04, 0x07, 0x12}   # 0x12 = emergency loop (still audible)
 
 # CDJ status "settings block 1" (documented CDJ status layout).
 # When present it starts at 0xD0 with 12 34 56 78 (then 00 00 00 01 on
@@ -157,6 +159,7 @@ class Announce:
     device_type: int
     mac: str
     ip: str
+    peers: int = 0       # byte 0x30: Pro DJ Link devices it sees, itself included
 
     @property
     def kind(self) -> str:
@@ -376,12 +379,42 @@ def claim_stage(data: bytes) -> tuple[int, int] | None:
     return stage, number
 
 
+# Devices whose packets are not Pro DJ Link gear and must be ignored.
+IGNORED_DEVICE_NAMES = ("TCS-SHOWKONTROL",)
+
+
+def is_ignored_device(name: str | None) -> bool:
+    n = str(name or "").strip().upper()
+    return any(n.startswith(x) for x in IGNORED_DEVICE_NAMES)
+
+
+OPUS_REPORTED_NUMBERS = range(9, 13)
+
+
+def is_opus_quad(name: str | None) -> bool:
+    return re.sub(r"[^a-z0-9]", "", str(name or "").lower()).startswith("opusquad")
+
+
+def logical_number(raw: int, name: str | None) -> int:
+    """Deck number as labelled on the unit.
+
+    The Opus Quad reports its decks as 9-12; the low three bits give 1-4.
+    Every other device's number is returned unchanged.
+    """
+    raw = int(raw)
+    if raw in OPUS_REPORTED_NUMBERS and is_opus_quad(name):
+        return raw & 0x07
+    return raw
+
+
 def _parse_announce(data: bytes) -> Announce | None:
     if len(data) < 0x36:
         return None
+    name = _name(data, 0x0C)
     return Announce(
-        name=_name(data, 0x0C),
-        device_number=data[0x24],
+        name=name,
+        peers=data[0x30],
+        device_number=logical_number(data[0x24], name),
         device_type=data[0x21],
         mac=":".join(f"{b:02x}" for b in data[0x26:0x2C]),
         ip=".".join(str(b) for b in data[0x2C:0x30]),
@@ -394,9 +427,10 @@ def _parse_beat(data: bytes) -> Beat | None:
     next_beat, _second, next_bar = struct.unpack_from(">III", data, 0x24)
     pitch = struct.unpack_from(">I", data, 0x54)[0]
     bpm = struct.unpack_from(">H", data, 0x5A)[0]
+    name = _name(data, 0x0B)
     return Beat(
-        device_number=data[0x21],
-        name=_name(data, 0x0B),
+        device_number=logical_number(data[0x21], name),
+        name=name,
         next_beat=next_beat,
         next_bar=next_bar,
         pitch=_pitch(pitch),
@@ -413,9 +447,10 @@ def _parse_absolute_position(data: bytes) -> AbsolutePosition | None:
     playhead = struct.unpack_from(">I", data, ABS_POS_PLAYHEAD)[0]
     raw_pitch = struct.unpack_from(">i", data, ABS_POS_PITCH)[0]
     raw_bpm = struct.unpack_from(">I", data, ABS_POS_BPM)[0]
+    name = _name(data, 0x0B)
     return AbsolutePosition(
-        device_number=data[ABS_POS_DEVICE],
-        name=_name(data, 0x0B),
+        device_number=logical_number(data[ABS_POS_DEVICE], name),
+        name=name,
         track_length_s=track_len,
         position_ms=playhead,
         pitch_percent=raw_pitch / 100.0,
@@ -427,11 +462,11 @@ def _parse_status(data: bytes) -> Status | None:
     if len(data) < 0xA7:
         return None
     s = Status(raw=data)
-    s.device_number = data[0x21]
     s.name = _name(data, 0x0B)
+    s.device_number = logical_number(data[0x21], s.name)
     s.firmware = _name(data, 0x7C, 4)
 
-    s.loaded_from = data[0x28]
+    s.loaded_from = logical_number(data[0x28], s.name)
     s.slot_raw = data[0x29]
     s.slot = SLOTS.get(s.slot_raw, "unknown")
     s.track_type_raw = data[0x2A]
