@@ -472,11 +472,13 @@ function applyStrings() {
 
 /* ------------------------------------------------------------------- state */
 const DECK_COLORS = {1:'--d1',2:'--d2',3:'--d3',4:'--d4',5:'--d1',6:'--d2'};
-const ZOOM_BARS = [1, 2, 4, 8, 16];      // 4/4 bars shown in the detail view
+const ZOOM_BARS = [1, 2, 4, 8, 16, 32];      // 4/4 bars shown in the detail view
 const WAVE_STYLES = ['auto', 'rgb', '3band', 'blue'];
 const DEFAULT_BPM = 120;
 
 let zoomBars = 4;
+let zoomFromDesktop = false;   // first display message only sets, later ones replace wheel zoom
+let deckZoomFromDesktop = false;
 const zoomByDeck = new Map(); // deck number → bars, from the desktop Monitor view
 
 function deckZoom(n) {
@@ -672,14 +674,19 @@ function layoutWave(d) {
 
 function setZoom(bars) {
   if (!ZOOM_BARS.includes(bars)) bars = 4;
-  if (bars === zoomBars) return;
+  if (bars === zoomBars) { zoomFromDesktop = true; return; }
   zoomBars = bars;
+  let dropped = false;
   for (const d of decks.values()) {
     if (zoomByDeck.has(d.n)) continue;
+    // One zoom state: a bar setting replaces any wheel zoom on that deck.
+    if (zoomFromDesktop && zoomSecByDeck.delete(d.n)) dropped = true;
     d.overviewId = null;
     d.detailKey = null;
     d.detailOff = null;
   }
+  zoomFromDesktop = true;
+  if (dropped) saveZoomSec();
   paintZoomChips();
 }
 
@@ -695,7 +702,13 @@ function applyDeckZooms(map) {
   if (!changed) {
     for (const [k, v] of next) if (zoomByDeck.get(k) !== v) changed = true;
   }
-  if (!changed) return;
+  if (!changed) { deckZoomFromDesktop = true; return; }
+  let dropped = false;
+  for (const [k, v] of next) {
+    if (deckZoomFromDesktop && zoomByDeck.get(k) !== v && zoomSecByDeck.delete(k)) dropped = true;
+  }
+  deckZoomFromDesktop = true;
+  if (dropped) saveZoomSec();
   zoomByDeck.clear();
   for (const [k, v] of next) zoomByDeck.set(k, v);
   for (const d of decks.values()) {

@@ -26,7 +26,7 @@ class BarsZoomTests(unittest.TestCase):
         self.assertAlmostEqual(bars_to_seconds(1, -1), 2.0)
 
     def test_zoom_levels(self):
-        self.assertEqual(ZOOM_BARS, (1, 2, 4, 8, 16))
+        self.assertEqual(ZOOM_BARS, (1, 2, 4, 8, 16, 32))
         self.assertIn(DEFAULT_ZOOM_BARS, ZOOM_BARS)
 
 

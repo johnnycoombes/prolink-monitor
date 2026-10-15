@@ -13,7 +13,9 @@ from __future__ import annotations
 import math
 
 MIN_SECONDS = 2.0
-MAX_SECONDS = 30.0
+# 32 bars at 80 BPM is 96 s, so the wheel can reach the widest bar button
+# at any normal tempo.
+MAX_SECONDS = 96.0
 STEP = 1.15          # per 120-unit wheel notch
 
 
@@ -37,6 +39,23 @@ def pinch_zoom(seconds: float, start_distance: float, distance: float) -> float:
     if start_distance <= 0 or distance <= 0:
         return clamp_seconds(seconds)
     return clamp_seconds(seconds * start_distance / distance)
+
+
+def bars_for_seconds(seconds: float | None, bpm: float, choices,
+                     tolerance: float = 0.04) -> int | None:
+    """The bar setting whose window matches ``seconds`` (within 4%), else None.
+
+    Lets the bar buttons light up after a wheel zoom lands on one of them.
+    ``None`` seconds means no wheel zoom, which callers handle themselves.
+    """
+    if seconds is None:
+        return None
+    bpm = float(bpm or 0) or 120.0
+    for bars in choices:
+        window = float(bars) * 4.0 * 60.0 / bpm
+        if abs(window - float(seconds)) <= window * tolerance:
+            return int(bars)
+    return None
 
 
 def x_for_ms(t_ms: float, pos_ms: float, visible_s: float, width: float,

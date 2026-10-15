@@ -298,23 +298,49 @@ class MonitorPage(Page):
         bars = int(bars) if int(bars) in ZOOM_BARS else DEFAULT_ZOOM_BARS
         # Toolbar zoom: if a deck is focused, override that deck only;
         # otherwise set the global default for decks without an override.
+        # A click also clears the wheel zoom on those decks: buttons and the
+        # wheel share one zoom state, and the wheel used to win for good.
         if self._focus_deck is not None and self._focus_deck in self._cards:
             self._zoom_overrides[self._focus_deck] = bars
-            self._cards[self._focus_deck].set_zoom(bars, override=True)
+            card = self._cards[self._focus_deck]
+            card.clear_wheel_zoom()
+            card.set_zoom(bars, override=True)
         else:
             self._zoom = bars
             for n, card in self._cards.items():
                 if n not in self._zoom_overrides:
+                    card.clear_wheel_zoom()
                     card.set_zoom(bars, override=False)
+        self._refresh_zoom_highlight()
+        self._notify_prefs()
+
+    def shown_zoom_bars(self) -> int | None:
+        """Bar button to light: what the focused deck shows, else what every
+        loaded deck shows. None when the decks disagree or sit between buttons."""
+        cards = self._cards
+        if self._focus_deck is not None and self._focus_deck in cards:
+            return cards[self._focus_deck].effective_bars()
+        seen = {card.effective_bars() for card in cards.values()}
+        if not seen:
+            return self._zoom
+        return seen.pop() if len(seen) == 1 else None
+
+    def _refresh_zoom_highlight(self) -> None:
+        shown = self.shown_zoom_bars()
+        if shown == getattr(self, "_zoom_lit", object()):
+            return
+        self._zoom_lit = shown
         for s, b in self._zoom_btns.items():
-            b.setProperty("active", "true" if s == bars else "false")
+            b.setProperty("active", "true" if s == shown else "false")
             b.style().unpolish(b)
             b.style().polish(b)
-        self._notify_prefs()
 
     def clear_zoom_overrides(self) -> None:
         self._zoom_overrides.clear()
+        for card in self._cards.values():
+            card.clear_wheel_zoom()
         self._apply_card_zooms()
+        self._refresh_zoom_highlight()
         self._notify_prefs()
 
     def _apply_card_zooms(self) -> None:
@@ -371,6 +397,7 @@ class MonitorPage(Page):
             zooms.pop(int(number), None)
         else:
             zooms[int(number)] = round(float(seconds), 3)
+        self._refresh_zoom_highlight()
         self._notify_prefs()
 
     def set_show_phrases(self, enabled: bool) -> None:
@@ -624,6 +651,10 @@ class MonitorPage(Page):
             card = self._cards[d["number"]]
             self.decks_layout.insertWidget(i, card, 1)
         self._relayout_deck_heights()
+        # The wheel zoom is seconds; which bar button it equals moves with BPM.
+        for card in self._cards.values():
+            card._paint_zoom_btn()
+        self._refresh_zoom_highlight()
 
     def advance_playheads(self) -> None:
         """Extrapolate playheads between state polls (~60 Hz paint path)."""

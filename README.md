@@ -18,11 +18,14 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 
 ## What's new
 
-**1.0.14.** A macOS build.
+**1.0.14.** A macOS build, working zoom buttons with a 32-bar step, and the overview strip in the panel and bar overlays.
 
 - **Prolink Listener for Mac.** Releases now include `ProlinkListener-<version>-macos-arm64` (Apple Silicon) and `-macos-x86_64` (Intel), each as a `.dmg` and a `.zip`, built with PyInstaller on GitHub's macOS runners. See [macOS, from the GitHub Release](#macos-from-the-github-release). The app is not signed or notarised, and it does not update itself: when a new version is out it says so and opens the Releases page.
 - On macOS, settings live in `~/Library/Application Support/Prolink Listener` and the library cache in `~/Library/Caches/Prolink Listener`. Windows and Linux keep `~/.prolink-monitor` and `~/.prolink-cache`.
 - The bundle's `Info.plist` carries `NSLocalNetworkUsageDescription`, so macOS 14 and later can ask for Local Network access, which Pro DJ Link needs. The network interface and its prefix are read from `ifconfig` on macOS (Windows still uses PowerShell). Fonts fall back to the system font and Menlo.
+- **Zoom buttons work again.** Since the 1.0.10 wheel zoom, a saved wheel zoom (`wave_zoom_seconds_by_deck`) always took priority over the bar setting, so after one wheel move the `1 2 4 8 16` buttons and the per-deck chip changed nothing. Buttons and wheel now share one zoom state per deck: a button (toolbar, deck chip or **All**) replaces the wheel zoom with bars × 4 beats at the track's BPM, the wheel adjusts from there, and the lit button follows (none while the wheel sits between two). The web panel drops its browser-saved wheel zoom when the desktop bar setting changes.
+- **32-bar zoom.** The buttons are now `1 2 4 8 16 32 All`, and the wheel reaches 96 s (32 bars at 80 BPM), up from 30 s.
+- **Overview in the panel and bar overlays.** `/overlay?style=panel` and `style=bar` never had the whole-track overview strip; only the card did. Both now show it between the track row and the scrolling wave (above it with `pos=top`), with the playhead, cues and loop, in the same colours as the card. The coloured blocks in the panel are the spectrum visualiser, which is idle while the deck is stopped.
 - Tests also run on macOS in CI, and `packaging/verify_bundle.py` checks a `.app` (executable, Qt WebEngine helper, web files, Info.plist and icon).
 
 **1.0.13.** Smaller deck text and a bar counter.
@@ -231,7 +234,7 @@ Each deck card can show artwork, title, artist, album / genre / label, MASTER / 
 | 3-band | `PWV7` (detail), `PWV6` (overview) | Three bytes, **low, mid, high** by default (rbxport and OneLibraryCompanion); *mid, high, low* (Deep Symmetry and Beat Link) is a setting. Two palettes: *CDJ-3000* (default) and *Beat Link*. |
 | Blue | `PWV3` | Height in bits 0–4. Bits 5–7 pick a shade. |
 
-The overview is the detail wave reduced by peak (PWV6 for 3-band), not `PWV4`. Zoom is in **4/4 bars** (1, 2, 4, 8, or 16). Each deck can keep its own zoom. The **mouse wheel** over a deck's scrolling wave zooms it smoothly from 2 to 30 seconds, and a double-click resets it. The web panel does the same with the wheel and a pinch. *Auto* style follows the colour the player is set to.
+The overview is the detail wave reduced by peak (PWV6 for 3-band), not `PWV4`. Zoom is in **4/4 bars** (1, 2, 4, 8, 16 or 32). Each deck can keep its own zoom. The **mouse wheel** over a deck's scrolling wave zooms it smoothly from 2 to 96 seconds, and a double-click resets it. The bar buttons and the wheel share one zoom: a button sets bars × 4 beats at the track's BPM, the wheel adjusts from there, and the button lights up while the wheel sits on one of its windows. **All** clears per-deck and wheel zoom. The web panel does the same with the wheel and a pinch. *Auto* style follows the colour the player is set to.
 
 **Icons.** [Phosphor](https://phosphoricons.com/) SVGs (MIT), recoloured to the theme in Qt and drawn inline in the web pages.
 
@@ -392,7 +395,7 @@ Saved at `~/.prolink-monitor/settings.json`. On Windows that is `C:\Users\<you>\
 | `waveform_palette` | `cdj3000` | `cdj3000` (rekordbox) or `beatlink` |
 | `pwv7_order` | `low_mid_high` | `low_mid_high` (rbxport) or `mid_high_low` (Deep Symmetry / Beat Link) |
 | `pwv6_order` | `low_mid_high` | Same choices, for the PWV6 overview and vocal lane |
-| `wave_zoom_seconds_by_deck` | `{}` | Wheel zoom per deck, 2–30 s |
+| `wave_zoom_seconds_by_deck` | `{}` | Wheel zoom per deck, 2–96 s; cleared when a bar button is pressed |
 | `zoom_bars` | `4` | Bars in the detail wave |
 | `show_phrases` | on | Phrase strip |
 | `show_vocals` | on | Vocal lane |
