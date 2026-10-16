@@ -653,6 +653,7 @@ class MonitorPage(Page):
             # Register the track id first. update_deck clears a stale wave when
             # the id changes; doing that after set_track_data wiped the wave
             # that had just been attached.
+            pos = self._smooth_pos(d, pos)
             card.update_deck(d, pos)
             if tid:
                 meta = self._backend_cached("meta", tid, deck=deck_no, track_key=tkey or None)
@@ -754,6 +755,7 @@ class MonitorPage(Page):
                 loop_end_ms=d.get("loop_end_ms"),
                 packet_age_s=float(d.get("playhead_age_s") or 0),
             )
+            pos = self._smooth_pos(d, pos)
             card.advance_playhead(
                 pos,
                 bool(d.get("playing")),
@@ -764,6 +766,20 @@ class MonitorPage(Page):
                 loop_start_ms=d.get("loop_start_ms"),
                 loop_end_ms=d.get("loop_end_ms"),
             )
+
+    def _smooth_pos(self, d: dict, pos: float) -> float:
+        """Smoothed display playhead for the 60 Hz paint (see DisplayPlayhead)."""
+        from prolink.playhead_smooth import DisplayPlayhead
+        smoothers = self.__dict__.setdefault("_playheads", {})
+        n = int(d.get("number") or 0)
+        sm = smoothers.get(n)
+        if sm is None:
+            sm = smoothers[n] = DisplayPlayhead()
+        return sm.update(
+            pos, playing=bool(d.get("playing")), speed=float(d.get("speed") or 1.0),
+            now=time.perf_counter(), key=(d.get("track_id"), d.get("track_key")),
+            looping=(d.get("state") == "looping"),
+        )
 
     def _visible(self, decks: list[dict]) -> list[dict]:
         """Pick decks for the current layout and return them in display order."""

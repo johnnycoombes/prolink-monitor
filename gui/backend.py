@@ -10,7 +10,7 @@ import time
 import webbrowser
 from typing import Any
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -75,10 +75,14 @@ class Backend(QObject):
         self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="prolink-warm")
         self._queued: set[tuple[str, str]] = set()
         self._miss: dict[tuple[str, str], tuple[float, float]] = {}
+        self._meta_final: set[str] = set()   # title-only meta accepted after retries
 
         self._state_timer = QTimer(self)
         self._state_timer.timeout.connect(self._tick)
         self._paint_timer = QTimer(self)
+        # Coarse timers snap to ~15.6 ms on Windows, so a 60 Hz paint
+        # alternates 16/31 ms frames. Precise keeps the scroll even.
+        self._paint_timer.setTimerType(Qt.PreciseTimer)
         self._paint_timer.timeout.connect(self._paint_tick)
 
     # -- public API ---------------------------------------------------------
@@ -125,6 +129,7 @@ class Backend(QObject):
             self._meta_miss.clear()
             self._queued.clear()
             self._miss.clear()
+            self._meta_final.clear()
             self._hot.clear()
         self._stop_http()
         if monitor is not None:
@@ -284,12 +289,20 @@ class Backend(QObject):
                     self._queued.discard((kind, cache_id))
                     if got and kind == "meta" and not meta_is_analysed(got):
                         # Title only so far: back off, then ask again for the cues.
-                        self._note_miss(kind, cache_id, time.monotonic())
+                        # Bounded: once the backoff is exhausted, keep what we have
+                        # (a track with no detail analysis must not retry forever).
+                        prev = self._miss.get((kind, cache_id))
+                        if prev is not None and int(prev[1]) >= len(self.MISS_BACKOFF_S) - 1:
+                            self._miss.pop((kind, cache_id), None)
+                            self._meta_final.add(cache_id)
+                        else:
+                            self._note_miss(kind, cache_id, time.monotonic())
                     elif got:
                         self._miss.pop((kind, cache_id), None)
                     else:
                         self._note_miss(kind, cache_id, time.monotonic())
-            if got:
+            # meta() emits track_ready itself, and only when the entry changed.
+            if got and kind != "meta":
                 self.track_ready.emit(track_id)
 
         try:
@@ -314,7 +327,8 @@ class Backend(QObject):
             return None
         with self._lock:
             hit = self._meta_cache.get(self._track_cache_id(track_id, track_key))
-        if hit is None or not meta_is_analysed(hit):
+        cache_id = self._track_cache_id(track_id, track_key)
+        if hit is None or (not meta_is_analysed(hit) and cache_id not in self._meta_final):
             # A title-only entry has no cues yet: keep asking (with backoff).
             self._request("meta", track_id, deck, track_key)
         return hit
@@ -356,7 +370,10 @@ class Backend(QObject):
                 return cached
             with self._lock:
                 self._meta_cache[self._track_cache_id(track_id, token or track_key)] = meta
-            self.track_ready.emit(track_id)
+            # A re-ask that returned the same title-only meta changes nothing on
+            # screen; don't nudge the Monitor (1.0.22 emitted on every re-ask).
+            if meta != cached:
+                self.track_ready.emit(track_id)
         # Title-only metadata is shown but not treated as a final answer: the
         # request queue backs off and asks again until the cues arrive.
         return meta

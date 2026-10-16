@@ -606,6 +606,23 @@ let last = null;
 let receivedAt = 0;
 let cardRefs = null;   // cached element lists for the current card markup
 
+
+// Rekordbox / CDJ cue colours: hot cues use their colour (default yellow);
+// memory cues are red unless the export gave them a colour. A black (0,0,0)
+// colour means "none" in the ANLZ PCO2 entry, not black.
+function cueFill(c) {
+  const k = c && c.color;
+  if (k && k.length >= 3 && (k[0] || k[1] || k[2])) return `rgb(${k[0]},${k[1]},${k[2]})`;
+  return c && c.hot ? '#ffd45e' : '#ff3b30';
+}
+// Stored loops (memory or hot) as a bar along the top edge, like the CDJ.
+function drawLoopBar(ctx, x0, x1, r, c) {
+  ctx.fillStyle = (c && c.color && (c.color[0] || c.color[1] || c.color[2])) ? cueFill(c) : '#ff9f45';
+  ctx.globalAlpha = .85;
+  ctx.fillRect(x0, 0, Math.max(2 * r, x1 - x0), 3 * r);
+  ctx.globalAlpha = 1;
+}
+
 function mmss(ms){
   ms = Math.max(0, ms|0);
   const t = Math.floor(ms/1000);
@@ -704,6 +721,8 @@ function attachBands(wave, bands){ return ProlinkWave.attachBands(wave, bands); 
 function attachBlue(wave, blue){ return ProlinkWave.attachBlue(wave, blue); }
 
 const waveRetryAt = new Map();
+const metaRetries = new Map();   // detail-less meta refetches per track
+const META_RETRY_MAX = 4;
 
 async function loadTrack(deck){
   const id = deck.track_id;
@@ -733,12 +752,17 @@ async function loadTrack(deck){
     if (!(+meta.detail_columns > 0)) {
       const again = await fetch(`/api/track/${id}${qs}`).then(r => r.ok ? r.json() : null).catch(() => null);
       if (again && (!deck.track_key || !again.track_key || again.track_key === deck.track_key)) full = again;
-      if (!(+full.detail_columns > 0)) {
-        waveRetryAt.set(cacheId, Date.now() + 1200);
+      // Bounded: a track with no detail analysis must not refetch meta +
+      // waveform (and re-decode) every 1.2 s forever. After a few tries, keep it.
+      const tries = (metaRetries.get(cacheId) || 0) + 1;
+      metaRetries.set(cacheId, tries);
+      if (!(+full.detail_columns > 0) && tries < META_RETRY_MAX) {
+        waveRetryAt.set(cacheId, Date.now() + 1200 * tries);
         return;
       }
     }
     waveRetryAt.delete(cacheId);
+    metaRetries.delete(cacheId);
     tracks.set(cacheId, {
       meta: full, detail: decoded.detail, overview: decoded.overview, track_id: id,
     });
@@ -980,10 +1004,12 @@ function paintWaveCanvas(cv, pack, pos, color, looping, deck){
   // Cue markers on the overlay mini-wave.
   if (pack.meta && pack.meta.cues) {
     for (const c of pack.meta.cues) {
-      if (c.type === 'loop') continue;
+      if (c.type === 'loop') {
+        if (c.end > c.t) drawLoopBar(ctx, (c.t / dur) * W, (c.end / dur) * W, r, c);
+        continue;
+      }
       const cx = (c.t / dur) * W;
-      ctx.fillStyle = c.color ? `rgb(${c.color[0]},${c.color[1]},${c.color[2]})`
-                              : (c.hot ? '#ffd45e' : '#ffffff');
+      ctx.fillStyle = cueFill(c);
       ctx.fillRect(cx - r, 0, Math.max(2, Math.round(2 * r)), H);
       if (c.hot) {
         const bw = 10 * r, bh = 8 * r;
@@ -1239,6 +1265,7 @@ function renderNowPanel(deck, pos) {
           ${key ? `<div class="key">${escapeHtml(key)}</div>` : ''}
           <div class="deck-tag">DECK ${deck.number}</div>
           <div class="barbeat" data-barbeat>${escapeHtml(barBeatOf(deck))}</div>
+          <div class="time" data-time>${timeHtml(pos, overlayDuration(deck, pack))}</div>
           ${nextCueHtml()}
         </div>
       </div>

@@ -82,3 +82,37 @@ def sync_detail_origin(cache_start: float, true_start: float, px_per_col: float,
         return float(true_start), 0, True
     moved_css = shift_device / scale
     return float(cache_start) - moved_css / float(px_per_col), shift_device, False
+
+
+class DisplayPlayhead:
+    """Per-frame display position for a 60 Hz paint, between ~5-20 Hz updates.
+
+    Each paint advances the shown position by real elapsed time x speed and
+    eases a small share of the remaining error toward the extrapolated target,
+    so a new state snapshot never makes the strip step back or jump forward.
+    Seeks, loops, pauses and track changes (error over ``snap_ms``) snap.
+    """
+
+    def __init__(self, ease: float = 0.2, snap_ms: float = 300.0):
+        self.ease = ease
+        self.snap_ms = snap_ms
+        self._shown: float | None = None
+        self._at = 0.0
+        self._key = None
+
+    def update(self, target_ms: float, *, playing: bool, speed: float, now: float,
+               key=None, looping: bool = False) -> float:
+        target = float(target_ms)
+        if (self._shown is None or not playing or looping or key != self._key
+                or speed <= 0):
+            self._shown, self._at, self._key = target, now, key
+            return target
+        dt = max(0.0, min(0.25, now - self._at))
+        expected = self._shown + dt * float(speed) * 1000.0
+        err = target - expected
+        if abs(err) > self.snap_ms:
+            shown = target
+        else:
+            shown = expected + err * self.ease
+        self._shown, self._at = shown, now
+        return shown

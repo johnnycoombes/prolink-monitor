@@ -769,6 +769,23 @@ function applyMonitorDisplay(display) {
 }
 
 /* --------------------------------------------------------------- utilities */
+
+// Rekordbox / CDJ cue colours: hot cues use their colour (default yellow);
+// memory cues are red unless the export gave them a colour. A black (0,0,0)
+// colour means "none" in the ANLZ PCO2 entry, not black.
+function cueFill(c) {
+  const k = c && c.color;
+  if (k && k.length >= 3 && (k[0] || k[1] || k[2])) return `rgb(${k[0]},${k[1]},${k[2]})`;
+  return c && c.hot ? '#ffd45e' : '#ff3b30';
+}
+// Stored loops (memory or hot) as a bar along the top edge, like the CDJ.
+function drawLoopBar(ctx, x0, x1, r, c) {
+  ctx.fillStyle = (c && c.color && (c.color[0] || c.color[1] || c.color[2])) ? cueFill(c) : '#ff9f45';
+  ctx.globalAlpha = .85;
+  ctx.fillRect(x0, 0, Math.max(2 * r, x1 - x0), 3 * r);
+  ctx.globalAlpha = 1;
+}
+
 const mmss = ms => {
   if (!isFinite(ms) || ms < 0) ms = 0;
   const t = Math.floor(ms / 1000);
@@ -863,6 +880,8 @@ function fillWave(ctx, x, mid, amp, src, wave, span, colW) {
 }
 
 const waveRetryAt = new Map();
+const metaRetries = new Map();   // detail-less meta refetches per track
+const META_RETRY_MAX = 4;
 
 async function loadTrack(deck) {
   const id = deck.track_id;
@@ -892,12 +911,17 @@ async function loadTrack(deck) {
     if (!(+meta.detail_columns > 0)) {
       const again = await fetch(`/api/track/${id}${qs}`).then(r => r.ok ? r.json() : null).catch(() => null);
       if (again && (!deck.track_key || !again.track_key || again.track_key === deck.track_key)) full = again;
-      if (!(+full.detail_columns > 0)) {
-        waveRetryAt.set(cacheId, Date.now() + 1200);
+      // Bounded: a track with no detail analysis must not refetch meta +
+      // waveform (and re-decode) every 1.2 s forever. After a few tries, keep it.
+      const tries = (metaRetries.get(cacheId) || 0) + 1;
+      metaRetries.set(cacheId, tries);
+      if (!(+full.detail_columns > 0) && tries < META_RETRY_MAX) {
+        waveRetryAt.set(cacheId, Date.now() + 1200 * tries);
         return;
       }
     }
     waveRetryAt.delete(cacheId);
+    metaRetries.delete(cacheId);
     tracks.set(cacheId, {
       meta: full, detail: decoded.detail, overview: decoded.overview, track_id: id,
     });
@@ -1403,10 +1427,12 @@ function drawOverview(d, track, pos, looping, deck) {
   }
 
   for (const c of (track.meta.cues || [])) {   // cue markers
-    if (c.type === 'loop') continue;
+    if (c.type === 'loop') {
+      if (c.end > c.t) drawLoopBar(ctx, (c.t / dur) * W, (c.end / dur) * W, r, c);
+      continue;
+    }
     const cx = (c.t / dur) * W;
-    ctx.fillStyle = c.color ? `rgb(${c.color[0]},${c.color[1]},${c.color[2]})`
-                            : (c.hot ? '#ffd45e' : '#ffffff');
+    ctx.fillStyle = cueFill(c);
     ctx.fillRect(cx - Math.max(1, r) / 2, 0, Math.max(2, Math.round(2 * r)), H);
     if (c.hot) {
       const bw = 10 * r, bh = 8 * r;
@@ -1484,11 +1510,18 @@ function drawDetail(d, track, pos, playing, looping, anchor, deck) {
       fillWave(o, Math.round(x * r), mid, (tall / 31) * span, src, track.detail, span, colW);
     }
     for (const c of (meta.cues || [])) {
-      if (c.type === 'loop') continue;
+      if (c.type === 'loop') {
+        if (c.end > c.t) {
+          const lx0 = ((c.t / 1000) * cps - rangeStart) * pxPerCol;
+          const lx1 = ((c.end / 1000) * cps - rangeStart) * pxPerCol;
+          const a0 = Math.max(lx0, xLo), a1 = Math.min(lx1, xHi);   // only this stripe
+          if (a1 > a0) drawLoopBar(o, a0 * r, a1 * r, r, c);
+        }
+        continue;
+      }
       const x = ((c.t / 1000) * cps - rangeStart) * pxPerCol;
       if (x < xLo - 20 || x > xHi + 20) continue;
-      o.fillStyle = c.color ? `rgb(${c.color[0]},${c.color[1]},${c.color[2]})`
-                            : (c.hot ? '#ffd45e' : '#ffffff');
+      o.fillStyle = cueFill(c);
       o.fillRect(Math.round(x * r) - r, 0, Math.max(2, Math.round(2 * r)), H);
       if (c.hot) {
         o.fillRect(Math.round(x * r) - 6 * r, 0, 12 * r, 9 * r);
