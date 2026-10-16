@@ -122,6 +122,8 @@ class WebServerReconnectTests(unittest.TestCase):
         self.server.sse_write_timeout = 0.4
         self.server.sse_sndbuf = 1024
         self.server.sse_heartbeat_s = 0.05
+        # Send every frame so the tiny static test state still fills the buffer.
+        self.server.sse_resend_s = 0
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024)
         sock.settimeout(2.0)

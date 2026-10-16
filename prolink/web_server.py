@@ -91,6 +91,7 @@ class PanelServer(ThreadingHTTPServer):
         self.sse_write_timeout = SSE_WRITE_TIMEOUT_S
         self.sse_heartbeat_s = SSE_HEARTBEAT_S
         self.sse_sndbuf = 0
+        self.sse_resend_s = UNCHANGED_RESEND_S
         super().__init__(server_address, RequestHandlerClass)
 
     def server_bind(self) -> None:
@@ -334,6 +335,9 @@ class FrameGate:
             self._last[kind] = (digest, now)
             return True
         prev = self._last.get(kind)
+        if self.resend_s <= 0:
+            self._last[kind] = (digest, now)
+            return True
         if prev is not None and prev[0] == digest and now - prev[1] < self.resend_s:
             return False
         self._last[kind] = (digest, now)
@@ -361,7 +365,8 @@ def serve_sse(handler, *, paint_hz: float = DEFAULT_PAINT_HZ,
     timeout = float(getattr(server, "sse_write_timeout", SSE_WRITE_TIMEOUT_S) or SSE_WRITE_TIMEOUT_S)
     heartbeat_s = float(getattr(server, "sse_heartbeat_s", SSE_HEARTBEAT_S) or SSE_HEARTBEAT_S)
     sndbuf = int(getattr(server, "sse_sndbuf", 0) or 0)
-    gate = FrameGate()
+    # sse_resend_s <= 0 sends every frame (no unchanged-skip).
+    gate = FrameGate(float(getattr(server, "sse_resend_s", UNCHANGED_RESEND_S)))
     try:
         if sndbuf > 0:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, sndbuf)

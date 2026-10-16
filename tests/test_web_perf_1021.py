@@ -58,6 +58,11 @@ class FrameGateTests(unittest.TestCase):
         self.assertTrue(g.should_send("state", "a", 1.0))
         self.assertTrue(g.should_send("state", "b", 1.1))
 
+    def test_resend_zero_disables_skip(self):
+        g = web_server.FrameGate(resend_s=0)
+        self.assertTrue(g.should_send("state", "a", 0.0))
+        self.assertTrue(g.should_send("state", "a", 0.01))
+
     def test_paint_always_sent_while_playing(self):
         g = web_server.FrameGate()
         self.assertTrue(g.should_send("paint", "a", 0.0, playing=True))
