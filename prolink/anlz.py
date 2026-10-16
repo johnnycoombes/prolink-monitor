@@ -346,7 +346,7 @@ def _jround(value: float) -> int:
     return int(value + 0.5)
 
 
-def decode_color_detail(data: bytes) -> tuple[bytearray, bytearray]:
+def _decode_color_detail_py(data: bytes) -> tuple[bytearray, bytearray]:
     """Colour detail waveform (PWV5), as Beat Link ``WaveformDetail`` RGB.
 
     Each column is one big-endian 16-bit word. Height is bits 2-6 (0-31).
@@ -374,7 +374,7 @@ def decode_color_detail(data: bytes) -> tuple[bytearray, bytearray]:
     return heights, rgb
 
 
-def decode_color_preview(data: bytes) -> tuple[bytearray, bytearray]:
+def _decode_color_preview_py(data: bytes) -> tuple[bytearray, bytearray]:
     """Colour overview (PWV4, 6 bytes), as Beat Link ``WaveformPreview`` RGB.
 
     Bytes 3, 4 and 5 are the red, green and blue levels. The front height is
@@ -396,7 +396,7 @@ def decode_color_preview(data: bytes) -> tuple[bytearray, bytearray]:
     return heights, rgb
 
 
-def decode_blue_colors(data: bytes) -> tuple[bytearray, bytearray]:
+def _decode_blue_colors_py(data: bytes) -> tuple[bytearray, bytearray]:
     """Blue detail (PWV3): height in bits 0-4, shade in bits 5-7.
 
     The shade indexes ``WaveformDetail.COLOR_MAP``.
@@ -409,6 +409,76 @@ def decode_blue_colors(data: bytes) -> tuple[bytearray, bytearray]:
         color = BLUE_COLOR_MAP[(b >> 5) & 0x07]
         rgb[i * 3:i * 3 + 3] = bytes(color)
     return heights, rgb
+
+
+# ---------------------------------------------------------- numpy fast paths
+# numpy is optional (it ships with the OneLibrary extras). Each fast path is
+# byte-identical to the pure-Python decoder above; tests compare them.
+try:  # pragma: no cover - depends on the environment
+    import numpy as _np
+except Exception:  # pragma: no cover
+    _np = None
+
+_NP_MIN = 64        # tiny inputs are faster in pure Python
+
+
+def _decode_color_detail_np(data: bytes) -> tuple[bytearray, bytearray]:
+    n = len(data) // 2
+    x = _np.frombuffer(data, dtype=">u2", count=n).astype(_np.int32)
+    heights = ((x >> 2) & 0x1F).astype(_np.uint8)
+    rgb = _np.empty((n, 3), dtype=_np.int32)
+    rgb[:, 0] = (x >> 13) & 0x07
+    rgb[:, 1] = (x >> 7) & 0x07
+    rgb[:, 2] = (x >> 10) & 0x07
+    rgb = (rgb * 255 // 7).astype(_np.uint8)
+    return bytearray(heights.tobytes()), bytearray(rgb.tobytes())
+
+
+def _decode_color_preview_np(data: bytes) -> tuple[bytearray, bytearray]:
+    n = len(data) // 6
+    a = _np.frombuffer(data, dtype=_np.uint8, count=n * 6).reshape(n, 6)[:, 3:6].astype(_np.int32)
+    back = a.max(axis=1)
+    heights = _np.minimum(31, back * 31 // 255).astype(_np.uint8)
+    safe = _np.where(back == 0, 1, back)[:, None]
+    rgb = _np.where(back[:, None] == 0, 0, a * 255 // safe).astype(_np.uint8)
+    return bytearray(heights.tobytes()), bytearray(rgb.tobytes())
+
+
+_BLUE_LUT = None
+
+
+def _decode_blue_colors_np(data: bytes) -> tuple[bytearray, bytearray]:
+    global _BLUE_LUT
+    if _BLUE_LUT is None:
+        _BLUE_LUT = _np.array(BLUE_COLOR_MAP, dtype=_np.uint8)
+    b = _np.frombuffer(data, dtype=_np.uint8)
+    heights = b & 0x1F
+    rgb = _BLUE_LUT[(b >> 5) & 0x07]
+    return bytearray(heights.tobytes()), bytearray(rgb.tobytes())
+
+
+def _pick(fast, slow, data):
+    if _np is not None and len(data) >= _NP_MIN:
+        try:
+            return fast(bytes(data))
+        except Exception:  # pragma: no cover - fall back on any numpy surprise
+            pass
+    return slow(data)
+
+
+def decode_color_detail(data: bytes) -> tuple[bytearray, bytearray]:
+    """PWV5 colour detail; see :func:`_decode_color_detail_py`. numpy when available."""
+    return _pick(_decode_color_detail_np, _decode_color_detail_py, data)
+
+
+def decode_color_preview(data: bytes) -> tuple[bytearray, bytearray]:
+    """PWV4 colour overview; see :func:`_decode_color_preview_py`. numpy when available."""
+    return _pick(_decode_color_preview_np, _decode_color_preview_py, data)
+
+
+def decode_blue_colors(data: bytes) -> tuple[bytearray, bytearray]:
+    """PWV3 blue detail; see :func:`_decode_blue_colors_py`. numpy when available."""
+    return _pick(_decode_blue_colors_np, _decode_blue_colors_py, data)
 
 
 def vocal_spans(analysis: Analysis, duration_ms: float | None = None) -> list[dict]:

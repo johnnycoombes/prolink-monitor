@@ -33,6 +33,7 @@ from prolink.anlz_resolve import AnlzChoice               # noqa: E402
 from prolink.library import Library, Media                # noqa: E402
 from prolink import onelibrary                            # noqa: E402
 from prolink import models                                # noqa: E402
+from prolink.lru import BoundedLRU                        # noqa: E402
 from prolink import library_tree                          # noqa: E402
 from prolink import fields as _fields                     # noqa: E402
 from prolink import __version__ as _PROLINK_VERSION       # noqa: E402
@@ -186,6 +187,10 @@ def _shell_track(track_id: int, fields: dict):
     )
 
 
+TRACK_CACHE_ITEMS = 50                 # waveforms / metadata kept in memory
+ART_CACHE_BYTES = 24 * 1024 * 1024     # artwork kept in memory
+
+
 class Monitor:
     """Joins the network engine with the library and exposes resolved state."""
 
@@ -202,8 +207,12 @@ class Monitor:
         self._hires_art = HiResArtCache(cache_dir or getattr(self.library, "cache_dir", None))
         self.engine.on_track_change = self._on_track_change
         # Keyed by device + export + PDB fingerprint + slot + track_id.
-        self._waveforms: dict[tuple, bytes] = {}
-        self._meta: dict[tuple, dict] = {}
+        # Bounded: the tracks on a deck now (hot set) are never evicted; the rest
+        # is an LRU of ~50 tracks so a long set cannot grow memory without limit.
+        self._waveforms: dict[tuple, bytes] = BoundedLRU(
+            TRACK_CACHE_ITEMS, pinned=self._hot_keys)
+        self._meta: dict[tuple, dict] = BoundedLRU(
+            TRACK_CACHE_ITEMS, pinned=self._hot_keys)
         # Latest resolved medium for each deck (see track_cache_key).
         self._deck_keys: dict[int, tuple] = {}
         self.show_phrases = True
@@ -220,7 +229,8 @@ class Monitor:
         self._remotedb_fail: dict[str, str] = {}
         self._live_detail: dict[str, tuple[str, str]] = {}
         self._stop = threading.Event()
-        self._art_cache: dict[tuple, dict[str, tuple[bytes, str]] | tuple[bytes, str]] = {}
+        self._art_cache: dict[tuple, dict[str, tuple[bytes, str]] | tuple[bytes, str]] = BoundedLRU(
+            48, max_bytes=ART_CACHE_BYTES, pinned=self._hot_keys)
         self._art_source_by_deck: dict[int, str] = {}
         self._last_art_source: str = "none"
         # Per deck: how the ANLZ path was chosen, and why a fetch failed.
@@ -1109,8 +1119,38 @@ class Monitor:
                 self._waveforms.pop(oldest, None)
                 self._meta.pop(oldest, None)
 
+    ENSURE_WAIT_S = 0.25   # a second caller waits at most this long for the first
+
     def ensure(self, track_id: int, *, deck: int | None = None,
-               force_waveform: bool = False) -> None:
+               force_waveform: bool = False, wait: float | None = None) -> None:
+        """Load a track on demand, at most once at a time per track key.
+
+        The desktop tick, the web panel and the overlay can all ask for the
+        same track at once. Only the first caller reads NFS/dbserver; the
+        others wait up to ``wait`` seconds (default ``ENSURE_WAIT_S``) for it
+        and then return with whatever is cached, never blocking long.
+        """
+        key = self._resolve_key(track_id, deck)
+        if key is None:
+            return
+        with self._lock:
+            inflight = self.__dict__.setdefault("_ensure_inflight", {})
+            event = inflight.get(key)
+            first = event is None
+            if first:
+                event = inflight[key] = threading.Event()
+        if not first:
+            event.wait(self.ENSURE_WAIT_S if wait is None else max(0.0, wait))
+            return
+        try:
+            self._ensure_once(track_id, deck=deck, force_waveform=force_waveform)
+        finally:
+            with self._lock:
+                inflight.pop(key, None)
+            event.set()
+
+    def _ensure_once(self, track_id: int, *, deck: int | None = None,
+                     force_waveform: bool = False) -> None:
         """Load a track on demand when it has not been prepared yet.
 
         Titles can be published before the ANLZ files are read. ``force_waveform``
@@ -1234,13 +1274,18 @@ class Monitor:
                 return cached[0], str(cached[1])
         return None
 
+    def _hot_keys(self) -> list:
+        """Track keys loaded on a deck right now (never evicted)."""
+        keys = getattr(self, "_deck_keys", None) or {}
+        return list(keys.values())
+
     def _store_art(self, key: tuple, size: str, data: bytes, source: str,
                    deck: int | None) -> None:
         with self._lock:
             slot = self._art_cache.get(key)
             sizes: dict[str, tuple[bytes, str]]
             if isinstance(slot, dict):
-                sizes = slot
+                sizes = dict(slot)      # a new dict so the byte count stays right
             else:
                 sizes = {}
                 if (isinstance(slot, tuple) and len(slot) == 2

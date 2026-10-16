@@ -195,8 +195,39 @@ def sessions_dir(data: dict[str, Any] | None = None) -> str:
     return os.path.join(base, "sessions")
 
 
+_CACHE: dict[str, Any] = {"key": None, "data": None}
+
+
+def _cache_key(path: str):
+    try:
+        st = os.stat(path)
+        return (path, st.st_mtime_ns, st.st_size)
+    except OSError:
+        return (path, None, None)
+
+
+def invalidate_settings_cache() -> None:
+    _CACHE["key"] = None
+    _CACHE["data"] = None
+
+
 def load_settings() -> dict[str, Any]:
+    """Settings from disk, cached in memory until the file changes or is saved.
+
+    Hot paths (every web request, every state tick) called this and re-read
+    and re-parsed the JSON each time. The cache key is the path plus its
+    mtime and size, so an edit on disk is still picked up.
+    """
     path = settings_path()
+    key = _cache_key(path)
+    if key == _CACHE["key"] and _CACHE["data"] is not None:
+        return deepcopy(_CACHE["data"])
+    data = _load_settings_uncached(path)
+    _CACHE["key"], _CACHE["data"] = key, deepcopy(data)
+    return data
+
+
+def _load_settings_uncached(path: str) -> dict[str, Any]:
     data = deepcopy(DEFAULTS)
     legacy: dict[str, Any] = {}
     try:
@@ -223,6 +254,7 @@ def save_settings(data: dict[str, Any]) -> None:
         json.dump(clean, f, indent=2, sort_keys=True)
         f.write("\n")
     os.replace(tmp, path)
+    invalidate_settings_cache()
 
 
 def _sanitize(data: dict[str, Any]) -> dict[str, Any]:

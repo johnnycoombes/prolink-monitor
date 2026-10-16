@@ -18,6 +18,8 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 
 ## What's new
 
+**1.0.18.** Performance: the UI tick never does network or file I/O (cache-only reads, misses go to a bounded worker that emits track_ready), in-flight dedupe in ensure(), adaptive NFS timeouts (clamp(4×RTT, 0.25–0.5 s) with backoff, bounded worst case), 4 KB serial NFS reads (PROLINK_NFS_READ_SIZE 2–8 KB), numpy waveform decoding (~15–20× faster, byte-identical, pure-Python fallback), bounded LRU caches pinned to on-deck tracks, cached settings, one SSE frame per tick, and a negative cache with backoff so missing waveforms are no longer re-requested at 20 Hz. With 200 ms NFS latency, the median UI tick dropped from 809 ms to ~6 ms.
+
 **1.0.17.** XDJ-XZ connection advice, slot names and duplicate-path warning (from Beat Link Trigger's documentation; reference only, no code copied).
 
 - **LINK port first.** The XZ profile, README and Health now recommend the LINK port over Ethernet with **Virtual device**. **Observe only** over the USB-B cable is labelled experimental and unreliable: the built-in USB network adapter on this hardware family drops out from time to time.

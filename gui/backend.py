@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import time
 import webbrowser
 from typing import Any
@@ -16,6 +17,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from app import Handler, Monitor, QuietServer, build_source, observe_net, open_http_server  # noqa: E402
+from prolink.lru import BoundedLRU  # noqa: E402
 from gui.settings import as_namespace, sessions_dir  # noqa: E402
 from prolink import link  # noqa: E402
 from prolink.web_server import close_http_server, start_http_thread  # noqa: E402
@@ -50,11 +52,21 @@ class Backend(QObject):
         self._web_restarting = False
         self._status = "idle"
         self._detail = ""
-        self._meta_cache: dict[str, dict] = {}
-        self._wave_cache: dict[str, bytes] = {}
-        self._art_cache: dict[str, bytes] = {}
+        # Bounded: the tracks on a deck (hot set) stay; the rest is a ~50-track LRU.
+        self._hot: set[str] = set()
+        self._meta_cache: dict[str, dict] = BoundedLRU(50, pinned=lambda: self._hot)
+        self._wave_cache: dict[str, bytes] = BoundedLRU(50, pinned=lambda: self._hot)
+        self._art_cache: dict[str, bytes] = BoundedLRU(
+            48, max_bytes=16 * 1024 * 1024, pinned=lambda: self._hot)
         self._fetching: set[str] = set()
         self._meta_miss: dict[str, float] = {}
+        # One small worker pool for every cache miss (meta, waveform, artwork),
+        # instead of a thread per track. Requests are de-duplicated by key and
+        # a miss backs off (1 s, 2 s, 4 s ... 30 s) so a track whose waveform
+        # is not readable yet is not asked for 20 times a second.
+        self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="prolink-warm")
+        self._queued: set[tuple[str, str]] = set()
+        self._miss: dict[tuple[str, str], tuple[float, float]] = {}
 
         self._state_timer = QTimer(self)
         self._state_timer.timeout.connect(self._tick)
@@ -103,6 +115,9 @@ class Backend(QObject):
             self._art_cache.clear()
             self._fetching.clear()
             self._meta_miss.clear()
+            self._queued.clear()
+            self._miss.clear()
+            self._hot.clear()
         self._stop_http()
         if monitor is not None:
             try:
@@ -226,6 +241,93 @@ class Backend(QObject):
         key = (track_key or "").strip()
         return key if key else str(int(track_id))
 
+    MISS_BACKOFF_S = (1.0, 2.0, 4.0, 8.0, 15.0, 30.0)
+
+    def _backing_off(self, kind: str, cache_id: str, now: float) -> bool:
+        hit = self._miss.get((kind, cache_id))
+        return hit is not None and now < hit[0]
+
+    def _note_miss(self, kind: str, cache_id: str, now: float) -> None:
+        prev = self._miss.get((kind, cache_id))
+        step = 0 if prev is None else min(len(self.MISS_BACKOFF_S) - 1, int(prev[1]) + 1)
+        self._miss[(kind, cache_id)] = (now + self.MISS_BACKOFF_S[step], step)
+
+    def _request(self, kind: str, track_id: int, deck: int | None,
+                 track_key: str | None) -> None:
+        """Queue a background read for a cache miss (never blocks the caller)."""
+        cache_id = self._track_cache_id(track_id, track_key)
+        now = time.monotonic()
+        with self._lock:
+            if self._monitor is None or (kind, cache_id) in self._queued:
+                return
+            if self._backing_off(kind, cache_id, now):
+                return
+            self._queued.add((kind, cache_id))
+        fetch = {"meta": self.meta, "waveform": self.waveform, "artwork": self.artwork}[kind]
+
+        def job() -> None:
+            got = None
+            try:
+                got = fetch(track_id, deck=deck, track_key=track_key)
+            except Exception:
+                got = None
+            finally:
+                with self._lock:
+                    self._queued.discard((kind, cache_id))
+                    if got:
+                        self._miss.pop((kind, cache_id), None)
+                    else:
+                        self._note_miss(kind, cache_id, time.monotonic())
+            if got:
+                self.track_ready.emit(track_id)
+
+        try:
+            self._pool.submit(job)
+        except RuntimeError:            # pool shut down
+            with self._lock:
+                self._queued.discard((kind, cache_id))
+
+    def shutdown_workers(self) -> None:
+        self._pool.shutdown(wait=False, cancel_futures=True)
+
+    def set_hot_tracks(self, keys) -> None:
+        """Track keys on a deck right now; their cache entries are never evicted."""
+        with self._lock:
+            self._hot = set(keys)
+
+    # UI-thread API: cache only. A miss queues a background read and returns None;
+    # track_ready fires when it lands. No NFS, dbserver or file I/O here.
+    def meta_cached(self, track_id: int, *, deck: int | None = None,
+                    track_key: str | None = None) -> dict | None:
+        if not track_id:
+            return None
+        with self._lock:
+            hit = self._meta_cache.get(self._track_cache_id(track_id, track_key))
+        if hit is None:
+            self._request("meta", track_id, deck, track_key)
+        return hit
+
+    def waveform_cached(self, track_id: int, *, deck: int | None = None,
+                        track_key: str | None = None) -> bytes | None:
+        if not track_id:
+            return None
+        with self._lock:
+            hit = self._wave_cache.get(self._track_cache_id(track_id, track_key))
+        if hit is None:
+            self._request("waveform", track_id, deck, track_key)
+        return hit
+
+    def artwork_cached(self, track_id: int, *, deck: int | None = None,
+                       track_key: str | None = None) -> bytes | None:
+        if not track_id:
+            return None
+        with self._lock:
+            hit = self._art_cache.get(self._track_cache_id(track_id, track_key))
+        if hit is None:
+            self._request("artwork", track_id, deck, track_key)
+        return hit
+
+    # Blocking versions: worker threads, web handlers and tests only.
     def meta(self, track_id: int, *, deck: int | None = None,
              track_key: str | None = None) -> dict | None:
         if not track_id or self._monitor is None:
@@ -515,40 +617,21 @@ class Backend(QObject):
         state["backend_detail"] = self._detail
         self.state_changed.emit(self._with_web(state))
 
-        # warm metadata for loaded tracks without blocking the UI thread hard.
-        # Cap to one in-flight fetch per track_id; remember misses briefly so
-        # rekordbox-linked tracks (no NFS metadata) do not spawn 20 threads/s.
-        now = time.time()
+        # Warm metadata for loaded tracks on the bounded worker pool. The same
+        # de-duplication and miss backoff apply as for the UI's cache reads.
+        hot = set()
         for deck in state.get("decks") or []:
             tid = deck.get("track_id") or 0
             if not tid:
                 continue
             tkey = deck.get("track_key") or ""
-            cache_id = self._track_cache_id(tid, tkey)
+            hot.add(self._track_cache_id(tid, tkey))
             deck_no = int(deck.get("number") or 0) or None
             with self._lock:
-                if cache_id in self._meta_cache or cache_id in self._fetching:
+                if self._track_cache_id(tid, tkey) in self._meta_cache:
                     continue
-                miss_at = self._meta_miss.get(cache_id)
-                if miss_at is not None and now - miss_at < 10.0:
-                    continue
-                self._fetching.add(cache_id)
-
-            def _warm(track_id: int = tid, track_key: str = tkey,
-                      deck_number: int | None = deck_no, cid: str = cache_id) -> None:
-                try:
-                    meta = self.meta(track_id, deck=deck_number, track_key=track_key or None)
-                    if not meta:
-                        with self._lock:
-                            self._meta_miss[cid] = time.time()
-                    else:
-                        with self._lock:
-                            self._meta_miss.pop(cid, None)
-                finally:
-                    with self._lock:
-                        self._fetching.discard(cid)
-
-            threading.Thread(target=_warm, daemon=True).start()
+            self._request("meta", tid, deck_no, tkey or None)
+        self.set_hot_tracks(hot)
 
     def _paint_tick(self) -> None:
         if self._monitor is None:
