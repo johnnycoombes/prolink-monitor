@@ -30,10 +30,12 @@ ALL_IN_ONE_MODELS = {
 
 # Notes shown on Health next to the model.
 MODEL_NOTES = {
-    "XDJ-XZ": "2 decks (1, 2) + mixer (33) on one IP; no media-slot broadcasts; "
-              "reported (unconfirmed) not to defend device numbers on the laptop port",
+    "XDJ-XZ": "2 decks (1, 2) + mixer (33) on one IP; use the LINK port over Ethernet "
+              "(the USB-B network is experimental and unreliable); two USB ports, no SD; "
+              "cannot be remote controlled; reported (unconfirmed) not to defend device numbers",
     "XDJ-AZ": "decks 1-4 + mixer (33) on one IP",
-    "OPUS-QUAD": "no dbserver and no beat packets; metadata needs a USB archive (not supported)",
+    "OPUS-QUAD": "no dbserver and no beat packets; metadata needs a USB archive (not supported); "
+                 "use one USB at a time; its track IDs can drift from the USB's export.pdb IDs",
     "XDJ-RX3": "untested",
     "OMNIS-DUO": "decks multiplexed on one player number; untested",
 }
@@ -203,6 +205,51 @@ _SLOT_EXPORTS = {
 }
 
 
+# What the unit has in each reported slot (BLT players.clj / util.clj): the
+# XDJ-XZ has two USB ports and no SD; it reports USB 1 as "SD" and USB 2 as
+# "USB". The XDJ-AZ is the other way round ("USB" = USB 1, "SD" = USB 2), and
+# slot code 7 is USB 2 on the AZ. Labels only: NFS still maps by the reported
+# slot (/B/ for "SD", /C/ for "USB").
+_SLOT_DISPLAY = {
+    "XDJ-XZ": {"sd": "USB 1", "usb": "USB 2", "usb2": "USB 2"},
+    "XDJ-AZ": {"sd": "USB 2", "usb": "USB 1", "usb2": "USB 2"},
+}
+_DEFAULT_SLOT_DISPLAY = {"sd": "SD", "usb": "USB", "usb2": "USB 2", "cd": "CD",
+                         "empty": "", "rekordbox": "rekordbox", "beatport": "Beatport",
+                         "direct_play": "Streaming Direct Play", "streaming": "Streaming"}
+
+
+def slot_display(slot: str | None, device_name: str | None = None) -> str:
+    """Slot name as printed on the unit (XZ: "SD" is USB 1, AZ: "SD" is USB 2)."""
+    s = str(slot or "").split("#", 1)[0].lower()
+    model = all_in_one_model(device_name)
+    if model in _SLOT_DISPLAY and s in _SLOT_DISPLAY[model]:
+        return _SLOT_DISPLAY[model][s]
+    return _DEFAULT_SLOT_DISPLAY.get(s, s.upper() if s else "")
+
+
+# ------------------------------------------------- several paths to one device
+
+def duplicate_paths(devices) -> list[dict]:
+    """Devices heard over more than one local adapter or source address.
+
+    ``devices`` is an iterable of (name, device_number, source_ip, local_ip or
+    ""). A unit reachable both over its USB network adapter and over Ethernet
+    sends every packet twice, which breaks timing and number claims (BLT,
+    "Built-In USB Network Problems").
+    """
+    seen: dict = {}
+    for name, number, src, local in devices:
+        key = (str(name), int(number))
+        seen.setdefault(key, set()).add((str(src), str(local or "")))
+    out = []
+    for (name, number), paths in sorted(seen.items()):
+        if len({p[0] for p in paths}) > 1 or len({p[1] for p in paths if p[1]}) > 1:
+            out.append({"name": name, "device": number,
+                        "paths": sorted(f"{s}" + (f" via {l}" if l else "") for s, l in paths)})
+    return out
+
+
 def _looks_usb(export: str) -> bool:
     low = export.lower().rstrip("/") + "/"
     return "usb" in low or low.startswith(("/c/", "/d/"))
@@ -320,7 +367,8 @@ def observe_health(kind: str, census: Census | None, now: float | None = None,
         return {"state": "waiting", "text": "Observe only: listening…"}
     if keep_age is None:
         return {"state": "silent", "text": (
-            "Observe only: nothing heard on UDP 50000-50002. Check the USB-B cable and "
+            "Observe only (experimental): nothing heard on UDP 50000-50002. The USB-B "
+            "network is unreliable; prefer the LINK port over Ethernet. Check the cable and "
             "that the adapter has an address (usually 169.254.x.x).")}
     return {"state": "no_status", "text": (
         "Observe only: keep-alives arrive but no player status packets. This link only "

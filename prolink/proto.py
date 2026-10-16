@@ -284,6 +284,9 @@ class ChannelsOnAir:
     """
     name: str
     device_number: int = 0
+    # Channel number -> on air. 1-4 from bytes 0x24-0x27; 5-6 from 0x2D-0x2E
+    # on six-channel (0x35-byte) mixers. Empty when the packet is too short.
+    channels: dict = field(default_factory=dict)
 
 
 def is_xdj_az(name: str) -> bool:
@@ -524,7 +527,10 @@ def _parse_channels_on_air(data: bytes) -> ChannelsOnAir | None:
     if len(data) < 0x2D:
         return None
     number = data[0x21] if len(data) > 0x21 else 0
-    return ChannelsOnAir(name=_name(data, 0x0B), device_number=number)
+    channels = {ch: bool(data[0x23 + ch]) for ch in range(1, 5)}
+    if len(data) >= 0x35:
+        channels.update({ch: bool(data[0x28 + ch]) for ch in (5, 6)})
+    return ChannelsOnAir(name=_name(data, 0x0B), device_number=number, channels=channels)
 
 
 def _parse_waveform_settings(data: bytes) -> tuple[str | None, str | None]:

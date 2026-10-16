@@ -77,6 +77,27 @@ def all_in_one_rows(devices: dict) -> list[dict]:
     return sorted(by_ip.values(), key=lambda r: r["ip"])
 
 
+def _engine_call(engine, name: str, default):
+    fn = getattr(engine, name, None)
+    if not callable(fn):
+        return default
+    try:
+        out = fn()
+    except Exception:
+        return default
+    return out if isinstance(out, type(default)) else default
+
+
+def _mixer_on_air(engine) -> dict:
+    """Mixer channel on-air flags (device 33 on an XZ/AZ), for Health and the probe."""
+    chans = getattr(engine, "mixer_on_air", None)
+    if not isinstance(chans, dict) or not chans:
+        return {}
+    src = getattr(engine, "mixer_on_air_from", None) or (0, "")
+    return {"device": int(src[0] or 0), "name": str(src[1] or ""),
+            "channels": {str(k): bool(v) for k, v in sorted(chans.items())}}
+
+
 def _az_mode_value(engine) -> str | None:
     """Health-page value. Ignores stand-ins that are not a real mode string."""
     fn = getattr(engine, "az_mode", None)
@@ -1754,6 +1775,8 @@ class Monitor:
             for a in sorted(devices.values(), key=lambda a: int(a.device_number))
         ]
         report["all_in_one"] = all_in_one_rows(devices)
+        report["duplicate_paths"] = _engine_call(self.engine, "duplicate_paths", [])
+        report["mixer_on_air"] = _mixer_on_air(self.engine)
         report["model"] = self.model_info()
         census = getattr(self.engine, "census", None)
         report["census"] = census.as_dict() if census is not None else {}
@@ -2163,6 +2186,7 @@ class Monitor:
                 "track_id": tid,
                 "track_key": self.deck_track_key(d.number, tid) if tid else "",
                 "slot": s.slot,
+                "slot_label": allinone.slot_display(s.slot, s.name),
                 "track_type": s.track_type,
                 "loaded_from": s.loaded_from,
                 "state": s.play_state,
@@ -2283,6 +2307,8 @@ class Monitor:
             "mode_detail": getattr(self.engine.source, "detail", ""),
             "device_number_note": getattr(self.engine.source, "number_note", ""),
             "all_in_one": all_in_one_rows(dict(self.engine.devices)),
+            "duplicate_paths": _engine_call(self.engine, "duplicate_paths", []),
+            "mixer_on_air": _mixer_on_air(self.engine),
             "model": self.model_info(),
             "observe": allinone.observe_health(
                 getattr(self.engine.source, "kind", ""), getattr(self.engine, "census", None)),

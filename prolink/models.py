@@ -53,10 +53,13 @@ PROFILES: dict[str, ModelProfile] = {p.key: p for p in (
        notes="Decks 1-4 and mixer 33 on one IP.", verified=True),
     _P("xdj-xz", "XDJ-XZ", "all-in-one", 2, (1, 2, 33), True,
        waveforms=("blue", "rgb"),
-       connection="USB-B cable (Observe only) or the LINK port (Virtual device, automatic number)",
-       recommended_mode="observe",
-       notes="Decks 1, 2 and mixer 33 on one IP. Sends no media-slot broadcasts. "
-             "Reported (unconfirmed) not to defend device numbers on the LINK port."),
+       connection="LINK port over Ethernet (Virtual device, automatic number) first; "
+                  "the USB-B cable (Observe only) is experimental and unreliable",
+       recommended_mode="vcdj",
+       notes="Decks 1, 2 and mixer 33 on one IP. Two USB ports and no SD: it reports "
+             "USB 1 as 'SD' and USB 2 as 'USB'. Sends no media-slot broadcasts. Cannot be "
+             "remote controlled (this app never tries). Reported (unconfirmed) not to "
+             "defend device numbers on the LINK port."),
     _P("cdj-3000x", "CDJ-3000X", precise_position=True,
        waveforms=("blue", "rgb", "3band"), aliases=("cdj3000x",)),
     _P("cdj-3000", "CDJ-3000", precise_position=True,
@@ -82,7 +85,9 @@ PROFILES: dict[str, ModelProfile] = {p.key: p for p in (
        dbserver=False, beat_packets=False, waveforms=("blue", "rgb", "3band"),
        connection="LINK port; Observe only", recommended_mode="observe",
        notes="Limited: no dbserver and no beat packets; track metadata is not available. "
-             "Reports decks as 9-12; shown as 1-4."),
+             "Reports decks as 9-12; shown as 1-4. Use one USB at a time: it does not say "
+             "which USB a track came from. Its track IDs (Device Library Plus) can drift "
+             "from the USB's export.pdb IDs, so a track can be misidentified."),
     _P("omnis-duo", "OMNIS-DUO", "all-in-one", 2, (1, 2, 33), True,
        waveforms=("blue", "rgb", "3band"), recommended_mode="observe",
        notes="Decks share one player number. Untested."),

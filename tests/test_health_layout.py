@@ -17,6 +17,8 @@ STATE = {
     "all_in_one": [{"ip": "192.168.1.212", "model": "XDJ-AZ", "devices": [1, 2, 3, 4, 33],
                     "note": "decks 1-4 + mixer (33) on one IP"}],
     "device_number_note": "#5 (as set, free)", "decks": [],
+    "duplicate_paths": [{"name": "XDJ-XZ", "device": 1,
+                         "paths": ["169.254.20.3", "192.168.1.40"]}],
 }
 
 
@@ -42,7 +44,7 @@ class HealthLayoutTests(unittest.TestCase):
     def _overview_widgets(self, page):
         return [page._mode_val, page._host_val, page._pkts_val, page._rate_val,
                 *page._overview_labels, page._az_lbl, page._az_val, page._model_val,
-                page._aio_val, page._number_val, page._probe_btn]
+                page._dup_val, page._aio_val, page._number_val, page._probe_btn]
 
     def test_no_overlap_and_nothing_squeezed(self):
         from PySide6.QtCore import QPoint, QRect

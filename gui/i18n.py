@@ -396,7 +396,12 @@ STRINGS = {
     "mode_auto": "Auto",
     "mode_vcdj": "Virtual device",
     "mode_sniffer": "Passive capture",
-    "mode_observe": "Observe only (USB link)",
+    "mode_observe": "Observe only (USB link, experimental)",
+    "health_dup_paths": (
+        "{name} #{device} is seen on more than one network path ({paths}). Every packet "
+        "arrives twice. Disable the unit's USB network adapter and use the LINK port "
+        "over Ethernet."
+    ),
     "number_auto": "Auto",
     "device_model": "Device model",
     "device_model_auto": "Auto-detect",

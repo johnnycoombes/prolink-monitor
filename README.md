@@ -18,6 +18,14 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 
 ## What's new
 
+**1.0.17.** XDJ-XZ connection advice, slot names and duplicate-path warning (from Beat Link Trigger's documentation; reference only, no code copied).
+
+- **LINK port first.** The XZ profile, README and Health now recommend the LINK port over Ethernet with **Virtual device**. **Observe only** over the USB-B cable is labelled experimental and unreliable: the built-in USB network adapter on this hardware family drops out from time to time.
+- **Two network paths warning.** When the same device announces from two addresses within 10 s (for example over the USB network adapter and Ethernet at once), Health shows a warning with the tip to disable the USB network adapter.
+- **Slot names.** The XZ has two USB ports and no SD: the reported "SD" slot is shown as **USB 1** and "USB" as **USB 2**. On the XDJ-AZ it is the reverse ("USB" = USB 1, "SD" or code 7 = USB 2), which matches what the AZ reports today (USB 1 as "USB"). Labels only: the NFS export is still chosen by the reported slot (`/B/`, `/C/`). Deck state gains `slot_label`.
+- **Mixer on-air.** Channels On-Air packets now carry the per-channel flags (1–4, plus 5–6 on six-channel mixers), read from whichever mixer sends them, including device 33 on the XZ and AZ; they are in `/api/state` (`mixer_on_air`) and the probe report.
+- **Notes.** Opus Quad: one USB at a time, and its track IDs can drift from `export.pdb`. XZ: cannot be remote controlled (this app is read-only anyway).
+
 **1.0.16.** Health page layout fix, an honest XDJ-AZ mode label, and an optional Intel Mac build.
 
 - **Health is readable again.** In 1.0.15 the top LINK card grew (model, all-in-one and device-number lines), but Qt does not pass the height of word-wrapped labels up through a plain card, so when the window was not tall enough the card was squeezed below its content and the column headers, the `XDJ-AZ` row, the mode label and the new lines drew over each other (clearly at 150 % scaling). The Health page now scrolls instead of squeezing, every card is kept at least as tall as its content at its current width, the overview values wrap, and the deck and NFS tables keep room for four rows at the current font size. Checked offscreen at 560–1100 px wide and 100/150/200 % scale; a layout test fails if any overview line is clipped or overlaps another.
@@ -129,12 +137,16 @@ Field offsets, NFS, and waveform decoding were checked against an **AlphaTheta X
 
 **XDJ-XZ** (not yet tested on hardware; please send a probe report)
 
-The XZ shows decks 1 and 2 and its mixer (33) on one IP. It has a dbserver and serves SD and USB over NFS. There are two ways to connect:
+The XZ shows decks 1 and 2 and its mixer (33) on one IP. It has a dbserver and serves its media over NFS. It has two USB ports and no SD slot: it reports USB 1 as "SD" and USB 2 as "USB", and the app labels them USB 1 and USB 2 (the NFS exports still follow the reported slot, `/B/` and `/C/`). It cannot be remote controlled; this app never tries, it only reads.
 
-1. **USB-B cable (simplest).** Plug the XZ's USB-B (rekordbox) port into the computer. Windows and macOS show a new wired network adapter, normally with a `169.254.x.x` address; wait up to a minute for it. In Settings set **Mode → Observe only (USB link)**, **Device model → XDJ-XZ** (or Auto-detect), leave **Interface** empty so the adapter is found automatically, and press Apply. Health should list `XDJ-XZ @ 169.254…` and say *player status packets are arriving*. If it says *keep-alives arrive but no player status packets*, that link only carries broadcasts: use the LINK port instead.
-2. **LINK / LAN port.** Ethernet from the XZ's LINK port to the computer or a switch. Set **Mode → Virtual device**, **Device number → Auto**, **Device model → XDJ-XZ** or Auto-detect. Health → Device number shows which number was taken (never 1, 2 or 33).
+1. **LINK port over Ethernet (recommended).** Ethernet from the XZ's LINK port to the computer or a switch. Set **Mode → Virtual device**, **Device number → Auto**, **Device model → XDJ-XZ** or Auto-detect. Health → Device number shows which number was taken (never 1, 2 or 33).
+2. **USB-B cable, Observe only (experimental, unreliable).** The XZ's built-in USB network adapter is known to drop the connection from time to time (Beat Link Trigger, *Opus Quad: Built-In USB Network Problems*, applies to the same hardware family). Plug the USB-B port in, wait for a new wired adapter (normally `169.254.x.x`), set **Mode → Observe only (USB link, experimental)**, leave **Interface** empty and press Apply. If Health says *keep-alives arrive but no player status packets*, use the LINK port.
 
-Then load a track from USB on deck 1 and SD on deck 2 and check title, waveform and Library. Export the probe report from Health whatever the result. Known gaps: the export name for a second USB slot is not known; the XZ sends no media-slot broadcasts, so slots are learned from status packets; whether status reaches a computer that does not announce itself is unknown.
+If the USB cable is also plugged in for audio while the LINK port is used, the unit is reachable over two network paths and every packet arrives twice. Health warns about it (*seen on more than one network path*): disable the USB network adapter (macOS: System Settings → Network → that adapter → Make Inactive; Windows: Settings → Network → Advanced network settings → Disable).
+
+Then load a track from each USB and check title, waveform and Library, and export the probe report from Health whatever the result. The probe report also lists the mixer's (device 33) channel on-air flags. Known gaps: the XZ sends no media-slot broadcasts, so slots are learned from status packets; whether status reaches a computer that does not announce itself is unknown.
+
+**Opus Quad** (limited): no dbserver and no beat packets. Use one USB at a time, because it does not report which USB a track came from, and its track IDs (Device Library Plus) can drift from the USB's `export.pdb` IDs as the collection is edited, so a track can be misidentified.
 
 **Device model profiles**
 
