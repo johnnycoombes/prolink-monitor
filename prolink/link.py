@@ -949,6 +949,10 @@ class ProLink:
         self.census = Census()
         self.playhead_smoothing = "normal"
         self._saw_az = False
+        self._paths: dict = {}          # (name, number) -> {source ip: last seen}
+        self.mixer_on_air: dict = {}
+        self.mixer_on_air_from: tuple | None = None
+        self.mixer_on_air_at: float | None = None
         self._az_first_seen: float | None = None
         self._az_status_at: float | None = None
         self._az_on_air_at: float | None = None
@@ -985,6 +989,7 @@ class ProLink:
             self.packets += 1
             if isinstance(pkt, proto.Announce):
                 self.devices[pkt.device_number] = pkt
+                self._paths.setdefault((pkt.name, pkt.device_number), {})[src_ip] = now
                 self._note_player_name(pkt.name)
             elif isinstance(pkt, proto.Beat):
                 self._deck(pkt.device_number).on_beat(pkt, now)
@@ -1018,13 +1023,31 @@ class ProLink:
                 self._az_first_seen = time.monotonic() if now is None else now
 
     def _note_channels_on_air(self, pkt: proto.ChannelsOnAir, now: float) -> None:
-        """An XDJ-AZ only emits this while it is in Pro DJ Link mode."""
+        """Mixer on-air state, from any mixer section (device 33 on an XZ/AZ).
+
+        An XDJ-AZ only emits this while it is in Pro DJ Link mode.
+        """
+        if pkt.channels:
+            self.mixer_on_air = dict(pkt.channels)
+            self.mixer_on_air_from = (pkt.device_number, pkt.name)
+            self.mixer_on_air_at = now
         if not proto.is_xdj_az(pkt.name):
             return
         self._saw_az = True
         if self._az_first_seen is None:
             self._az_first_seen = now
         self._az_on_air_at = now
+
+    def duplicate_paths(self, now: float | None = None, window: float = 10.0) -> list[dict]:
+        """Devices announcing from more than one address within ``window`` s
+        (e.g. an XZ over both its USB network adapter and Ethernet)."""
+        from .allinone import duplicate_paths
+        when = time.monotonic() if now is None else now
+        with self.lock:
+            rows = [(name, number, ip, "")
+                    for (name, number), ips in self._paths.items()
+                    for ip, seen in ips.items() if when - seen < window]
+        return duplicate_paths(rows)
 
     def az_mode(self, now: float | None = None) -> str | None:
         """``pro_dj_link``, ``four_deck``, ``unknown``, or None (no XDJ-AZ)."""

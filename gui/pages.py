@@ -891,7 +891,11 @@ class HealthPage(Page):
         self._model_val = QLabel("")
         self._model_val.setWordWrap(True)
         self._model_val.setStyleSheet("font-size:12px;")
-        for w in (self._model_val, self._aio_val, self._observe_val, self._number_val, self._probe_btn):
+        self._dup_val = QLabel("")
+        self._dup_val.setWordWrap(True)
+        self._dup_val.setStyleSheet(f"color:{COLORS['warn']}; font-size:12px;")
+        self._dup_val.setVisible(False)
+        for w in (self._model_val, self._dup_val, self._aio_val, self._observe_val, self._number_val, self._probe_btn):
             ov_l.addWidget(w)
         self.layout_root.addWidget(overview)
 
@@ -1266,6 +1270,16 @@ class HealthPage(Page):
             self._aio_val.setText(t("health_allinone") + ": " + "; ".join(parts))
         else:
             self._aio_val.setText(t("health_allinone") + ": " + t("health_allinone_none"))
+        dups = state.get("duplicate_paths") or []
+        if dups:
+            self._dup_val.setText("\n".join(
+                "⚠ " + t("health_dup_paths").format(
+                    name=d.get("name", "?"), device=d.get("device", "?"),
+                    paths=", ".join(d.get("paths") or []))
+                for d in dups))
+            self._dup_val.setVisible(True)
+        else:
+            self._dup_val.setVisible(False)
         obs = state.get("observe") or {}
         if obs:
             colour = {"ok": "ok", "waiting": "dim"}.get(obs.get("state"), "warn")
