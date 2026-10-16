@@ -18,6 +18,14 @@ if ROOT not in sys.path:
 
 from app import Handler, Monitor, QuietServer, build_source, observe_net, open_http_server  # noqa: E402
 from prolink.lru import BoundedLRU  # noqa: E402
+
+
+def meta_is_analysed(meta: dict | None) -> bool:
+    """True once the metadata carries the ANLZ results (cues, beats, phrases).
+
+    A title published before the ANLZ read has ``detail_columns`` 0.
+    """
+    return bool(meta) and int((meta or {}).get("detail_columns") or 0) > 0
 from gui.settings import as_namespace, sessions_dir  # noqa: E402
 from prolink import link  # noqa: E402
 from prolink.web_server import close_http_server, start_http_thread  # noqa: E402
@@ -274,7 +282,10 @@ class Backend(QObject):
             finally:
                 with self._lock:
                     self._queued.discard((kind, cache_id))
-                    if got:
+                    if got and kind == "meta" and not meta_is_analysed(got):
+                        # Title only so far: back off, then ask again for the cues.
+                        self._note_miss(kind, cache_id, time.monotonic())
+                    elif got:
                         self._miss.pop((kind, cache_id), None)
                     else:
                         self._note_miss(kind, cache_id, time.monotonic())
@@ -303,7 +314,8 @@ class Backend(QObject):
             return None
         with self._lock:
             hit = self._meta_cache.get(self._track_cache_id(track_id, track_key))
-        if hit is None:
+        if hit is None or not meta_is_analysed(hit):
+            # A title-only entry has no cues yet: keep asking (with backoff).
             self._request("meta", track_id, deck, track_key)
         return hit
 
@@ -334,16 +346,19 @@ class Backend(QObject):
             return None
         cache_id = self._track_cache_id(track_id, track_key)
         with self._lock:
-            if cache_id in self._meta_cache:
-                return self._meta_cache[cache_id]
+            cached = self._meta_cache.get(cache_id)
+        if cached is not None and meta_is_analysed(cached):
+            return cached
         meta = self._monitor.meta(track_id, deck=deck)
         if meta:
             token = meta.get("track_key") or ""
             if track_key and token and token != track_key:
-                return None
+                return cached
             with self._lock:
                 self._meta_cache[self._track_cache_id(track_id, token or track_key)] = meta
             self.track_ready.emit(track_id)
+        # Title-only metadata is shown but not treated as a final answer: the
+        # request queue backs off and asks again until the cues arrive.
         return meta
 
     def waveform(self, track_id: int, *, deck: int | None = None,
@@ -360,6 +375,10 @@ class Backend(QObject):
             token = (meta or {}).get("track_key") or track_key
             with self._lock:
                 self._wave_cache[self._track_cache_id(track_id, token)] = data
+                # The wave and its cues are built together: replace a
+                # title-only meta entry cached before the analysis landed.
+                if meta and meta_is_analysed(meta):
+                    self._meta_cache[self._track_cache_id(track_id, token)] = meta
             self.track_ready.emit(track_id)
         return data
 

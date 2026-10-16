@@ -886,9 +886,20 @@ async function loadTrack(deck) {
       waveRetryAt.set(cacheId, Date.now() + 1200);
       return;
     }
+    // A title published before the ANLZ read has no cues yet (detail_columns 0).
+    // The wave is built now, so ask once more for the full metadata.
+    let full = meta;
+    if (!(+meta.detail_columns > 0)) {
+      const again = await fetch(`/api/track/${id}${qs}`).then(r => r.ok ? r.json() : null).catch(() => null);
+      if (again && (!deck.track_key || !again.track_key || again.track_key === deck.track_key)) full = again;
+      if (!(+full.detail_columns > 0)) {
+        waveRetryAt.set(cacheId, Date.now() + 1200);
+        return;
+      }
+    }
     waveRetryAt.delete(cacheId);
     tracks.set(cacheId, {
-      meta, detail: decoded.detail, overview: decoded.overview, track_id: id,
+      meta: full, detail: decoded.detail, overview: decoded.overview, track_id: id,
     });
   } catch (_) {
     waveRetryAt.set(cacheId, Date.now() + 1200);

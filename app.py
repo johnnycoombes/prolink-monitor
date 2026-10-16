@@ -1275,6 +1275,16 @@ class Monitor:
         """Return cached track metadata. With load=True, may hit NFS once."""
         if load:
             self.ensure(track_id, deck=deck)
+            # A title-only entry (published before the ANLZ read finished) has
+            # no cues, beats or phrases. Clients cache what they get, so try
+            # the analysis now rather than hand out that placeholder.
+            key = self._resolve_key(track_id, deck)
+            if key is not None:
+                with self._lock:
+                    has_wave = _wave_has_detail(self._waveforms.get(key))
+                    known = key in self._meta
+                if known and not has_wave:
+                    self.waveform(track_id, deck=deck)
         key = self._resolve_key(track_id, deck)
         if key is None:
             return None
