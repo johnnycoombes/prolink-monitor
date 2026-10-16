@@ -2255,7 +2255,25 @@ class Monitor:
                 payload["spectrum"] = [round(v, 4) for v in bins]
         return payload
 
+    def recent_state(self, max_age_s: float) -> dict:
+        """A ``state()`` snapshot no older than ``max_age_s`` (shallow copy).
+
+        The desktop UI tick already builds one at 20 Hz on the UI thread; SSE
+        streams reuse it instead of building a second one under the GIL.
+        """
+        hit = getattr(self, "_recent_state", None)
+        if hit is not None and time.monotonic() - hit[0] <= max_age_s:
+            return dict(hit[1])
+        return self.state()
+
     def state(self, *, notify_wnp: bool = True) -> dict:
+        snap = self._build_state(notify_wnp=notify_wnp)
+        if notify_wnp:
+            self._recent_state = (time.monotonic(), snap)
+            return dict(snap)   # callers may add keys; keep the cached one clean
+        return snap
+
+    def _build_state(self, *, notify_wnp: bool = True) -> dict:
         decks = []
         for d in self.engine.active_decks():
             s = d.status

@@ -292,7 +292,9 @@ def shared_frame_info(monitor, kind: str, ttl: float, *, lite: bool = False):
                 if fh is not None and fh[0] is monitor and now - fh[1] < ttl:
                     base = fh[5]
             if base is None:
-                base = monitor.state()
+                recent = getattr(monitor, "recent_state", None)
+                # Reuse a snapshot the desktop UI tick built in the last ~frame.
+                base = recent(ttl) if callable(recent) else monitor.state()
                 if lite:
                     # Keep the full snapshot so a main panel on the same tick reuses it.
                     _FRAMES[full_key] = (monitor, now, None, None, None, base)

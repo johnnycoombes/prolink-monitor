@@ -704,6 +704,8 @@ function attachBands(wave, bands){ return ProlinkWave.attachBands(wave, bands); 
 function attachBlue(wave, blue){ return ProlinkWave.attachBlue(wave, blue); }
 
 const waveRetryAt = new Map();
+const metaRetries = new Map();   // detail-less meta refetches per track
+const META_RETRY_MAX = 4;
 
 async function loadTrack(deck){
   const id = deck.track_id;
@@ -733,12 +735,17 @@ async function loadTrack(deck){
     if (!(+meta.detail_columns > 0)) {
       const again = await fetch(`/api/track/${id}${qs}`).then(r => r.ok ? r.json() : null).catch(() => null);
       if (again && (!deck.track_key || !again.track_key || again.track_key === deck.track_key)) full = again;
-      if (!(+full.detail_columns > 0)) {
-        waveRetryAt.set(cacheId, Date.now() + 1200);
+      // Bounded: a track with no detail analysis must not refetch meta +
+      // waveform (and re-decode) every 1.2 s forever. After a few tries, keep it.
+      const tries = (metaRetries.get(cacheId) || 0) + 1;
+      metaRetries.set(cacheId, tries);
+      if (!(+full.detail_columns > 0) && tries < META_RETRY_MAX) {
+        waveRetryAt.set(cacheId, Date.now() + 1200 * tries);
         return;
       }
     }
     waveRetryAt.delete(cacheId);
+    metaRetries.delete(cacheId);
     tracks.set(cacheId, {
       meta: full, detail: decoded.detail, overview: decoded.overview, track_id: id,
     });
@@ -1239,6 +1246,7 @@ function renderNowPanel(deck, pos) {
           ${key ? `<div class="key">${escapeHtml(key)}</div>` : ''}
           <div class="deck-tag">DECK ${deck.number}</div>
           <div class="barbeat" data-barbeat>${escapeHtml(barBeatOf(deck))}</div>
+          <div class="time" data-time>${timeHtml(pos, overlayDuration(deck, pack))}</div>
           ${nextCueHtml()}
         </div>
       </div>
