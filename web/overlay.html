@@ -604,6 +604,7 @@ function trackPack(deck) {
 }
 let last = null;
 let receivedAt = 0;
+let cardRefs = null;   // cached element lists for the current card markup
 
 function mmss(ms){
   ms = Math.max(0, ms|0);
@@ -1606,32 +1607,44 @@ function paint(){
   if (card.dataset.sig !== sig){
     card.innerHTML = html;
     card.dataset.sig = sig;
+    // Element lists change only with the markup; look them up once here.
+    cardRefs = {
+      progress: Array.from(card.querySelectorAll('.progress > i')),
+      barbeat: Array.from(card.querySelectorAll('[data-barbeat]')),
+      time: Array.from(card.querySelectorAll('[data-time]')),
+      bpm: Array.from(card.querySelectorAll('.bpm')),
+    };
   } else {
-    card.querySelectorAll('.progress > i').forEach((el,i)=>{
+    const refs = cardRefs || {progress: [], barbeat: [], time: [], bpm: []};
+    refs.progress.forEach((el,i)=>{
       const d = decks[i] || decks[0];
       const pack = trackPack(d);
-      el.style.width = progressPct(positions[i] ?? positions[0], overlayDuration(d, pack)) + '%';
+      const w = progressPct(positions[i] ?? positions[0], overlayDuration(d, pack)) + '%';
+      if (el.style.width !== w) el.style.width = w;
     });
-    card.querySelectorAll('[data-barbeat]').forEach((el,i)=>{
+    refs.barbeat.forEach((el,i)=>{
       const d = decks[i] || decks[0];
       const text = barBeatOf(d);
       if (el.textContent !== text) el.textContent = text;
     });
-    card.querySelectorAll('[data-time]').forEach((el,i)=>{
+    refs.time.forEach((el,i)=>{
       const d = decks[i] || decks[0];
       const pack = trackPack(d);
       const pos = positions[i] ?? positions[0];
-      el.innerHTML = timeHtml(pos, overlayDuration(d, pack));
+      const h = timeHtml(pos, overlayDuration(d, pack));
+      if (el.__html !== h) { el.innerHTML = h; el.__html = h; }
     });
-    card.querySelectorAll('.bpm').forEach((el,i)=>{
+    refs.bpm.forEach((el,i)=>{
       // Setlist history has no BPM readouts; only update now/dual/minimal.
       if (layout === 'setlist' && i > 0) return;
       const d = decks[Math.min(i, decks.length-1)];
       if (!d) return;
-      if (layout === 'minimal')
-        el.textContent = d.bpm ? d.bpm.toFixed(1) : '—';
-      else
-        el.innerHTML = `${d.bpm ? d.bpm.toFixed(2) : '—'}<small>BPM</small>`;
+      const h = layout === 'minimal'
+        ? (d.bpm ? d.bpm.toFixed(1) : '—')
+        : `${d.bpm ? d.bpm.toFixed(2) : '—'}<small>BPM</small>`;
+      if (el.__html === h) return;
+      el.__html = h;
+      if (layout === 'minimal') el.textContent = h; else el.innerHTML = h;
     });
   }
   // Bar is the same strip as Panel (renderNowPanel). Paint its detail wave too.
@@ -1797,7 +1810,8 @@ function connect(){
     enableMockPreview();
     return;
   }
-  const es = new EventSource('/api/events');
+  // Lite stream: overlay keys only (no Health fields).
+  const es = new EventSource('/api/events?lite=1');
   es.onmessage = ev => applyState(JSON.parse(ev.data));
   es.onerror = () => {
     es.close();
@@ -1807,6 +1821,7 @@ function connect(){
 
 function loop(){
   requestAnimationFrame(loop);
+  if (document.hidden) return;   // hidden tab: skip painting (OBS stays visible)
   paint();
 }
 

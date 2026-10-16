@@ -13,6 +13,8 @@ from __future__ import annotations
 import argparse
 from typing import Any
 import errno
+import gzip
+import hashlib
 import json
 import os
 import re
@@ -2362,14 +2364,15 @@ class Monitor:
             if isinstance(row, dict):
                 anlz_rows.append(dict(row))
         anlz_rows.sort(key=lambda row: int(row.get("deck") or 0))
+        display = self._display_prefs()   # once per snapshot (may read settings)
         return {
             "t": time.time(),
             "paint": False,
             "decks": decks,
-            "display": self._display_prefs(),
+            "display": display,
             "spectrum": (
                 [round(v, 4) for v in (self.loopback.snapshot() or [])]
-                if self._display_prefs().get("spectrum_source") == "loopback" else None
+                if display.get("spectrum_source") == "loopback" else None
             ),
             "devices": devices,
             "packets": self.engine.packets,
@@ -2570,7 +2573,22 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _send(self, code: int, body: bytes, ctype: str, cache: str = "no-store",
-              headers: dict[str, str] | None = None) -> None:
+              headers: dict[str, str] | None = None, etag: str | None = None) -> None:
+        headers = dict(headers or {})
+        if etag:
+            headers["ETag"] = etag
+            if code == 200 and _etag_matches(self.headers.get("If-None-Match"), etag):
+                self.send_response(304)
+                self.send_header("Cache-Control", cache)
+                for key, value in headers.items():
+                    self.send_header(key, value)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+        if _wants_gzip(self.headers.get("Accept-Encoding"), ctype, body):
+            body = gzip.compress(body, compresslevel=5)
+            headers["Content-Encoding"] = "gzip"
+            headers["Vary"] = "Accept-Encoding"
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -2686,6 +2704,10 @@ class Handler(BaseHTTPRequestHandler):
                 data = self.monitor.waveform(track_id, deck=deck)
                 if not data:
                     return self._json({"error": "no_waveform"}, 404)
+                if want_key:
+                    # Keyed URLs never change content: let the browser keep them.
+                    return self._send(200, data, "application/octet-stream", ASSET_CACHE,
+                                      etag=_body_etag(data))
                 return self._send(200, data, "application/octet-stream", "no-store")
             if path.startswith("/api/artwork/"):
                 track_id, deck, want_key = self._parse_track_request(parsed)
@@ -2697,6 +2719,8 @@ class Handler(BaseHTTPRequestHandler):
                 art = self.monitor.artwork(track_id, deck=deck, size=size)
                 if not art:
                     return self._json({"error": "no_artwork"}, 404)
+                if want_key:
+                    return self._send(200, art, "image/jpeg", ART_CACHE, etag=_body_etag(art))
                 return self._send(200, art, "image/jpeg", "no-store")
             if not path.startswith("/api/"):
                 return self._static(path)
@@ -2738,7 +2762,8 @@ class Handler(BaseHTTPRequestHandler):
                 extra["X-Asset-Version"] = str(int(os.path.getmtime(path)))
             except OSError:
                 pass
-        self._send(200, body, ctype, "no-store", extra)
+        # Revalidate every load (no-cache + ETag) instead of refetching (no-store).
+        self._send(200, body, ctype, "no-cache", extra, etag=_body_etag(body))
 
     @staticmethod
     def _parse_track_request(parsed) -> tuple[int, int | None, str | None]:
@@ -2764,7 +2789,11 @@ class Handler(BaseHTTPRequestHandler):
         full state. A closed browser, a full send buffer, or a reconnect
         ends the stream instead of leaving the thread parked on the socket.
         """
-        serve_sse(self)
+        from urllib.parse import parse_qs
+
+        qs = parse_qs(urlparse(self.path).query)
+        lite = (qs.get("lite") or ["0"])[0] in ("1", "true", "yes")
+        serve_sse(self, lite=lite)
 
 
 class QuietServer(PanelServer):
@@ -2776,6 +2805,46 @@ class QuietServer(PanelServer):
                             BrokenPipeError, TimeoutError)):
             return
         super().handle_error(request, client_address)
+
+
+# Keyed waveform/artwork: short freshness then ETag revalidation (a 304 with no
+# body). Not "immutable": artwork can upgrade to hi-res for the same track key.
+ASSET_CACHE = "private, max-age=60"
+ART_CACHE = "private, no-cache"
+_GZIP_MIN = 1024
+_GZIP_SKIP = ("image/jpeg", "image/png", "font/woff2", "text/event-stream")
+
+
+def _wants_gzip(accept: str | None, ctype: str, body: bytes) -> bool:
+    """Gzip text and waveform bodies over 1 KB when the client accepts it."""
+    if not accept or len(body) < _GZIP_MIN:
+        return False
+    if any(ctype.startswith(t) for t in _GZIP_SKIP):
+        return False
+    for part in accept.split(","):
+        token, _, params = part.strip().partition(";")
+        if token.strip().lower() in ("gzip", "*"):
+            m = re.search(r"q\s*=\s*([0-9.]+)", params)
+            return not (m and _qzero(m.group(1)))
+    return False
+
+
+def _qzero(value: str) -> bool:
+    try:
+        return float(value) == 0.0
+    except ValueError:
+        return False
+
+
+def _etag_matches(header: str | None, etag: str) -> bool:
+    if not header:
+        return False
+    tags = [t.strip() for t in header.split(",")]
+    return "*" in tags or etag in tags or ("W/" + etag) in tags
+
+
+def _body_etag(body: bytes) -> str:
+    return '"' + hashlib.blake2b(body, digest_size=10).hexdigest() + '"'
 
 
 # Fallback ports when the requested one is blocked (common on Windows when Hyper-V
