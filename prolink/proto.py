@@ -372,13 +372,13 @@ def is_xdj_xz(name: str | None) -> bool:
 # 33) sends it. Offsets from the public djl-analysis mixer-status table and
 # prodj-beats (MIT); re-implemented here, no code copied.
 MIXER_MIN_LEN = 0x38
-MIXER_FLAGS = 0x27          # 0x20 tempo master, 0x10 synced, 0x40 playing
+MIXER_FLAGS = 0x27          # 0x20 tempo master; the XZ always sends f0/d0, so
+                            # its synced/playing bits carry no meaning (dysentery)
 MIXER_PITCH = 0x28          # 4 bytes, 0x00100000 = neutral (byte 0x29 = 0x10)
 MIXER_BPM = 0x2E            # 2 bytes, BPM x 100
-MIXER_HANDOFF = 0x36        # device taking tempo master from us; 0xff = none
+MIXER_HANDOFF = 0x36        # device taking tempo master; 0x00 = no master, 0xff = no handoff
 MIXER_FLAG_MASTER = 0x20
-MIXER_FLAG_SYNC = 0x10
-MIXER_FLAG_PLAYING = 0x40
+MIXER_NO_HANDOFF = (0x00, 0xFF)
 
 
 @dataclass
@@ -389,15 +389,12 @@ class XzMixerStatus:
     pitch: float            # percent, 0.0 = neutral
     flags: int
     tempo_master: bool
-    synced: bool
-    playing: bool
     handoff_to: int | None  # device number the mixer hands master to, or None
 
     def as_dict(self) -> dict:
         return {"device": self.device_number, "name": self.name, "bpm": self.bpm,
                 "pitch": round(self.pitch, 2), "flags": self.flags,
-                "tempo_master": self.tempo_master, "synced": self.synced,
-                "playing": self.playing, "handoff_to": self.handoff_to}
+                "tempo_master": self.tempo_master, "handoff_to": self.handoff_to}
 
 
 def parse_xz_mixer_status(data: bytes) -> XzMixerStatus | None:
@@ -422,9 +419,7 @@ def parse_xz_mixer_status(data: bytes) -> XzMixerStatus | None:
         pitch=(raw_pitch - 0x100000) / 0x100000 * 100.0,
         flags=flags,
         tempo_master=bool(flags & MIXER_FLAG_MASTER),
-        synced=bool(flags & MIXER_FLAG_SYNC),
-        playing=bool(flags & MIXER_FLAG_PLAYING),
-        handoff_to=None if handoff == 0xFF else int(handoff))
+        handoff_to=None if handoff in MIXER_NO_HANDOFF else int(handoff))
 
 
 def parse(data: bytes) -> Announce | Beat | AbsolutePosition | Status | ChannelsOnAir | None:

@@ -100,8 +100,6 @@ class XzMixerStatus(unittest.TestCase):
         self.assertAlmostEqual(m.pitch, 0.0)
         self.assertEqual(m.flags, 0xD0)
         self.assertFalse(m.tempo_master)
-        self.assertTrue(m.synced)
-        self.assertTrue(m.playing)
         self.assertIsNone(m.handoff_to)
 
     def test_master_and_handoff(self):
@@ -122,7 +120,7 @@ class XzMixerStatus(unittest.TestCase):
     def test_engine_api(self):
         eng = ProLink(Src())
         eng._on_packet(xz_mixer_fixture(), "192.168.178.47", 100.0)
-        self.assertEqual(eng.xz_mixer_state(now=101.0)["bpm"], 139.9)
+        self.assertIsNone(eng.xz_mixer_state(now=101.0)["bpm"])  # 1.0.20: no deck playing
         self.assertFalse(eng.xz_mixer_state(now=101.0)["tempo_master"])
         self.assertEqual(eng.xz_mixer_state(now=200.0), {})
         self.assertEqual(eng.packets, 0)        # counted as before (not parsed)

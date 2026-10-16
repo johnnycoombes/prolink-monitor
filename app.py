@@ -669,6 +669,12 @@ class Monitor:
                 device = self.engine.devices.get(status.loaded_from)
             if device is not None:
                 return device.ip
+        # XDJ-XZ only: use the IP the deck's status actually came from.
+        if status is not None and proto.is_xdj_xz(getattr(status, "name", "")):
+            fn = getattr(self.engine, "xz_status_ip", None)
+            ip = fn(status.device_number) if callable(fn) else None
+            if ip:
+                return ip
         return self.host
 
     def _fetch_live_metadata(self, host: str, track_id: int, slot_name: str,
@@ -1839,6 +1845,9 @@ class Monitor:
         report["duplicate_paths"] = _engine_call(self.engine, "duplicate_paths", [])
         report["mixer_on_air"] = _mixer_on_air(self.engine)
         report.update(_xz_state(self.engine))
+        fps = _engine_call(self.engine, "xz_fingerprints", {})
+        if fps:
+            report["xz_fingerprints"] = fps
         report["model"] = self.model_info()
         census = getattr(self.engine, "census", None)
         report["census"] = census.as_dict() if census is not None else {}

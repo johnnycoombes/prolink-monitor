@@ -26,6 +26,10 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from . import proto
+
+# XDJ-XZ status bytes recorded in the probe report (dysentery v0.2.2 notes:
+# 0x8b reads 9a/9e and 0xcc reads 1f on the XZ). Diagnostic only.
+XZ_FINGERPRINT_OFFSETS = (0x8B, 0xCC)
 from .capture import PacketCapture
 from .link_timing import LinkTiming
 from .playhead_smooth import (
@@ -937,6 +941,11 @@ class Deck:
         s = self.status
         return bool(s and s.play_state_raw in proto.PLAYING_STATES)
 
+# XDJ-XZ status bytes recorded in the probe report (dysentery v0.2.2 notes:
+# 0x8b reads 9a/9e and 0xcc reads 1f on the XZ). Diagnostic only.
+XZ_FINGERPRINT_OFFSETS = (0x8B, 0xCC)
+
+
 class ProLink:
     """Discovers the Pro DJ Link network and keeps every deck's state."""
 
@@ -967,6 +976,11 @@ class ProLink:
         # XDJ-XZ only: mixer status from device 33, and announce-vs-status.
         self.xz_mixer: dict = {}
         self.xz_mixer_at: float | None = None
+        # XDJ-XZ only: per deck, the IP its status came from, whether an
+        # analysed track is playing, and fingerprint bytes for the probe report.
+        self._xz_status_ip: dict[int, str] = {}
+        self._xz_deck_analysed_playing: dict[int, bool] = {}
+        self._xz_fingerprints: dict[int, dict] = {}
         self._xz_announced: dict = {}   # device number -> first announce time
         self._xz_status_at: float | None = None
 
@@ -1025,6 +1039,7 @@ class ProLink:
                     self._az_status_at = now
                 if proto.is_xdj_xz(pkt.name):
                     self._xz_status_at = now
+                    self._note_xz_status(pkt, data, src_ip)
                 deck = self._deck(pkt.device_number)
                 deck.on_status(pkt, now)
                 self.link_timing.observe(
@@ -1073,14 +1088,45 @@ class ProLink:
                     for ip, seen in ips.items() if when - seen < window]
         return duplicate_paths(rows)
 
+    def _note_xz_status(self, pkt, data: bytes, src_ip: str) -> None:
+        """XDJ-XZ status only (caller holds the lock). Read-only bookkeeping."""
+        n = int(pkt.device_number)
+        if src_ip:
+            self._xz_status_ip[n] = src_ip
+        self._xz_deck_analysed_playing[n] = bool(
+            pkt.playing and pkt.track_id and pkt.bpm and pkt.bpm > 0)
+        fp = {"len": len(data)}
+        for off in XZ_FINGERPRINT_OFFSETS:
+            fp[f"0x{off:02x}"] = f"{data[off]:02x}" if len(data) > off else None
+        self._xz_fingerprints[n] = fp
+
+    def xz_status_ip(self, device_number: int) -> str | None:
+        """IP an XDJ-XZ deck's status came from; None for any other model."""
+        with self.lock:
+            return self._xz_status_ip.get(int(device_number))
+
+    def xz_fingerprints(self) -> dict:
+        """XDJ-XZ status fingerprint bytes per deck (diagnostic only)."""
+        with self.lock:
+            return {str(k): dict(v) for k, v in sorted(self._xz_fingerprints.items())}
+
     def xz_mixer_state(self, now: float | None = None, fresh: float = 5.0) -> dict:
-        """Latest XDJ-XZ mixer tempo / tempo-master state, or {} if none recent."""
+        """Latest XDJ-XZ mixer tempo / tempo-master state, or {} if none recent.
+
+        The mixer's BPM is only meaningful while an analysed track plays on an
+        XZ deck; otherwise ``bpm`` is None (shown as n/a).
+        """
         when = time.monotonic() if now is None else now
         with self.lock:
             if not self.xz_mixer or self.xz_mixer_at is None \
                     or when - self.xz_mixer_at > fresh:
                 return {}
-            return dict(self.xz_mixer)
+            out = dict(self.xz_mixer)
+            valid = any(self._xz_deck_analysed_playing.values())
+            out["bpm_valid"] = valid
+            if not valid:
+                out["bpm"] = None
+            return out
 
     def xz_no_status(self, now: float | None = None,
                      window: float = XZ_NO_STATUS_S) -> bool:
