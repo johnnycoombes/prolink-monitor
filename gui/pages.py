@@ -1318,7 +1318,7 @@ class HealthPage(Page):
         mixer = state.get("xz_mixer") or {}
         if mixer:
             bpm = mixer.get("bpm")
-            tempo = f"{bpm:.2f} BPM" if isinstance(bpm, (int, float)) else "—"
+            tempo = f"{bpm:.2f} BPM" if isinstance(bpm, (int, float)) else "n/a"
             master = t("health_xz_master_yes") if mixer.get("tempo_master") \
                 else t("health_xz_master_no")
             text = t("health_xz_mixer").format(tempo=tempo, master=master)
