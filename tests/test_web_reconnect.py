@@ -39,6 +39,24 @@ class _Monitor:
         return {"paint": True, "ok": True}
 
 
+class _BulkyMonitor:
+    """Frames far bigger than any loopback socket buffer.
+
+    macOS grows loopback buffers past SO_SNDBUF/SO_RCVBUF, so tiny frames
+    can take longer than the poll deadline to fill them. A 256 KB frame
+    blocks the first write that does not fit, so the write timeout fires.
+    """
+
+    def __init__(self):
+        self._pad = "x" * (256 * 1024)
+
+    def state(self):
+        return {"ok": True, "decks": [], "pad": self._pad}
+
+    def paint_state(self):
+        return {"paint": True, "ok": True, "pad": self._pad}
+
+
 def _get(port: int) -> int:
     with urllib.request.urlopen(
         f"http://127.0.0.1:{port}/api/state", timeout=2,
@@ -118,6 +136,7 @@ class WebServerReconnectTests(unittest.TestCase):
         self.assertEqual(_get(port), 200)
 
     def test_stalled_sse_client_is_dropped(self):
+        Handler.monitor = _BulkyMonitor()
         port = self._start(0)
         self.server.sse_write_timeout = 0.4
         self.server.sse_sndbuf = 1024
@@ -132,7 +151,7 @@ class WebServerReconnectTests(unittest.TestCase):
         # Do not read. The write timeout has to drop the stream.
         try:
             self.assertTrue(
-                _wait_until(lambda: self.server.snapshot()["clients"] == 0, 5.0),
+                _wait_until(lambda: self.server.snapshot()["clients"] == 0, 10.0),
                 self.server.snapshot(),
             )
         finally:

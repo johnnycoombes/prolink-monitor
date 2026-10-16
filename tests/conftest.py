@@ -53,3 +53,31 @@ def _fresh_dbserver_port_cache():
     remotedb._PORT_CACHE.clear()
     yield
     remotedb._PORT_CACHE.clear()
+
+
+@_pytest.fixture(autouse=True)
+def _collect_qt_garbage_between_tests():
+    """Free each test's widgets before the next test, not inside its event loop.
+
+    A widget caught in a reference cycle (for example a page whose frame is
+    held by a caught exception's traceback) outlives its test. The cyclic GC
+    then destroys it at an arbitrary allocation, often inside the next
+    test's ``QApplication.processEvents()``. Tearing a widget tree down from
+    inside Qt's event dispatch corrupts the heap: segfault/abort (exit 139)
+    in tests/test_az_anlz.py on macos-14 Python 3.14, reproducible on Linux.
+    Collecting here keeps destruction deterministic. Tests that do not use
+    Qt pay one gc pass.
+    """
+    import gc
+
+    yield
+    gc.collect()
+    if "PySide6.QtWidgets" in sys.modules:
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is not None:
+            from PySide6.QtCore import QCoreApplication, QEvent
+
+            QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+            app.processEvents()
