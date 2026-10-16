@@ -360,6 +360,73 @@ def apply_source_label(meta: dict, slot: str, track_type: str = "") -> dict:
     return out
 
 
+def is_xdj_xz(name: str | None) -> bool:
+    """True when a device-name field is an XDJ-XZ."""
+    if not isinstance(name, str):
+        return False
+    compact = "".join(ch for ch in name.lower() if ch.isalnum())
+    return compact == "xdjxz" or compact.startswith("xdjxz")
+
+
+# Mixer status (type 0x29, UDP 50002) as the XDJ-XZ's mixer section (device
+# 33) sends it. Offsets from the public djl-analysis mixer-status table and
+# prodj-beats (MIT); re-implemented here, no code copied.
+MIXER_MIN_LEN = 0x38
+MIXER_FLAGS = 0x27          # 0x20 tempo master, 0x10 synced, 0x40 playing
+MIXER_PITCH = 0x28          # 4 bytes, 0x00100000 = neutral (byte 0x29 = 0x10)
+MIXER_BPM = 0x2E            # 2 bytes, BPM x 100
+MIXER_HANDOFF = 0x36        # device taking tempo master from us; 0xff = none
+MIXER_FLAG_MASTER = 0x20
+MIXER_FLAG_SYNC = 0x10
+MIXER_FLAG_PLAYING = 0x40
+
+
+@dataclass
+class XzMixerStatus:
+    name: str
+    device_number: int
+    bpm: float | None
+    pitch: float            # percent, 0.0 = neutral
+    flags: int
+    tempo_master: bool
+    synced: bool
+    playing: bool
+    handoff_to: int | None  # device number the mixer hands master to, or None
+
+    def as_dict(self) -> dict:
+        return {"device": self.device_number, "name": self.name, "bpm": self.bpm,
+                "pitch": round(self.pitch, 2), "flags": self.flags,
+                "tempo_master": self.tempo_master, "synced": self.synced,
+                "playing": self.playing, "handoff_to": self.handoff_to}
+
+
+def parse_xz_mixer_status(data: bytes) -> XzMixerStatus | None:
+    """Decode an XDJ-XZ mixer-status packet; None for anything else.
+
+    Only the XZ is decoded: other mixers and the XDJ-AZ keep their existing
+    (unparsed) handling.
+    """
+    if len(data) < MIXER_MIN_LEN or not data.startswith(MAGIC) \
+            or data[10] != TYPE_DJM_STATUS:
+        return None
+    name = _name(data, 0x0B)
+    if not is_xdj_xz(name):
+        return None
+    raw_bpm = struct.unpack_from(">H", data, MIXER_BPM)[0]
+    raw_pitch = struct.unpack_from(">I", data, MIXER_PITCH)[0]
+    flags = data[MIXER_FLAGS]
+    handoff = data[MIXER_HANDOFF]
+    return XzMixerStatus(
+        name=name, device_number=int(data[0x21]),
+        bpm=None if raw_bpm in (0, 0xFFFF) else round(raw_bpm / 100.0, 2),
+        pitch=(raw_pitch - 0x100000) / 0x100000 * 100.0,
+        flags=flags,
+        tempo_master=bool(flags & MIXER_FLAG_MASTER),
+        synced=bool(flags & MIXER_FLAG_SYNC),
+        playing=bool(flags & MIXER_FLAG_PLAYING),
+        handoff_to=None if handoff == 0xFF else int(handoff))
+
+
 def parse(data: bytes) -> Announce | Beat | AbsolutePosition | Status | ChannelsOnAir | None:
     """Decode any Pro DJ Link packet; returns None if it is not one."""
     if len(data) < 0x24 or not data.startswith(MAGIC):

@@ -36,12 +36,24 @@ class ModelProfile:
     notes: str = ""
     verified: bool = False
     aliases: tuple = field(default_factory=tuple)
+    # Mixer features this model simply does not have. Health lists them as
+    # "not on this model", never as missing. Empty for every other model.
+    not_available: tuple = ()
+    on_air: str = ""                     # how on-air is derived, if special
 
     def as_dict(self) -> dict:
         d = asdict(self)
         d["numbers"] = list(self.numbers)
         d["waveforms"] = list(self.waveforms)
         d.pop("aliases", None)
+        # Only models that set these get the keys, so other profiles' API
+        # output is byte-for-byte what it was.
+        if self.not_available:
+            d["not_available"] = list(self.not_available)
+        else:
+            d.pop("not_available", None)
+        if not self.on_air:
+            d.pop("on_air", None)
         return d
 
 
@@ -59,7 +71,12 @@ PROFILES: dict[str, ModelProfile] = {p.key: p for p in (
        notes="Decks 1, 2 and mixer 33 on one IP. Two USB ports and no SD: it reports "
              "USB 1 as 'SD' and USB 2 as 'USB'. Sends no media-slot broadcasts. Cannot be "
              "remote controlled (this app never tries). Reported (unconfirmed) not to "
-             "defend device numbers on the LINK port."),
+             "defend device numbers on the LINK port. Its mixer (33) reports tempo and "
+             "tempo master but has no master level, level meters or Beat FX over the "
+             "link; on-air is the reported channel state. Automatic device number tries "
+             "3, then 4, then the usual order.",
+       not_available=("master_level", "meters", "beat_fx"),
+       on_air="reported channel state"),
     _P("cdj-3000x", "CDJ-3000X", precise_position=True,
        waveforms=("blue", "rgb", "3band"), aliases=("cdj3000x",)),
     _P("cdj-3000", "CDJ-3000", precise_position=True,

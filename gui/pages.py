@@ -905,7 +905,16 @@ class HealthPage(Page):
         self._dup_val.setWordWrap(True)
         self._dup_val.setStyleSheet(f"color:{COLORS['warn']}; font-size:12px;")
         self._dup_val.setVisible(False)
-        for w in (self._model_val, self._dup_val, self._aio_val, self._observe_val, self._number_val, self._probe_btn):
+        # XDJ-XZ only: mixer tempo/master and the announced-but-silent warning.
+        self._xz_mixer_val = QLabel("")
+        self._xz_mixer_val.setWordWrap(True)
+        self._xz_mixer_val.setStyleSheet(f"color:{COLORS['dim']}; font-size:12px;")
+        self._xz_mixer_val.setVisible(False)
+        self._xz_warn_val = QLabel("")
+        self._xz_warn_val.setWordWrap(True)
+        self._xz_warn_val.setStyleSheet(f"color:{COLORS['warn']}; font-size:12px;")
+        self._xz_warn_val.setVisible(False)
+        for w in (self._model_val, self._dup_val, self._xz_warn_val, self._xz_mixer_val, self._aio_val, self._observe_val, self._number_val, self._probe_btn):
             ov_l.addWidget(w)
         self.layout_root.addWidget(overview)
 
@@ -1290,6 +1299,7 @@ class HealthPage(Page):
             self._dup_val.setVisible(True)
         else:
             self._dup_val.setVisible(False)
+        self._update_xz_mixer(state)
         obs = state.get("observe") or {}
         if obs:
             colour = {"ok": "ok", "waiting": "dim"}.get(obs.get("state"), "warn")
@@ -1301,6 +1311,32 @@ class HealthPage(Page):
             self._observe_val.setVisible(False)
         note = state.get("device_number_note") or ""
         self._number_val.setText((t("health_number") + ": " + note) if note else "")
+
+    def _update_xz_mixer(self, state: dict) -> None:
+        """XDJ-XZ only. Absent keys (every other model) leave both hidden."""
+        t = self._i18n.t
+        mixer = state.get("xz_mixer") or {}
+        if mixer:
+            bpm = mixer.get("bpm")
+            tempo = f"{bpm:.2f} BPM" if isinstance(bpm, (int, float)) else "—"
+            master = t("health_xz_master_yes") if mixer.get("tempo_master") \
+                else t("health_xz_master_no")
+            text = t("health_xz_mixer").format(tempo=tempo, master=master)
+            handoff = mixer.get("handoff_to")
+            if handoff:
+                text += " " + t("health_xz_handoff").format(device=handoff)
+            prof = (state.get("model") or {}).get("profile") or {}
+            if prof.get("not_available"):
+                text += " " + t("health_xz_not_on_model")
+            self._xz_mixer_val.setText(text)
+            self._xz_mixer_val.setVisible(True)
+        else:
+            self._xz_mixer_val.setVisible(False)
+        if "no_status" in (state.get("xz_warnings") or []):
+            self._xz_warn_val.setText("⚠ " + t("health_xz_no_status"))
+            self._xz_warn_val.setVisible(True)
+        else:
+            self._xz_warn_val.setVisible(False)
 
     def _export_xz_probe(self) -> None:
         """Save the read-only XZ probe report as JSON."""

@@ -99,6 +99,22 @@ def _mixer_on_air(engine) -> dict:
             "channels": {str(k): bool(v) for k, v in sorted(chans.items())}}
 
 
+def _xz_state(engine) -> dict:
+    """XDJ-XZ-only Health/API extras; {} when no XZ is involved."""
+    out: dict = {}
+    mixer = _engine_call(engine, "xz_mixer_state", {})
+    if mixer:
+        out["xz_mixer"] = mixer
+    fn = getattr(engine, "xz_no_status", None)
+    try:
+        silent = bool(fn()) if callable(fn) else False
+    except Exception:
+        silent = False
+    if silent is True:
+        out["xz_warnings"] = ["no_status"]
+    return out
+
+
 def _az_mode_value(engine) -> str | None:
     """Health-page value. Ignores stand-ins that are not a real mode string."""
     fn = getattr(engine, "az_mode", None)
@@ -1822,6 +1838,7 @@ class Monitor:
         report["all_in_one"] = all_in_one_rows(devices)
         report["duplicate_paths"] = _engine_call(self.engine, "duplicate_paths", [])
         report["mixer_on_air"] = _mixer_on_air(self.engine)
+        report.update(_xz_state(self.engine))
         report["model"] = self.model_info()
         census = getattr(self.engine, "census", None)
         report["census"] = census.as_dict() if census is not None else {}
@@ -2377,6 +2394,7 @@ class Monitor:
             "pending": mix.get("pending"),
             "setlist": mix.get("setlist") or [],
             "session": self.session.as_state(),
+            **_xz_state(self.engine),
         }
 
     def _audience_meta(self, audience_deck: dict | None) -> dict | None:

@@ -57,7 +57,8 @@ class SourceTests(unittest.TestCase):
         for n in (1, 2, 33):
             src._note_announce(keepalive("XDJ-XZ", n), "169.254.10.20")
         src._pick_number()
-        self.assertEqual(src.device_number, 5)
+        # 1.0.19: with an XDJ-XZ on the link the automatic order starts at 3.
+        self.assertEqual(src.device_number, 3)
 
     def test_own_keepalive_not_counted(self):
         src = SocketSource(NetInfo("169.254.10.99", 16, "en15"), device_number=5)

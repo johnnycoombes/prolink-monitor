@@ -40,6 +40,10 @@ Handler = Callable[[bytes, str, float], None]
 
 # --------------------------------------------------------------- local network
 
+# XDJ-XZ: announced but no status decoded for this long -> Health warning.
+XZ_NO_STATUS_S = 15.0
+
+
 @dataclass
 class NetInfo:
     ip: str
@@ -262,6 +266,7 @@ class SocketSource:
         self._conflict = threading.Event()
         self.number_note = ""
         self.taken: set[int] = set()
+        self.xz_seen = False          # an XDJ-XZ announced: use XZ_AUTO_ORDER
         self._socks: list[socket.socket] = []
         self._threads: list[threading.Thread] = []
         self._running = False
@@ -300,6 +305,8 @@ class SocketSource:
             return
         number = int(data[0x24])
         self.taken.add(number)
+        if proto.is_xdj_xz(data[0x0C:0x20].split(b"\0")[0].decode("ascii", "replace")):
+            self.xz_seen = True
         self._check_conflict(number)
 
     def _check_conflict(self, number: int) -> None:
@@ -352,7 +359,8 @@ class SocketSource:
     def _pick_number(self) -> None:
         from .allinone import choose_device_number
 
-        number, note = choose_device_number(self.requested_number, self.taken)
+        number, note = choose_device_number(self.requested_number, self.taken,
+                                           xz=self.xz_seen)
         self.device_number = number
         self.number_note = note
         self._describe()
@@ -956,6 +964,11 @@ class ProLink:
         self._az_first_seen: float | None = None
         self._az_status_at: float | None = None
         self._az_on_air_at: float | None = None
+        # XDJ-XZ only: mixer status from device 33, and announce-vs-status.
+        self.xz_mixer: dict = {}
+        self.xz_mixer_at: float | None = None
+        self._xz_announced: dict = {}   # device number -> first announce time
+        self._xz_status_at: float | None = None
 
     def start(self) -> None:
         self.started_at = time.monotonic()
@@ -982,6 +995,13 @@ class ProLink:
         except Exception:
             pass
         if pkt is None:
+            if len(data) > 10 and data[10] == proto.TYPE_DJM_STATUS:
+                mixer = proto.parse_xz_mixer_status(data)
+                if mixer is not None:
+                    with self.lock:
+                        self.xz_mixer = mixer.as_dict()
+                        self.xz_mixer_at = now
+                        self._xz_status_at = now
             return
         if proto.is_ignored_device(getattr(pkt, "name", "")):
             return      # ShowKontrol (TCS) shares the ports but is not DJ gear
@@ -991,6 +1011,8 @@ class ProLink:
                 self.devices[pkt.device_number] = pkt
                 self._paths.setdefault((pkt.name, pkt.device_number), {})[src_ip] = now
                 self._note_player_name(pkt.name)
+                if proto.is_xdj_xz(pkt.name):
+                    self._xz_announced.setdefault(pkt.device_number, now)
             elif isinstance(pkt, proto.Beat):
                 self._deck(pkt.device_number).on_beat(pkt, now)
             elif isinstance(pkt, proto.AbsolutePosition):
@@ -1001,6 +1023,8 @@ class ProLink:
                 self._note_player_name(pkt.name, now)
                 if proto.is_xdj_az(pkt.name) and 1 <= pkt.device_number <= 4:
                     self._az_status_at = now
+                if proto.is_xdj_xz(pkt.name):
+                    self._xz_status_at = now
                 deck = self._deck(pkt.device_number)
                 deck.on_status(pkt, now)
                 self.link_timing.observe(
@@ -1048,6 +1072,28 @@ class ProLink:
                     for (name, number), ips in self._paths.items()
                     for ip, seen in ips.items() if when - seen < window]
         return duplicate_paths(rows)
+
+    def xz_mixer_state(self, now: float | None = None, fresh: float = 5.0) -> dict:
+        """Latest XDJ-XZ mixer tempo / tempo-master state, or {} if none recent."""
+        when = time.monotonic() if now is None else now
+        with self.lock:
+            if not self.xz_mixer or self.xz_mixer_at is None \
+                    or when - self.xz_mixer_at > fresh:
+                return {}
+            return dict(self.xz_mixer)
+
+    def xz_no_status(self, now: float | None = None,
+                     window: float = XZ_NO_STATUS_S) -> bool:
+        """True when an XDJ-XZ announced over ``window`` s ago but no status
+        (deck or mixer) has been decoded since. XZ only."""
+        when = time.monotonic() if now is None else now
+        with self.lock:
+            if not self._xz_announced:
+                return False
+            first = min(self._xz_announced.values())
+            if when - first < window:
+                return False
+            return self._xz_status_at is None or self._xz_status_at < first
 
     def az_mode(self, now: float | None = None) -> str | None:
         """``pro_dj_link``, ``four_deck``, ``unknown``, or None (no XDJ-AZ)."""

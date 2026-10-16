@@ -397,6 +397,19 @@ STRINGS = {
     "mode_vcdj": "Virtual device",
     "mode_sniffer": "Passive capture",
     "mode_observe": "Observe only (USB link, experimental)",
+    "health_xz_mixer": "XDJ-XZ mixer: tempo {tempo}, {master}.",
+    "health_xz_master_yes": "mixer is tempo master",
+    "health_xz_master_no": "a deck is tempo master",
+    "health_xz_handoff": "Handing tempo master to #{device}.",
+    "health_xz_not_on_model": (
+        "Master level, level meters and Beat FX are not on this model (not missing); "
+        "on-air is the reported channel state."
+    ),
+    "health_xz_no_status": (
+        "The XDJ-XZ announced itself over 15 s ago but no status has been decoded. "
+        "Check the network adapter (use the LINK port over Ethernet), that it is not "
+        "connected over two paths at once, and that no other device uses the same number."
+    ),
     "health_dup_paths": (
         "{name} #{device} is seen on more than one network path ({paths}). Every packet "
         "arrives twice. Disable the unit's USB network adapter and use the LINK port "

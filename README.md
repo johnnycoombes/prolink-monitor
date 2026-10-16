@@ -18,6 +18,8 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 
 ## What's new
 
+**1.0.19.** XDJ-XZ only (ideas from prodj-beats, MIT; re-implemented): automatic device number tries 3, then 4, then the usual order, never a number in use; the XZ mixer's status (device 33) is decoded for mixer tempo and tempo master in the API and Health; Health no longer treats the XZ's missing master level, meters and Beat FX as missing (on-air is the reported channel state); and a Health warning appears when the XZ announces but no status is decoded within 15 s (wrong adapter, two paths or a number clash). Other models, including the XDJ-AZ, are unchanged.
+
 **1.0.18.** Performance: the UI tick never does network or file I/O (cache-only reads, misses go to a bounded worker that emits track_ready), in-flight dedupe in ensure(), adaptive NFS timeouts (clamp(4×RTT, 0.25–0.5 s) with backoff, bounded worst case), 4 KB serial NFS reads (PROLINK_NFS_READ_SIZE 2–8 KB), numpy waveform decoding (~15–20× faster, byte-identical, pure-Python fallback), bounded LRU caches pinned to on-deck tracks, cached settings, one SSE frame per tick, and a negative cache with backoff so missing waveforms are no longer re-requested at 20 Hz. With 200 ms NFS latency, the median UI tick dropped from 809 ms to ~6 ms.
 
 **1.0.17.** XDJ-XZ connection advice, slot names and duplicate-path warning (from Beat Link Trigger's documentation; reference only, no code copied).

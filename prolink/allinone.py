@@ -45,6 +45,9 @@ MODEL_NOTES = {
 _RESERVED = {0, 17, 25} | set(range(9, 13)) | set(range(33, 48))
 # Preference when choosing automatically: the usual virtual-CDJ numbers first.
 AUTO_ORDER = (5, 6, 4, 3, 7, 8, 13, 14, 15)
+# XDJ-XZ only (from prodj-beats, MIT): 3 and 4 first. The XZ's own decks are
+# 1 and 2, so 3/4 never collide with it; then the usual order.
+XZ_AUTO_ORDER = (3, 4) + tuple(n for n in AUTO_ORDER if n not in (3, 4))
 
 
 def compact(name: str | None) -> str:
@@ -64,7 +67,7 @@ def is_xdj_xz(name: str | None) -> bool:
     return all_in_one_model(name) == "XDJ-XZ"
 
 
-def choose_device_number(preferred: int | None, taken) -> tuple[int, str]:
+def choose_device_number(preferred: int | None, taken, xz: bool = False) -> tuple[int, str]:
     """A device number nobody on the network uses, and why it was chosen.
 
     ``preferred`` 0 or None means automatic. A preferred number that is taken
@@ -75,7 +78,7 @@ def choose_device_number(preferred: int | None, taken) -> tuple[int, str]:
     want = int(preferred or 0)
     if want and want not in _RESERVED and want not in used:
         return want, f"#{want} (as set, free)"
-    for n in AUTO_ORDER:
+    for n in (XZ_AUTO_ORDER if xz else AUTO_ORDER):
         if n not in used:
             if want:
                 return n, f"#{n} (automatic: #{want} is in use)"
