@@ -10,7 +10,7 @@ import time
 import webbrowser
 from typing import Any
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -80,6 +80,9 @@ class Backend(QObject):
         self._state_timer = QTimer(self)
         self._state_timer.timeout.connect(self._tick)
         self._paint_timer = QTimer(self)
+        # Coarse timers snap to ~15.6 ms on Windows, so a 60 Hz paint
+        # alternates 16/31 ms frames. Precise keeps the scroll even.
+        self._paint_timer.setTimerType(Qt.PreciseTimer)
         self._paint_timer.timeout.connect(self._paint_tick)
 
     # -- public API ---------------------------------------------------------

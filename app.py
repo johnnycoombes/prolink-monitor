@@ -1081,9 +1081,7 @@ class Monitor:
             "has_artwork": bool(
                 t and (t.artwork_path or t.artwork_id or t.file_path)),
             "beats": [[b.time, b.number] for b in a.beats],
-            "cues": [{"hot": c.hot_cue, "type": c.type, "t": c.time,
-                      "end": c.loop_time, "color": c.color, "text": c.comment}
-                     for c in a.cues],
+            "cues": _cue_payload(a.cues),
             "phrases": [{"beat": p.beat, "kind": p.kind, "text": p.label}
                         for p in a.phrases],
             "vocals": anlz.vocal_spans(a, length),
@@ -2525,6 +2523,33 @@ def _wave_column_count(payload: bytes | None) -> int:
     if n <= 0 or 24 + n > len(payload):
         return 0
     return int(n)
+
+
+def _cue_payload(cues) -> list[dict]:
+    """Hot cues, memory cues and stored loops for every client.
+
+    A PCO2 colour of (0, 0, 0) means "no colour" (typical for memory cues), so
+    it is sent as null and clients use the CDJ default (memory cues red).
+    The .DAT and .EXT both carry PCOB lists; identical entries are sent once.
+    """
+    out: list[dict] = []
+    seen: dict = {}
+    for c in cues or []:
+        color = c.color
+        if color is not None and not any(int(v) for v in tuple(color)[:3]):
+            color = None
+        sig = (int(c.hot_cue or 0), c.type, int(c.time or 0), int(c.loop_time or 0))
+        row = {"hot": c.hot_cue, "type": c.type, "t": c.time,
+               "end": c.loop_time, "color": color, "text": c.comment,
+               "memory": not int(c.hot_cue or 0)}
+        if sig in seen:
+            # Keep the richer entry (PCO2 name / colour over a bare PCOB copy).
+            if color is not None or c.comment:
+                out[seen[sig]] = row
+            continue
+        seen[sig] = len(out)
+        out.append(row)
+    return out
 
 
 def _wave_has_detail(payload: bytes | None) -> bool:

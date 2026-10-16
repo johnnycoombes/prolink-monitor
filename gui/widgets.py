@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import math
 import struct
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal, QSize, QPoint
+from PySide6.QtCore import Qt, Signal, QSize, QPoint, QPointF
 from PySide6.QtGui import (
     QColor, QFontInfo, QFontMetrics, QImage, QPainter, QPen, QPixmap, QFont, QMouseEvent,
 )
@@ -113,11 +114,28 @@ BAND_HIGH = _ws.hex_rgb(_BL["high"])        # highs, drawn last
 BLUE_SHADE = (0, 168, 232)        # COLOR_MAP[2], used when PWV3 is absent
 
 
+MEMORY_CUE_COLOR = "#ff3b30"   # CDJ / Rekordbox memory cue red
+LOOP_BAR_COLOR = "#ff9f45"
+
+
+def _has_color(c) -> bool:
+    # (0, 0, 0) is "no colour" in the ANLZ PCO2 entry (memory cues), not black.
+    return bool(c) and len(c) >= 3 and any(int(v) for v in c[:3])
+
+
 def _cue_color(cue: dict) -> QColor:
     c = cue.get("color")
-    if c and len(c) >= 3:
+    if _has_color(c):
         return QColor(int(c[0]), int(c[1]), int(c[2]))
-    return QColor("#ffd45e" if cue.get("hot") else "#ffffff")
+    return QColor("#ffd45e" if cue.get("hot") else MEMORY_CUE_COLOR)
+
+
+def _draw_loop_bar(p: QPainter, x0: float, x1: float, y0: int, cue: dict) -> None:
+    """Stored loop (memory or hot) as a bar along the top edge, like the CDJ."""
+    color = _cue_color(cue) if _has_color(cue.get("color")) else QColor(LOOP_BAR_COLOR)
+    color.setAlpha(220)
+    left = int(x0)
+    p.fillRect(left, y0, max(2, int(x1) - left), 3, color)
 
 
 # Phrase colours by rough section role (PSSI intro / verse / drop≈chorus).
@@ -837,10 +855,10 @@ class WaveformView(QWidget):
 
     def _ensure_overview(self, w, h) -> None:
         ov = self._overview
-        key = (id(ov) if ov else 0, self._style, self._palette, w, h, self._offair)
+        key = (id(ov) if ov else 0, self._style, self._palette, w, h, self._offair, self._dpr())
         if self._overview_pm is not None and self._overview_key == key:
             return
-        pm = QPixmap(w, h)
+        pm = self._hidpi_pixmap(w, h)   # sharp at 200% scaling
         pm.fill(QColor("#0b0d10"))
         if ov and ov["n"]:
             qp = QPainter(pm)
@@ -855,6 +873,12 @@ class WaveformView(QWidget):
             return
         dur = (self._meta or {}).get("duration_ms") or ov.get("dur") or 1
         for cue in (self._meta or {}).get("cues") or []:
+            if cue.get("type") == "loop":
+                end = float(cue.get("end") or 0)
+                if end > float(cue.get("t") or 0):
+                    _draw_loop_bar(p, x0 + (cue.get("t", 0) / max(1, dur)) * w,
+                                   x0 + (end / max(1, dur)) * w, y0, cue)
+                continue
             cx = x0 + int((cue.get("t", 0) / max(1, dur)) * w)
             _draw_cue_marker(p, cx, y0, h, cue, labeled=True)
 
@@ -882,12 +906,42 @@ class WaveformView(QWidget):
             tall = (heights[i] / 31.0) * span
             _paint_column(p, x0 + x, mid, tall, self._style, i, ov, span, self._palette)
 
+    def _dpr(self) -> float:
+        try:
+            r = float(self.devicePixelRatioF())
+        except Exception:
+            r = 1.0
+        return r if r > 0 else 1.0
+
+    def _hidpi_pixmap(self, w: int, h: int) -> QPixmap:
+        """Pixmap at device resolution (200% scaling: 2x), painted in logical px."""
+        r = self._dpr()
+        pm = QPixmap(max(1, int(round(w * r))), max(1, int(round(h * r))))
+        pm.setDevicePixelRatio(r)
+        return pm
+
     def _blit_detail(self, p: QPainter, x0, y0, w, h) -> None:
         self._ensure_detail(w, h)
         if self._detail_pm is not None:
             alpha = 0.34 if self._offair else 1.0
             p.setOpacity(alpha)
-            p.drawPixmap(x0, y0, self._detail_pm)
+            # The cache moves in whole device pixels; draw the remainder as a
+            # device-pixel offset (as the web panel's ``align``), so the strip
+            # tracks the playhead exactly instead of stepping by a CSS pixel.
+            d = self._detail
+            r = self._dpr()
+            align_dev = 0.0
+            if d and d["n"]:
+                cps = d["cps"] or 150.0
+                visible = max(1.0, self._visible_seconds() * cps)
+                px_per_col = w / visible
+                start = self._window_start((self._pos_ms / 1000.0) * cps, visible)
+                align_dev = float(round((self._detail_start - start) * px_per_col * r))
+            self._blit_align_dev = align_dev
+            p.save()
+            p.setClipRect(x0, y0, w, h)
+            p.drawPixmap(QPointF(x0 + align_dev / r, y0), self._detail_pm)
+            p.restore()
             p.setOpacity(1.0)
 
         d = self._detail
@@ -914,6 +968,14 @@ class WaveformView(QWidget):
             current = (self._pos_ms / 1000.0) * cps
             start = self._window_start(current, visible)
             for cue in (self._meta or {}).get("cues") or []:
+                if cue.get("type") == "loop":
+                    end = float(cue.get("end") or 0)
+                    if end > float(cue.get("t") or 0):
+                        lx0 = ((cue.get("t", 0) / 1000.0) * cps - start) * px_per_col
+                        lx1 = ((end / 1000.0) * cps - start) * px_per_col
+                        if lx1 >= 0 and lx0 <= w:
+                            _draw_loop_bar(p, x0 + max(0.0, lx0), x0 + min(float(w), lx1), y0, cue)
+                    continue
                 x = int(((cue.get("t", 0) / 1000.0) * cps - start) * px_per_col)
                 if x < -20 or x > w + 20:
                     continue
@@ -944,15 +1006,18 @@ class WaveformView(QWidget):
                self._zoom_seconds, round(self._bpm, 1),
                w, h, self._offair, self._playhead_frac)
 
+        key = key + (self._dpr(),)
         if (self._detail_pm is None or self._detail_key != key
-                or self._detail_pm.width() != w or self._detail_pm.height() != h):
+                or abs(self._detail_pm.deviceIndependentSize().width() - w) > 0.5
+                or abs(self._detail_pm.deviceIndependentSize().height() - h) > 0.5):
             self._rebuild_detail(w, h, start, key)
             return
 
         # Same origin rule as the overlay: the bitmap shift and the stored
         # column stay in one time base, so the loop highlight cannot walk.
+        r = self._dpr()
         new_start, shift, full = sync_detail_origin(
-            self._detail_start, start, px_per_col, w, 1.0)
+            self._detail_start, start, px_per_col, w, r)
         if full:
             self._rebuild_detail(w, h, start, key)
             return
@@ -960,19 +1025,22 @@ class WaveformView(QWidget):
             return
 
         # Scroll within a recycled scratch pixmap — avoid allocating every frame.
+        # shift is in device pixels; the painter works in logical pixels.
         scratch = self._detail_scratch
-        if scratch is None or scratch.width() != w or scratch.height() != h:
-            scratch = QPixmap(w, h)
+        if (scratch is None or scratch.width() != self._detail_pm.width()
+                or scratch.height() != self._detail_pm.height()):
+            scratch = self._hidpi_pixmap(w, h)
             self._detail_scratch = scratch
         scratch.fill(QColor("#080a0c"))
         qp = QPainter(scratch)
+        qp.drawPixmap(QPointF(shift / r, 0.0), self._detail_pm)
+        exposed = int(math.ceil(abs(shift) / r)) + 1
         if shift > 0:
-            qp.drawPixmap(shift, 0, self._detail_pm, 0, 0, w - shift, h)
-            self._draw_detail_range(qp, 0, 0, w, h, start, 0, shift)
+            lo, hi = 0, min(w, exposed)
         else:
-            sh = -shift
-            qp.drawPixmap(0, 0, self._detail_pm, sh, 0, w - sh, h)
-            self._draw_detail_range(qp, 0, 0, w, h, start, w - sh, w)
+            lo, hi = max(0, w - exposed), w
+        qp.fillRect(lo, 0, hi - lo, h, QColor("#080a0c"))
+        self._draw_detail_range(qp, 0, 0, w, h, new_start, lo, hi)
         qp.end()
         # Swap buffers so the previous front becomes the next scratch.
         self._detail_scratch = self._detail_pm
@@ -980,7 +1048,7 @@ class WaveformView(QWidget):
         self._detail_start = new_start
 
     def _rebuild_detail(self, w, h, start: float, key: tuple) -> None:
-        pm = QPixmap(w, h)
+        pm = self._hidpi_pixmap(w, h)
         pm.fill(QColor("#080a0c"))
         qp = QPainter(pm)
         self._draw_detail_range(qp, 0, 0, w, h, start, 0, w)
