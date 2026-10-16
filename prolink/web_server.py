@@ -222,6 +222,32 @@ def _sleep_until(deadline: float, server, sock) -> bool:
         time.sleep(min(0.05, remaining))
 
 
+_FRAMES: dict = {}
+_FRAMES_LOCK = threading.Lock()
+
+
+def shared_frame(monitor, kind: str, ttl: float) -> bytes:
+    """One encoded SSE frame per tick, shared by every connected client.
+
+    With several browsers and an OBS overlay open, each stream used to call
+    ``monitor.state()`` and ``json.dumps`` on its own. A frame younger than
+    ``ttl`` is reused; it is the same data the client would have built.
+    """
+    now = time.monotonic()
+    key = (id(monitor), kind)
+    with _FRAMES_LOCK:
+        hit = _FRAMES.get(key)
+        if hit is not None and hit[0] is monitor and now - hit[1] < ttl:
+            return hit[2]
+        state = monitor.state() if kind == "state" else monitor.paint_state()
+        frame = f"data: {json.dumps(state, ensure_ascii=False)}\n\n".encode("utf-8")
+        _FRAMES[key] = (monitor, now, frame)
+        if len(_FRAMES) > 8:
+            for k in list(_FRAMES)[:-4]:
+                _FRAMES.pop(k, None)
+        return frame
+
+
 def serve_sse(handler, *, paint_hz: float = 60.0, full_hz: float = 15.0) -> None:
     """Stream state until the client leaves, the socket times out, or we stop.
 
@@ -261,11 +287,9 @@ def serve_sse(handler, *, paint_hz: float = 60.0, full_hz: float = 15.0) -> None
                 handler.wfile.write(b": ping\n\n")
                 last_heartbeat = now
             monitor = handler.monitor
-            if tick % full_every == 0:
-                payload = json.dumps(monitor.state(), ensure_ascii=False)
-            else:
-                payload = json.dumps(monitor.paint_state(), ensure_ascii=False)
-            handler.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
+            kind = "state" if tick % full_every == 0 else "paint"
+            ttl = (1.0 / full_hz if kind == "state" else 1.0 / paint_hz) * 0.9
+            handler.wfile.write(shared_frame(monitor, kind, ttl))
             handler.wfile.flush()
             tick += 1
             if _sleep_until(time.monotonic() + (1.0 / paint_hz), server, sock):

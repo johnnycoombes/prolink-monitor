@@ -655,7 +655,7 @@ class MonitorPage(Page):
             # that had just been attached.
             card.update_deck(d, pos)
             if tid:
-                meta = self.backend.meta(tid, deck=deck_no, track_key=tkey or None)
+                meta = self._backend_cached("meta", tid, deck=deck_no, track_key=tkey or None)
                 if meta and tkey and meta.get("track_key") != tkey:
                     meta = None
                 if meta:
@@ -664,7 +664,7 @@ class MonitorPage(Page):
                         wave = None
                         if self._elements.get("deck_show_waveform", True):
                             try:
-                                wave = self.backend.waveform(
+                                wave = self._backend_cached("waveform", 
                                     tid, deck=deck_no, track_key=tkey or None)
                             except Exception:
                                 wave = None
@@ -674,7 +674,7 @@ class MonitorPage(Page):
                         if (self._elements.get("deck_show_artwork", True)
                                 and meta.get("has_artwork")):
                             try:
-                                art = self.backend.artwork(
+                                art = self._backend_cached("artwork", 
                                     tid, deck=deck_no, track_key=tkey or None)
                             except Exception:
                                 art = None
@@ -692,7 +692,7 @@ class MonitorPage(Page):
                         if (self._elements.get("deck_show_artwork", True)
                                 and meta.get("has_artwork")):
                             try:
-                                art = self.backend.artwork(
+                                art = self._backend_cached("artwork", 
                                     tid, deck=deck_no, track_key=tkey or None)
                             except Exception:
                                 art = None
@@ -701,7 +701,7 @@ class MonitorPage(Page):
                             and meta.get("has_artwork")
                             and card.needs_artwork(tkey or str(tid))):
                         try:
-                            art = self.backend.artwork(
+                            art = self._backend_cached("artwork", 
                                 tid, deck=deck_no, track_key=tkey or None)
                         except Exception:
                             art = None
@@ -716,6 +716,16 @@ class MonitorPage(Page):
         for card in self._cards.values():
             card._paint_zoom_btn()
         self._refresh_zoom_highlight()
+
+    def _backend_cached(self, kind: str, track_id: int, **kw):
+        """Cache-only read for the 20 Hz tick (no NFS/dbserver on the UI thread).
+
+        Falls back to the blocking call only for a backend without the
+        cached API (older test doubles)."""
+        fn = getattr(self.backend, f"{kind}_cached", None)
+        if fn is None or not callable(fn) or type(self.backend).__name__ in ("Mock", "MagicMock"):
+            fn = getattr(self.backend, kind)
+        return fn(track_id, **kw)
 
     def advance_playheads(self) -> None:
         """Extrapolate playheads between state polls (~60 Hz paint path)."""

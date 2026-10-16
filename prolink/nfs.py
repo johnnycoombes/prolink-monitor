@@ -146,11 +146,27 @@ def _parse_fattr(u: _Unpacker) -> FileAttr:
 
 # --------------------------------------------------------------------------- RPC
 
+DEFAULT_READ_SIZE = 4096
+
+
+def clamp_read_size(n: int) -> int:
+    return max(2048, min(8192, int(n)))
+
+
+def read_size() -> int:
+    """NFS READ size in bytes (2-8 KB, default 4 KB)."""
+    raw = os.environ.get("PROLINK_NFS_READ_SIZE", "")
+    try:
+        return clamp_read_size(int(raw)) if raw else DEFAULT_READ_SIZE
+    except ValueError:
+        return DEFAULT_READ_SIZE
+
+
 class RpcClient:
     """ONC-RPC client over UDP with retries and AUTH_UNIX credentials."""
 
     def __init__(self, host: str, port: int, prog: int, vers: int, timeout: float = 2.0,
-                 retries: int = 4):
+                 retries: int = 5):
         self.host = host
         self.port = port
         self.prog = prog
@@ -195,19 +211,44 @@ class RpcClient:
         else:
             self._rtt_ewma_ms = 0.3 * rtt + 0.7 * self._rtt_ewma_ms
 
+    # Adaptive timeout: 4x the smoothed RTT, clamped to 0.25-0.5 s for the first
+    # try, then doubled per retry up to 2 s. Worst case per call with the
+    # default 5 tries: 0.5 + 1 + 2 + 2 + 2 = 7.5 s (it was 4 x 2 s = 8 s), while a
+    # single lost datagram on a healthy link now costs ~0.25 s instead of 2 s.
+    MIN_TIMEOUT_S = 0.25
+    BASE_MAX_TIMEOUT_S = 0.5
+    MAX_TIMEOUT_S = 2.0
+
+    def attempt_timeouts(self) -> list[float]:
+        rtt = self._rtt_ewma_ms
+        base = self.BASE_MAX_TIMEOUT_S if rtt is None else 4.0 * rtt / 1000.0
+        base = min(self.BASE_MAX_TIMEOUT_S, max(self.MIN_TIMEOUT_S, base))
+        cap = max(base, min(self.MAX_TIMEOUT_S, float(self.timeout)))
+        return [min(cap, base * (2 ** i)) for i in range(max(1, self.retries))]
+
     def call(self, proc: int, args: bytes = b"") -> _Unpacker:
+        # One request at a time per socket: reads stay strictly serial.
         with self._lock:
             last: Exception | None = None
-            for _ in range(self.retries):
+            sent: set[int] = set()
+            for wait in self.attempt_timeouts():
                 xid = random.getrandbits(32)
+                sent.add(xid)
                 msg = (struct.pack(">IIIIII", xid, 0, 2, self.prog, self.vers, proc)
                        + self._cred() + struct.pack(">II", 0, 0) + args)
                 started = time.monotonic()
+                deadline = started + wait
                 try:
                     self._sock.sendto(msg, (self.host, self.port))
                     while True:
+                        left = deadline - time.monotonic()
+                        if left <= 0:
+                            raise socket.timeout("timed out")
+                        self._sock.settimeout(left)
                         data, _ = self._sock.recvfrom(65535)
-                        if len(data) >= 4 and struct.unpack_from(">I", data, 0)[0] == xid:
+                        # A late answer to an earlier try of this same call is
+                        # just as good (the request is idempotent).
+                        if len(data) >= 4 and struct.unpack_from(">I", data, 0)[0] in sent:
                             break
                 except socket.timeout as e:
                     self.timeout_count += 1
@@ -354,13 +395,20 @@ class NfsClient:
                 break
         return [n for n in names if n not in (".", "..")]
 
-    def read(self, fh: bytes, size: int | None = None, chunk: int = 8192) -> bytes:
+    def read(self, fh: bytes, size: int | None = None, chunk: int | None = None) -> bytes:
         if size is None:
             size = self.getattr(fh).size
         return self.read_at(fh, 0, int(size), chunk=chunk)
 
-    def read_at(self, fh: bytes, offset: int, size: int, chunk: int = 8192) -> bytes:
-        """Read ``size`` bytes starting at ``offset``. Does not read the rest of the file."""
+    def read_at(self, fh: bytes, offset: int, size: int, chunk: int | None = None) -> bytes:
+        """Read ``size`` bytes starting at ``offset``. Does not read the rest of the file.
+
+        Reads are strictly serial (one outstanding request, no pipelining) in
+        ``read_size()`` pieces: 4 KB by default, ``PROLINK_NFS_READ_SIZE`` 2048-8192.
+        Smaller replies are not IP-fragmented as badly, so one lost fragment
+        costs less on a busy player.
+        """
+        chunk = read_size() if chunk is None else clamp_read_size(chunk)
         buf = bytearray()
         start = max(0, int(offset))
         want = max(0, int(size))
