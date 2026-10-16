@@ -18,6 +18,8 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 
 ## What's new
 
+**1.0.21.** Web panel and overlay performance: overlays use a lite event stream (`/api/events?lite=1`) without the Health fields; unchanged frames are skipped (re-sent at least once a second); playhead frames drop from 60 Hz to 30 Hz and are skipped while every deck is stopped; waveform and artwork use ETag revalidation (304) instead of no-store; HTML revalidates with an ETag; text and waveform responses are gzipped; overlays cache their element lookups and only write changed text; the panel reads deck colours once a second instead of every frame; hidden tabs stop painting. ProLink, dbserver and NFS code are unchanged, and the XDJ-AZ behaves as before.
+
 **1.0.20.** XDJ-XZ only (from dysentery v0.2.2 notes; re-implemented): the XZ mixer's tempo-master handoff now treats 0x00 (no master) and 0xff (no handoff) as no handoff; the mixer's always-on synced/playing flags are no longer exposed, only tempo master; mixer BPM shows n/a unless an analysed track is playing on an XZ deck; library reads for an XZ deck fall back to the IP its status came from; and the XZ probe report records status fingerprint bytes (0x8b, 0xcc). Other models, including the XDJ-AZ, are unchanged.
 
 **1.0.19.** XDJ-XZ only (ideas from prodj-beats, MIT; re-implemented): automatic device number tries 3, then 4, then the usual order, never a number in use; the XZ mixer's status (device 33) is decoded for mixer tempo and tempo master in the API and Health; Health no longer treats the XZ's missing master level, meters and Beat FX as missing (on-air is the reported channel state); and a Health warning appears when the XZ announces but no status is decoded within 15 s (wrong adapter, two paths or a number clash). Other models, including the XDJ-AZ, are unchanged.
@@ -519,7 +521,7 @@ Default base is `http://127.0.0.1:8777` when that port bound, and `http://127.0.
 | `/api/library/playlist/<id>?host=&limit=` | Tracks in one playlist |
 | `/api/library/diagnostics` | Read-only Library report (live vs USB copy) |
 | `/api/library/loaded` | Tracks currently on decks |
-| `/api/events` | Server-sent events: a full snapshot about 15 times a second, and a light playhead frame at 60 Hz |
+| `/api/events` | Server-sent events: a full snapshot up to 15 times a second and a light playhead frame at 30 Hz while a deck plays; unchanged frames are skipped but re-sent at least once a second. Add `?lite=1` for the overlay subset (no Health fields) |
 | `/api/track/<id>` | Metadata, beat grid, cues, phrases. Optional `deck` and `key` |
 | `/api/waveform/<id>` | Binary waveforms. Optional `deck` and `key` |
 | `/api/artwork/<id>?size=large\|small` | JPEG. Optional `deck` and `key` |

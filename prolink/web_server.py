@@ -14,7 +14,9 @@ even when it never sends a FIN the handler would otherwise miss.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import select
 import socket
 import struct
@@ -225,34 +227,126 @@ def _sleep_until(deadline: float, server, sock) -> bool:
 _FRAMES: dict = {}
 _FRAMES_LOCK = threading.Lock()
 
+# Keys an overlay reads. Health fields (nfs, dbserver, link_timing, anlz, ...)
+# stay on the full stream for the main panel only.
+LITE_KEYS = frozenset({
+    "t", "paint", "decks", "display", "spectrum", "audience_deck",
+    "now_playing", "pending", "setlist", "mix",
+})
+# Fields that change every frame without changing what a client shows.
+# An unchanged frame is still re-sent at least this often.
+UNCHANGED_RESEND_S = 1.0
+DEFAULT_PAINT_HZ = 30.0
+DEFAULT_FULL_HZ = 15.0
 
-def shared_frame(monitor, kind: str, ttl: float) -> bytes:
-    """One encoded SSE frame per tick, shared by every connected client.
+
+def lite_state(state: dict) -> dict:
+    """The overlay subset of a full ``state()`` snapshot."""
+    return {k: v for k, v in state.items() if k in LITE_KEYS}
+
+
+_VOLATILE_RE = re.compile(rb'"(?:t|playhead_age_s)": -?[0-9.eE+-]+')
+
+
+def _digest(state) -> str:
+    """Hash of a snapshot without its per-frame timestamp fields."""
+    raw = json.dumps(state, ensure_ascii=False, default=str).encode("utf-8")
+    return _frame_digest(raw)
+
+
+def _frame_digest(raw: bytes) -> str:
+    # One regex pass over the encoded frame, not a second json.dumps.
+    return hashlib.blake2b(_VOLATILE_RE.sub(b"", raw), digest_size=12).hexdigest()
+
+
+def _any_playing(state) -> bool:
+    try:
+        return any(bool(d.get("playing")) for d in state.get("decks") or [])
+    except AttributeError:
+        return False
+
+
+def shared_frame_info(monitor, kind: str, ttl: float, *, lite: bool = False):
+    """``(frame, digest, playing)`` for one tick, shared by every client.
 
     With several browsers and an OBS overlay open, each stream used to call
     ``monitor.state()`` and ``json.dumps`` on its own. A frame younger than
-    ``ttl`` is reused; it is the same data the client would have built.
+    ``ttl`` is reused. The lite variant is cut from the same full snapshot.
     """
     now = time.monotonic()
-    key = (id(monitor), kind)
+    key = (id(monitor), kind, bool(lite))
     with _FRAMES_LOCK:
         hit = _FRAMES.get(key)
         if hit is not None and hit[0] is monitor and now - hit[1] < ttl:
-            return hit[2]
-        state = monitor.state() if kind == "state" else monitor.paint_state()
-        frame = f"data: {json.dumps(state, ensure_ascii=False)}\n\n".encode("utf-8")
-        _FRAMES[key] = (monitor, now, frame)
-        if len(_FRAMES) > 8:
-            for k in list(_FRAMES)[:-4]:
+            if hit[2] is None:
+                # Raw snapshot stored by a lite client; encode on first use.
+                hit = (monitor, hit[1], *_encode(hit[5]), hit[5])
+                _FRAMES[key] = hit
+            return hit[2], hit[3], hit[4]
+        if kind == "state":
+            full_key = (id(monitor), kind, False)
+            base = None
+            if lite:
+                fh = _FRAMES.get(full_key)
+                if fh is not None and fh[0] is monitor and now - fh[1] < ttl:
+                    base = fh[5]
+            if base is None:
+                base = monitor.state()
+                if lite:
+                    # Keep the full snapshot so a main panel on the same tick reuses it.
+                    _FRAMES[full_key] = (monitor, now, None, None, None, base)
+            state = lite_state(base) if lite else base
+        else:
+            state = monitor.paint_state()
+        frame, digest, playing = _encode(state)
+        _FRAMES[key] = (monitor, now, frame, digest, playing, state)
+        if len(_FRAMES) > 12:
+            for k in list(_FRAMES)[:-6]:
                 _FRAMES.pop(k, None)
-        return frame
+        return frame, digest, playing
 
 
-def serve_sse(handler, *, paint_hz: float = 60.0, full_hz: float = 15.0) -> None:
+def _encode(state):
+    frame = f"data: {json.dumps(state, ensure_ascii=False)}\n\n".encode("utf-8")
+    return frame, _frame_digest(frame), _any_playing(state)
+
+
+def shared_frame(monitor, kind: str, ttl: float, *, lite: bool = False) -> bytes:
+    """One encoded SSE frame per tick (see ``shared_frame_info``)."""
+    return shared_frame_info(monitor, kind, ttl, lite=lite)[0]
+
+
+class FrameGate:
+    """Per-client decision: send a frame, or skip one identical to the last.
+
+    A frame equal to the last one sent of its kind is skipped, but something
+    goes out at least every ``resend_s`` so a client never looks stale.
+    Paint frames are only needed while a deck is playing; when every deck is
+    stopped they follow the same unchanged-skip rule.
+    """
+
+    def __init__(self, resend_s: float = UNCHANGED_RESEND_S):
+        self.resend_s = resend_s
+        self._last: dict[str, tuple[str, float]] = {}
+
+    def should_send(self, kind: str, digest: str, now: float, playing: bool = False) -> bool:
+        if kind == "paint" and playing:
+            self._last[kind] = (digest, now)
+            return True
+        prev = self._last.get(kind)
+        if prev is not None and prev[0] == digest and now - prev[1] < self.resend_s:
+            return False
+        self._last[kind] = (digest, now)
+        return True
+
+
+def serve_sse(handler, *, paint_hz: float = DEFAULT_PAINT_HZ,
+              full_hz: float = DEFAULT_FULL_HZ, lite: bool = False) -> None:
     """Stream state until the client leaves, the socket times out, or we stop.
 
     A comment line (``: ping``) goes out about once a second. EventSource
     ignores it. The write is what notices a client that stopped reading.
+    ``lite`` streams only the keys an overlay uses (``LITE_KEYS``).
     """
     server = handler.server
     sock = handler.connection
@@ -267,6 +361,7 @@ def serve_sse(handler, *, paint_hz: float = 60.0, full_hz: float = 15.0) -> None
     timeout = float(getattr(server, "sse_write_timeout", SSE_WRITE_TIMEOUT_S) or SSE_WRITE_TIMEOUT_S)
     heartbeat_s = float(getattr(server, "sse_heartbeat_s", SSE_HEARTBEAT_S) or SSE_HEARTBEAT_S)
     sndbuf = int(getattr(server, "sse_sndbuf", 0) or 0)
+    gate = FrameGate()
     try:
         if sndbuf > 0:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, sndbuf)
@@ -283,14 +378,21 @@ def serve_sse(handler, *, paint_hz: float = 60.0, full_hz: float = 15.0) -> None
             if peer_closed(sock):
                 return
             now = time.monotonic()
-            if now - last_heartbeat >= heartbeat_s:
-                handler.wfile.write(b": ping\n\n")
-                last_heartbeat = now
             monitor = handler.monitor
             kind = "state" if tick % full_every == 0 else "paint"
             ttl = (1.0 / full_hz if kind == "state" else 1.0 / paint_hz) * 0.9
-            handler.wfile.write(shared_frame(monitor, kind, ttl))
-            handler.wfile.flush()
+            frame, digest, playing = shared_frame_info(
+                monitor, kind, ttl, lite=lite and kind == "state")
+            wrote = False
+            if gate.should_send(kind, digest, now, playing):
+                handler.wfile.write(frame)
+                wrote = True
+            if now - last_heartbeat >= heartbeat_s:
+                handler.wfile.write(b": ping\n\n")
+                last_heartbeat = now
+                wrote = True
+            if wrote:
+                handler.wfile.flush()
             tick += 1
             if _sleep_until(time.monotonic() + (1.0 / paint_hz), server, sock):
                 return
