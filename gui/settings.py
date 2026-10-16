@@ -199,8 +199,15 @@ _CACHE: dict[str, Any] = {"key": None, "data": None}
 
 
 def _cache_key(path: str):
+    # Only stat the settings file itself (normalised, must be settings.json).
+    safe = os.path.normpath(os.path.abspath(path))
+    if os.path.basename(safe) != "settings.json":
+        return (path, None, None)
+    base = os.path.dirname(safe) + os.sep
+    if not safe.startswith(base):
+        return (path, None, None)
     try:
-        st = os.stat(path)
+        st = os.stat(safe)
         return (path, st.st_mtime_ns, st.st_size)
     except OSError:
         return (path, None, None)
