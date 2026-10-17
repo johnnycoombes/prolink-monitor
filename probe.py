@@ -134,7 +134,6 @@ def main() -> int:
 
     seen: dict[tuple, dict[int, set]] = {}
     stable: dict[tuple, set[int]] = {}
-    started = time.monotonic()
     changes = [0]
     phase = ["learning"]
 

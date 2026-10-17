@@ -321,13 +321,6 @@ def _phrases(a: Analysis, body: bytes) -> None:
 
 # ------------------------------------------------------------------- decoding
 
-def decode_blue(data: bytes) -> tuple[bytes, bytes]:
-    """Classic blue waveform (PWAV/PWV3): returns (heights 0-31, whiteness 0-7)."""
-    heights = bytes(b & 0x1F for b in data)
-    whiteness = bytes((b >> 5) & 0x07 for b in data)
-    return heights, whiteness
-
-
 # WaveformDetail.COLOR_MAP: the eight blue-waveform shades, indexed by bits 5-7.
 BLUE_COLOR_MAP = (
     (0, 104, 144),
@@ -374,28 +367,6 @@ def _decode_color_detail_py(data: bytes) -> tuple[bytearray, bytearray]:
     return heights, rgb
 
 
-def _decode_color_preview_py(data: bytes) -> tuple[bytearray, bytearray]:
-    """Colour overview (PWV4, 6 bytes), as Beat Link ``WaveformPreview`` RGB.
-
-    Bytes 3, 4 and 5 are the red, green and blue levels. The front height is
-    byte 5; the back height is the max of the three. The front colour is each
-    channel times 255 / back height. Heights are scaled into 0-31.
-    """
-    n = len(data) // 6
-    heights = bytearray(n)
-    rgb = bytearray(n * 3)
-    for i in range(n):
-        base = i * 6
-        red_b, green_b, blue_b = data[base + 3], data[base + 4], data[base + 5]
-        back = max(red_b, green_b, blue_b)
-        heights[i] = min(31, back * 31 // 255) if back else 0
-        if back:
-            rgb[i * 3] = red_b * 255 // back
-            rgb[i * 3 + 1] = green_b * 255 // back
-            rgb[i * 3 + 2] = blue_b * 255 // back
-    return heights, rgb
-
-
 def _decode_blue_colors_py(data: bytes) -> tuple[bytearray, bytearray]:
     """Blue detail (PWV3): height in bits 0-4, shade in bits 5-7.
 
@@ -434,16 +405,6 @@ def _decode_color_detail_np(data: bytes) -> tuple[bytearray, bytearray]:
     return bytearray(heights.tobytes()), bytearray(rgb.tobytes())
 
 
-def _decode_color_preview_np(data: bytes) -> tuple[bytearray, bytearray]:
-    n = len(data) // 6
-    a = _np.frombuffer(data, dtype=_np.uint8, count=n * 6).reshape(n, 6)[:, 3:6].astype(_np.int32)
-    back = a.max(axis=1)
-    heights = _np.minimum(31, back * 31 // 255).astype(_np.uint8)
-    safe = _np.where(back == 0, 1, back)[:, None]
-    rgb = _np.where(back[:, None] == 0, 0, a * 255 // safe).astype(_np.uint8)
-    return bytearray(heights.tobytes()), bytearray(rgb.tobytes())
-
-
 _BLUE_LUT = None
 
 
@@ -469,11 +430,6 @@ def _pick(fast, slow, data):
 def decode_color_detail(data: bytes) -> tuple[bytearray, bytearray]:
     """PWV5 colour detail; see :func:`_decode_color_detail_py`. numpy when available."""
     return _pick(_decode_color_detail_np, _decode_color_detail_py, data)
-
-
-def decode_color_preview(data: bytes) -> tuple[bytearray, bytearray]:
-    """PWV4 colour overview; see :func:`_decode_color_preview_py`. numpy when available."""
-    return _pick(_decode_color_preview_np, _decode_color_preview_py, data)
 
 
 def decode_blue_colors(data: bytes) -> tuple[bytearray, bytearray]:

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-NOW_STYLES = ("card", "panel", "bar")
 CARD_CORNERS = ("tl", "tr", "bl", "br")
-PANEL_POSITIONS = ("bottom", "top")
 # Back-compat aliases from the original left/right card placement.
 _CARD_ALIASES = {"left": "bl", "right": "br"}
 
@@ -35,12 +33,6 @@ def normalize_now_pos(style: str, value: str | None) -> str:
         raw = str(value or "bottom").lower()
         return "top" if raw == "top" else "bottom"
     return normalize_card_corner(value)
-
-
-def card_corner_to_legacy_pos(corner: str) -> str:
-    """Map corner to left/right for older consumers (bottom corners only)."""
-    c = normalize_card_corner(corner)
-    return "right" if c.endswith("r") else "left"
 
 
 def migrate_now_pos_for_style(old_style: str, new_style: str, pos: str) -> str:

@@ -1777,9 +1777,6 @@ class LibraryPage(Page):
         self._library_error = ""
         self.browse_ready.connect(self._apply_browse)
 
-    def set_backend(self, backend) -> None:
-        self.backend = backend
-
     def retranslate(self) -> None:
         super().retranslate()
         self.search.setPlaceholderText(self._i18n.t("library_search"))

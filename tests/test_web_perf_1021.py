@@ -3,7 +3,6 @@ import gzip
 import http.client
 import json
 import socket
-import threading
 import time
 import unittest
 from types import SimpleNamespace

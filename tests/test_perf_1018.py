@@ -126,7 +126,7 @@ class NumpyDecodeTests(unittest.TestCase):
     def test_byte_identical(self):
         from prolink import anlz
         for n in (0, 1, 63, 64, 65, 1000, 40000):
-            for name, unit in (("color_detail", 2), ("color_preview", 6), ("blue_colors", 1)):
+            for name, unit in (("color_detail", 2), ("blue_colors", 1)):
                 data = os.urandom(n * unit + (1 if unit > 1 else 0))
                 fast = getattr(anlz, f"decode_{name}")(data)
                 slow = getattr(anlz, f"_decode_{name}_py")(data)

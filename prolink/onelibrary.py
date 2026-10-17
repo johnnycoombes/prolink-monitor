@@ -20,7 +20,7 @@ import importlib
 import re
 import sys
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 

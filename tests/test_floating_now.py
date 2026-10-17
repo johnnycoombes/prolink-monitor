@@ -10,7 +10,7 @@ from gui.overlay_url import (
     build_floating_overlay_url,
     build_parity_screenshot_url,
 )
-from gui.settings import load_settings, save_settings, _sanitize
+from gui.settings import load_settings, _sanitize
 
 
 class PickNowDeckTests(unittest.TestCase):

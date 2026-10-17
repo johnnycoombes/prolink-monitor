@@ -20,8 +20,8 @@ os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, Qt  # noqa: E402
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap  # noqa: E402
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice  # noqa: E402
+from PySide6.QtGui import QColor, QFont, QImage, QPainter  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from gui.i18n import I18n  # noqa: E402

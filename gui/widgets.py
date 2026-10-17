@@ -6,7 +6,7 @@ import math
 import struct
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal, QSize, QPoint, QPointF
+from PySide6.QtCore import Qt, Signal, QPointF
 from PySide6.QtGui import (
     QColor, QFontInfo, QFontMetrics, QImage, QPainter, QPen, QPixmap, QFont, QMouseEvent,
 )

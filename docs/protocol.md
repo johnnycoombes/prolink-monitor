@@ -18,7 +18,7 @@ What prolink-monitor sends, listens for and decodes. Offsets are byte offsets in
 | 111 | UDP | out | ONC-RPC portmapper |
 | *returned* | UDP | out | MOUNT v1 and NFS v2 |
 
-Listening sockets bind to `0.0.0.0` on every platform (on macOS an interface-bound socket misses broadcasts). `proto.PORT_MIXER = 50004` is defined but **not bound or parsed**; mixer clock (`0x20`) is not used.
+Listening sockets bind to `0.0.0.0` on every platform (on macOS an interface-bound socket misses broadcasts). Port 50004 (mixer clock, type `0x20`) is not bound or parsed.
 
 ## Packet header
 

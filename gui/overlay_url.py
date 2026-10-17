@@ -94,9 +94,3 @@ def build_floating_overlay_file_url(settings: dict[str, Any], *, mock: bool = Tr
     url.setQuery(urlencode(qs))
     return url.toString()
 
-
-def build_now_playing_preview_query(settings: dict[str, Any], *, embed: bool = False) -> str:
-    """Query string for now playing overlay (used by Overlay page preview)."""
-    qs = _now_playing_query(settings, embed=embed, mock=False)
-    qs.append(("preview", "1"))
-    return urlencode(qs)

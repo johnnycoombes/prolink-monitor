@@ -4,17 +4,6 @@ from __future__ import annotations
 
 import io
 import os
-import re
-
-
-ARTWORK_SOURCES = (
-    "embedded",
-    "remotedb-hires",
-    "nfs-hires",
-    "remotedb",
-    "thumbnail",
-    "none",
-)
 
 
 def highres_nfs_art_path(thumbnail_path: str) -> str:
