@@ -42,13 +42,14 @@ class SmallScreenCss(unittest.TestCase):
 class CleanupTests(unittest.TestCase):
     def test_removed_names_stay_removed(self):
         from prolink import anlz, artwork_util, hires_art, proto
-        for mod, name in ((proto, "PORT_MIXER"), (proto, "TYPE_MIXER_CLOCK"),
-                          (anlz, "decode_color_preview"), (anlz, "decode_blue"),
+        for mod, name in ((anlz, "decode_color_preview"), (anlz, "decode_blue"),
                           (artwork_util, "ARTWORK_SOURCES"), (hires_art, "mutagen_available")):
             self.assertFalse(hasattr(mod, name), name)
         # Ports the app does use are still there.
         self.assertEqual((proto.PORT_ANNOUNCE, proto.PORT_BEAT, proto.PORT_STATUS),
                          (50000, 50001, 50002))
+        # Pro DJ Link spec mixer/clock port stays defined (not bound).
+        self.assertEqual((proto.PORT_MIXER, proto.TYPE_MIXER_CLOCK), (50004, 0x20))
 
 
 if __name__ == "__main__":

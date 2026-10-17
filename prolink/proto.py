@@ -21,6 +21,8 @@ MAGIC = b"Qspt1WmJOL"
 PORT_ANNOUNCE = 50000
 PORT_BEAT = 50001
 PORT_STATUS = 50002
+# Pro DJ Link spec port (mixer/clock). Defined for reference; not bound.
+PORT_MIXER = 50004
 
 # Packet types (byte 0x0a)
 TYPE_KEEPALIVE = 0x06
@@ -33,6 +35,9 @@ TYPE_CHANNELS_ON_AIR = 0x03
 TYPE_MIXER_STATUS = TYPE_CHANNELS_ON_AIR
 TYPE_CDJ_STATUS = 0x0A
 TYPE_DJM_STATUS = 0x29
+# Mixer clock packet on PORT_MIXER (Pro DJ Link spec); not parsed.
+TYPE_MIXER_CLOCK = 0x20
+
 # Absolute / Precise Position packets (CDJ-3000 and newer, port 50001).
 # Layout from Deep Symmetry / Beat Link ``PrecisePosition``.
 ABS_POS_MIN_LEN = 0x3C
