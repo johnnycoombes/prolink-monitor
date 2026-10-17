@@ -142,7 +142,6 @@ class PerDeckSlotTests(unittest.TestCase):
         return mon
 
     def test_each_deck_keeps_its_own_slot(self):
-        from app import Monitor
 
         mon = self._monitor()
         usb = proto.Status(slot="usb", slot_raw=3)

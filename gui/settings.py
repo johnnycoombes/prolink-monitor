@@ -48,7 +48,6 @@ DEFAULTS: dict[str, Any] = {
     "start_web_server": True,
     "window_width": 1360,
     "window_height": 860,
-    "sidebar_compact": False,
     "sidebar_visible": True,
     "poll_hz": 60,
     "show_empty_decks": True,
@@ -334,7 +333,6 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
         out["window_height"] = max(640, min(2160, int(data.get("window_height", 860))))
     except (TypeError, ValueError):
         out["window_height"] = 860
-    out["sidebar_compact"] = bool(data.get("sidebar_compact", False))
     out["sidebar_visible"] = bool(data.get("sidebar_visible", True))
     try:
         out["poll_hz"] = max(5, min(60, int(data.get("poll_hz", 60))))

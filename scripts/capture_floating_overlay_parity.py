@@ -78,7 +78,6 @@ def _playwright_shot(url: str, path: str, width: int, height: int) -> None:
 
 
 def _wait_overlay_ready(web, *, timeout_ms: int = 20_000) -> bool:
-    from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication
 
     state = {"ready": False, "done": False}
@@ -125,8 +124,7 @@ def _floating_shot(
     width: int,
     height: int,
 ) -> dict:
-    from PySide6.QtCore import QTimer, Qt
-    from PySide6.QtGui import QImage, QPainter, QPixmap
+    from PySide6.QtGui import QImage
     from PySide6.QtWidgets import QApplication
 
     from gui.floating_now import FloatingNowPlayingWindow
@@ -181,7 +179,6 @@ def _compose(
 ) -> None:
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QColor, QPainter, QPixmap
-    from PySide6.QtWidgets import QApplication
 
     web_pix = QPixmap(web_path)
     float_pix = QPixmap(float_path)

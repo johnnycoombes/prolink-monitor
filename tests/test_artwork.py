@@ -8,7 +8,6 @@ import unittest
 from unittest import mock
 
 from prolink import artwork as artmod
-from prolink import embedded_art
 from prolink.artwork_util import highres_nfs_art_path, map_player_path_to_local
 from prolink.track_key import track_cache_key
 

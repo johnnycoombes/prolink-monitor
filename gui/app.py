@@ -27,7 +27,7 @@ def main() -> int:
     if hub is None:
         return 0
 
-    from PySide6.QtCore import Qt, QTimer
+    from PySide6.QtCore import QTimer
     from PySide6.QtGui import QFont
     from PySide6.QtWidgets import QApplication
 

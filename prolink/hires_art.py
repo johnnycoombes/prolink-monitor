@@ -40,14 +40,6 @@ def clamp_cap_mb(value) -> int:
     return max(MIN_CAP_MB, min(MAX_CAP_MB, v))
 
 
-def mutagen_available() -> bool:
-    try:
-        import mutagen  # noqa: F401
-    except Exception:
-        return False
-    return True
-
-
 def _take(read: ReadFn, offset: int, length: int) -> bytes:
     if length <= 0:
         return b""

@@ -42,18 +42,6 @@ def read_export_pdb(data: bytes) -> tuple[pdb.PdbDatabase | None, str]:
     return database, ""
 
 
-def _track_useful(track) -> bool:
-    if track is None:
-        return False
-    return bool(
-        getattr(track, "title", "")
-        or getattr(track, "artist", "")
-        or getattr(track, "analyze_path", "")
-        or getattr(track, "artwork_path", "")
-        or getattr(track, "file_path", "")
-    )
-
-
 def _analysis_cached_ok(result: anlz.Analysis | None, missing_detail: bool) -> bool:
     """Cache a parse only when the detail waveform was actually read.
 

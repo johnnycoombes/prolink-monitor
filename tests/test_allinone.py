@@ -1,7 +1,5 @@
 """XDJ-XZ / all-in-one support, driven by synthetic packets only."""
 import json
-import socket
-import time
 import unittest
 from types import SimpleNamespace
 from unittest import mock

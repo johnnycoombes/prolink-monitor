@@ -13,12 +13,13 @@ What prolink-monitor sends, listens for and decodes. Offsets are byte offsets in
 | 50000 | UDP | in / out (broadcast) | Keep-alives (`0x06`), number claims (`0x00`, `0x02`, `0x04`), number-in-use (`0x08`) |
 | 50001 | UDP | in | Beat (`0x28`), Absolute Position (`0x0b`), Channels On-Air (`0x03`) |
 | 50002 | UDP | in (unicast to announced devices) | CDJ status (`0x0a`), mixer status (`0x29`) |
+| 50004 | UDP | — (not bound) | Pro DJ Link mixer/clock port (`0x20` mixer clock). Part of the spec; the app does not currently bind or parse it. |
 | 12523 | TCP | out | dbserver port discovery (`RemoteDBServer` query) |
 | *returned* | TCP | out | dbserver session (often 1051, but not always) |
 | 111 | UDP | out | ONC-RPC portmapper |
 | *returned* | UDP | out | MOUNT v1 and NFS v2 |
 
-Listening sockets bind to `0.0.0.0` on every platform (on macOS an interface-bound socket misses broadcasts). `proto.PORT_MIXER = 50004` is defined but **not bound or parsed**; mixer clock (`0x20`) is not used.
+Listening sockets bind to `0.0.0.0` on every platform (on macOS an interface-bound socket misses broadcasts). Port 50004 (`proto.PORT_MIXER`, mixer clock `proto.TYPE_MIXER_CLOCK = 0x20`) is part of the Pro DJ Link spec; it is defined for reference but **not currently bound or parsed** by the app.
 
 ## Packet header
 

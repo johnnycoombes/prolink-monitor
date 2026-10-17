@@ -1506,14 +1506,6 @@ class Monitor:
             return normalize_artwork_jpeg(raw, max_px=cap, quality=88 if high_res else 80)
         return None
 
-    def artwork_source(self, *, deck: int | None = None) -> str:
-        if deck is not None:
-            with self._lock:
-                if int(deck) in self._art_source_by_deck:
-                    return self._art_source_by_deck[int(deck)]
-        with self._lock:
-            return self._last_art_source or "none"
-
     def deck_track_key(self, deck_number: int, track_id: int) -> str:
         if not track_id:
             return ""
