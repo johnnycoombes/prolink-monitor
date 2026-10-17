@@ -1,9 +1,14 @@
 """1.0.24: web panel small-screen layout and dead-code cleanup."""
 import os
-import re
 import unittest
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
+
+
+def _block(src, head):
+    """Text of the CSS block opened by ``head`` up to the next top-level '\n}'."""
+    start = src.index(head) + len(head)
+    return src[start:src.index("\n}", start)]
 
 
 def _index():
@@ -19,21 +24,19 @@ class SmallScreenCss(unittest.TestCase):
 
     def test_phone_and_tablet_grids(self):
         src = _index()
-        self.assertRegex(src, r"@media \(max-width:900px\)\{[^@]*grid-template-columns:minmax\(0, 1fr\)")
+        self.assertIn("grid-template-columns:minmax(0, 1fr)", _block(src, "@media (max-width:900px){"))
         self.assertIn("@media (min-width:600px) and (max-width:900px)", src)
         self.assertIn("grid-template-columns:repeat(2, minmax(0, 1fr))", src)
 
     def test_cards_not_squeezed_and_no_sideways_scroll(self):
-        block = re.search(r"@media \(max-width:900px\)\{(.*?)\n\}", _index(), re.S).group(1)
+        block = _block(_index(), "@media (max-width:900px){")
         self.assertIn(".deck{flex:none", block)
         self.assertIn("overflow-x:hidden", block)
         self.assertIn(".canvases{flex:none;height:clamp(", block)
 
     def test_touch_targets(self):
         src = _index()
-        m = re.search(r"@media \(pointer:coarse\)\{(.*?)\n\}", src, re.S)
-        self.assertIsNotNone(m)
-        self.assertIn("min-height:36px", m.group(1))
+        self.assertIn("min-height:36px", _block(src, "@media (pointer:coarse){"))
 
 
 class CleanupTests(unittest.TestCase):
