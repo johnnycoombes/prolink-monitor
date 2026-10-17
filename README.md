@@ -2,10 +2,11 @@
 
 A live Pro DJ Link monitor. It joins the booth network as a virtual player, reads the library and analysis from the player while the set is running, and draws decks, waveforms, and artwork on this computer. It is read-only toward the player and the USB stick: it never writes a Rekordbox database, never sends library edits, and a packet capture only records what already arrived.
 
-This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.13**. This tree is **1.0.14**, which adds a macOS build.
+This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monitor). The desktop app is **Prolink Listener**. The current release is **1.0.23**.
 
 ## Contents
 
+- [Documentation](#documentation)
 - [What's new](#whats-new)
 - [Screenshots](#screenshots)
 - [Supported hardware](#supported-hardware)
@@ -15,6 +16,16 @@ This is a fork of [fidow/prolink-monitor](https://github.com/fidow/prolink-monit
 - [Troubleshooting](#troubleshooting)
 - [Release process](#release-process)
 - [Credits](#credits)
+
+## Documentation
+
+Full documentation lives in [`docs/`](docs/README.md):
+
+- [User guide](docs/user-guide.md): install, connecting, every page, web panel, OBS overlay parameters, What's Now Playing, updates, troubleshooting, FAQ
+- [Architecture](docs/architecture.md): modules, threads, data flow, event stream, caching, update system, build and CI, tests
+- [Protocol notes](docs/protocol.md): Pro DJ Link as implemented here (ports, packets, offsets, device numbers, dbserver, NFS, ANLZ, model profiles)
+- [HTTP API](docs/api.md): every endpoint with parameters and example responses
+- [Changelog](CHANGELOG.md): the per-version notes below, in one file
 
 ## What's new
 
@@ -185,7 +196,7 @@ The computer and the player need to be on the same network. The monitor core (`a
 
 You do not need Python for this path.
 
-1. Open the [Releases](https://github.com/johnnycoombes/prolink-monitor/releases) page and download `ProlinkListener-<version>-win64.zip` from a versioned release (the current one is `v1.0.8`). Leave the release named `updates` alone. That one is signed metadata for the updater, not an installer.
+1. Open the [Releases](https://github.com/johnnycoombes/prolink-monitor/releases) page and download `ProlinkListener-<version>-win64.zip` from a versioned release (for example `v1.0.23`). Leave the release named `updates` alone. That one is signed metadata for the updater, not an installer.
 2. Extract the zip to a folder you will keep, for example `C:\Users\User\Prolink Listener`. Do not run the program from inside the zip.
 3. Double-click `ProlinkListener.exe`.
 4. If Windows asks whether the app may use private networks, allow it. A phone on the booth Wi-Fi needs that to open the panel.
@@ -197,7 +208,7 @@ Npcap is only needed when rekordbox is open. See [Troubleshooting](#troubleshoot
 
 You do not need Python for this path. macOS 12 or later.
 
-1. From a versioned release on the [Releases](https://github.com/johnnycoombes/prolink-monitor/releases) page, download `ProlinkListener-<version>-macos-arm64.dmg` for Apple Silicon (M1 and later). The `.zip` holds the same app. Intel Macs: `ProlinkListener-<version>-macos-x86_64.dmg` is built only on request (see [Release process](#release-process)), so it is not on every release; ask for it if you need it.
+1. From a versioned release on the [Releases](https://github.com/johnnycoombes/prolink-monitor/releases) page, download `ProlinkListener-<version>-macos-arm64.dmg` for Apple Silicon (M1 and later). The `.zip` holds the same app. Intel Macs: `ProlinkListener-<version>-macos-x86_64.dmg`. The release workflow builds it with every tag, but it is tested less than the Apple Silicon build.
 2. Open the dmg and drag **ProlinkListener** into **Applications**.
 3. The app is **not signed or notarised**, so Gatekeeper blocks the first launch ("cannot be opened because the developer cannot be verified", or "is damaged"). Either:
    - in Finder, **right-click** (or Control-click) ProlinkListener → **Open**, then **Open** again in the dialog (on macOS 15 and later: try to open it once, then **System Settings → Privacy & Security → Open Anyway**); or
@@ -505,7 +516,6 @@ The player sends detailed status by unicast, and only to devices that announced 
 | 50000 | Keep-alives (who is on the network) |
 | 50001 | Beats, and Absolute Position (`0x0b`) on CDJ-3000-class players |
 | 50002 | Detailed player status (unicast) |
-| 50004 | Mixer clock (`0x20`) |
 
 The mixer’s **ON AIR** flag is bit `0x08` of the flags at byte `0x89` in each deck’s status. It follows the channel fader. Fader position, volume, and EQ are not on the link: moving the faders on an AZ changed that one bit and nothing else. Field `0x26`–`0x27` is not “activity” on the AZ (the documented idle/playing meaning did not match a stopped deck).
 
@@ -538,7 +548,7 @@ Default base is `http://127.0.0.1:8777` when that port bound, and `http://127.0.
 
 ## Troubleshooting
 
-**Firewall.** Allow UDP **50000–50002** on the DJ network (and UDP 50004 if you care about the mixer clock). Allow TCP on the web port. Settings default to **8777**. If that port cannot be bound, the app listens on **8787**, then 8877, 9777, 18777, then a free port, skipping any of those that sit in a Windows excluded range. The reason 8777 failed (for example an excluded range, WinError 10013, or the port already in use) is written to `~/.prolink-monitor/prolink-monitor.log` and shown on Health, including the range when `netsh` lists one. Overlay, panel, and floating-window URLs use the port that actually listened. Settings keep 8777; the next launch tries it again. When 8777 stays unbound, open **8787**. NFS is not one port: allow UDP **111** (portmapper) and the mountd / nfs ports the player returns. On Windows, accept private-network access for Prolink Listener when the prompt appears.
+**Firewall.** Allow UDP **50000–50002** on the DJ network. Allow TCP on the web port. Settings default to **8777**. If that port cannot be bound, the app listens on **8787**, then 8877, 9777, 18777, then a free port, skipping any of those that sit in a Windows excluded range. The reason 8777 failed (for example an excluded range, WinError 10013, or the port already in use) is written to `~/.prolink-monitor/prolink-monitor.log` and shown on Health, including the range when `netsh` lists one. Overlay, panel, and floating-window URLs use the port that actually listened. Settings keep 8777; the next launch tries it again. When 8777 stays unbound, open **8787**. NFS is not one port: allow UDP **111** (portmapper) and the mountd / nfs ports the player returns. On Windows, accept private-network access for Prolink Listener when the prompt appears.
 
 **`PermissionError: [WinError 10013]` on the web port.** Hyper-V, WSL, or another reservation often owns it. Check with `netsh interface ipv4 show excludedportrange protocol=tcp`. If 8777 is between a Start Port and an End Port, that is why it never listens: the port is excluded, not merely busy, and it will not show up in `netstat`. Health and the log name that range. The app then binds the next fallback outside the range. To choose one: `python app.py --port 18777`, or set **Web server port** in Settings.
 
@@ -556,7 +566,7 @@ Default base is `http://127.0.0.1:8777` when that port bound, and `http://127.0.
 
 ## Release process
 
-Tests run on every pull request and every push to `main`: pytest on Ubuntu, Windows and macOS (Apple Silicon), Python 3.12 and 3.14. The macOS app is a PyInstaller `.app` bundle built on `macos-14` (arm64) and shipped as a zip and a dmg. The Intel (x86_64) build is optional and not part of pull-request CI: run the **macOS Intel build** workflow (Actions → macOS Intel build → Run workflow) with a tag or branch, and tick *attach* to add it to that tag's GitHub Release. The Windows app is a PyInstaller folder build (not one file). Qt WebEngine needs `QtWebEngineProcess.exe` beside the Qt libraries. PyInstaller 6.16 or newer is what builds the 3.14 interpreter used for that package.
+Tests run on every pull request and every push to `main`: pytest on Ubuntu, Windows and macOS (Apple Silicon), Python 3.12 and 3.14. The macOS app is a PyInstaller `.app` bundle built on `macos-14` (arm64) and shipped as a zip and a dmg. The **Release builds** workflow also builds an Intel (x86_64) app on `macos-15-intel` for every pull request and tag and attaches it to the release; the test matrix itself runs on `macos-14` only. The Windows app is a PyInstaller folder build (not one file). Qt WebEngine needs `QtWebEngineProcess.exe` beside the Qt libraries. PyInstaller 6.16 or newer is what builds the 3.14 interpreter used for that package.
 
 ### Cut a release
 
@@ -568,7 +578,7 @@ Tests run on every pull request and every push to `main`: pytest on Ubuntu, Wind
    git push origin v1.1.0
    ```
 
-3. The **Release builds** workflow builds `ProlinkListener-<version>-win64.zip` and the macOS `ProlinkListener-<version>-macos-arm64` `.zip` and `.dmg`, and attaches them all to the GitHub Release. The text after `v` has to match `__version__`, or the build stops.
+3. The **Release builds** workflow builds `ProlinkListener-<version>-win64.zip` and the macOS `ProlinkListener-<version>-macos-arm64` and `-macos-x86_64` `.zip` and `.dmg` files, and attaches them all to the GitHub Release. The text after `v` has to match `__version__`, or the build stops.
 4. If the signing secrets below are set, the same workflow publishes signed update files on a release named `updates`. If they are not set, it prints a note and still publishes the zip.
 
 Pull requests also run the Windows and macOS builds and upload them as Actions artifacts. Signed update metadata covers the Windows zip only. Once signing is on, install the copy from the GitHub Release, not a pull-request artifact. The workflow’s tag-only jobs do not run on a pull request. That is expected.
